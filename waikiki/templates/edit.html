@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ 'New page' if is_new else 'Editing ' + page.title }} — Waikiki{% endblock %}
+{% block content %}
+  {% if missing %}
+    <p class="muted note">No page “{{ missing }}” yet — create it below.</p>
+  {% endif %}
+
+  {% if collab %}
+    <div class="presence-bar">
+      <span class="muted">Live editing</span>
+      <span id="presence" class="presence"></span>
+    </div>
+  {% endif %}
+
+  <form id="editform" method="post" action="/wiki/save">
+    <input type="hidden" name="slug" value="{{ page.slug }}">
+    <input class="title-input" type="text" name="title" placeholder="Page title"
+           value="{{ page.title }}" required>
+
+    <div class="ai-bar">
+      <input id="ai-prompt" type="text"
+             placeholder="Ask AI to draft/expand… (pull a one-off draft via API)">
+      <label class="rag-toggle"><input type="checkbox" id="ai-rag" checked> use RAG</label>
+      <button type="button" id="ai-go" class="btn">✦ Generate</button>
+      <span id="ai-status" class="muted"></span>
+    </div>
+
+    {# In collab mode the textarea starts empty; the CRDT room delivers the content. #}
+    <textarea id="editor" name="markdown">{% if not collab %}{{ page.markdown }}{% endif %}</textarea>
+
+    <div class="editor-actions">
+      <button class="btn primary" type="submit">Save</button>
+      {% if not is_new %}<a class="btn" href="/wiki/{{ page.slug }}">Done</a>{% endif %}
+    </div>
+  </form>
+{% endblock %}
+
+{% block scripts %}
+  <link rel="stylesheet" href="https://unpkg.com/easymde/dist/easymde.min.css">
+  <script src="https://unpkg.com/easymde/dist/easymde.min.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "yjs": "https://esm.sh/yjs@13.6.27",
+      "y-websocket": "https://esm.sh/y-websocket@2.1.0?external=yjs",
+      "y-codemirror": "https://esm.sh/y-codemirror@3.0.1?external=yjs"
+    }
+  }
+  </script>
+  <script>
+    window.WAIKIKI = {
+      collab: {{ 'true' if collab else 'false' }},
+      slug: {{ page.slug | tojson }},
+      wsBase: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/collab'
+    };
+  </script>
+  <script type="module" src="/static/app.js"></script>
+{% endblock %}

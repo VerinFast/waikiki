@@ -1,0 +1,117 @@
+# 🌺 Waikiki
+
+A small, local, SQLite-backed wiki built for **Human ↔ LLM collaboration** — where
+Claude (via Claude Desktop over MCP) and you edit the **same document at the same
+time**, seeing each other's changes live.
+
+## Requirements → how
+
+| Requirement | How |
+|---|---|
+| Python + SQLite-backed | FastAPI app; one `data/waikiki.db` holds pages, images, FTS index, and vectors |
+| Themes | Swappable CSS in `waikiki/static/themes/` (default / dark / sepia) |
+| Images | Upload / paste / drag → stored in SQLite, served at `/image/{id}` |
+| Extensible | Clean `store` + `rag` + `collab` service layers; open-source deps |
+| MCP + REST | `waikiki.mcp_server` (FastMCP) and `/api/*` share one code path |
+| Markdown → HTML | `markdown-it-py` (GFM), `[[wiki links]]`, Pygments code |
+| Tables | GFM tables via the `gfm-like` preset |
+| Human editing | EasyMDE editor with live preview |
+| Versioning | Every save snapshots to `page_versions` (human / ai / collab authored) |
+| BM25 / RAG | SQLite **FTS5 `bm25()`** + **sqlite-vec** vectors, fused with RRF |
+| **Real-time co-editing (CRDT)** | **Yjs / `pycrdt` room per page; browser + Claude edit live with presence** |
+| AI streaming | Claude writes into the live doc via MCP; plus an optional pull-model "Generate" button |
+
+## How the collaboration works
+
+```
+   your browser  <--y-websocket-->  [ CRDT room (pycrdt) ]  <--HTTP inject--  MCP server
+   (EasyMDE + Yjs, presence)               |                                  (Claude Desktop)
+                                      (debounced)
+                                           v
+                          render HTML + snapshot to SQLite + RAG reindex
+```
+
+- Open a page's editor and you join a **CRDT room**; a colored presence chip shows
+  who else is there.
+- When Claude (through the MCP `append_to_page` / `replace_page` tools) writes,
+  it lands in the **same room** and streams into your open editor live — and a
+  **"Claude" presence chip** appears while it writes.
+- Concurrent edits **merge** (CRDT), so you don't overwrite each other.
+- Edits are debounced-persisted to SQLite, re-rendered to HTML, and re-embedded
+  for search.
+
+The old in-editor **✦ Generate** button is a *separate* convenience: it pulls a
+one-off draft from the Anthropic API (needs `ANTHROPIC_API_KEY`). The real
+collaboration path above uses no API key — the text comes from Claude over MCP.
+
+## Setup
+
+```bash
+cd ~/localdev/waikiki
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+First run downloads the local embedding model (`all-MiniLM-L6-v2`, ~90 MB) and
+warms it at startup.
+
+## Run the web app
+
+```bash
+python run.py
+# → http://127.0.0.1:8787
+```
+
+## Connect Claude Desktop (MCP)
+
+Add Waikiki to `~/Library/Application Support/Claude/claude_desktop_config.json`
+(keep the web app running so live edits reach your browser):
+
+```json
+{
+  "mcpServers": {
+    "waikiki": {
+      "command": "/Users/jason/localdev/waikiki/.venv/bin/python",
+      "args": ["-m", "waikiki.mcp_server"],
+      "env": {
+        "PYTHONPATH": "/Users/jason/localdev/waikiki",
+        "WAIKIKI_WEB_URL": "http://127.0.0.1:8787"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop. Then, with a page's editor open in your browser, ask
+Claude to "add a section on X to the kayaking page" and watch it type in beside
+you.
+
+MCP tools: `list_pages`, `get_page`, `create_page`, `append_to_page` (live),
+`replace_page` (live), `delete_page`, `search` (hybrid RAG).
+
+## REST API
+
+| Method | Path | |
+|---|---|---|
+| GET | `/api/pages` | list |
+| POST | `/api/pages` | `{title, markdown}` |
+| GET/PUT/DELETE | `/api/pages/{slug}` | get / update / delete |
+| GET | `/api/search?q=&k=` | hybrid BM25+vector RAG |
+| POST | `/api/images` | multipart upload |
+| POST | `/api/collab/{slug}/append` · `/replace` | inject a live edit (used by MCP) |
+| GET | `/api/collab/{slug}/live` | current live (unsaved) markdown |
+| POST | `/api/ai/stream` | SSE token stream (pull-model Generate button) |
+
+Interactive docs at `/docs`. Websocket sync at `ws://host/collab/{slug}`.
+
+## Notes
+
+- **sqlite-vec** loads via **apsw** (bundles a SQLite with loadable-extension
+  support, which stock CPython often lacks). If unavailable, search degrades to
+  **BM25-only** and everything else still works.
+- Switching the embedder in Settings changes the vector dimension, so the vector
+  index is rebuilt and all pages re-embedded automatically.
+- Collaborative editing loads Yjs (`yjs`, `y-websocket`, `y-codemirror`) from
+  esm.sh and EasyMDE from unpkg — an internet connection is needed for the
+  editor libs (they can be vendored locally later). The read view, REST, and MCP
+  work fully offline.

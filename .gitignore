@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Waikiki data (the live SQLite DB + WAL)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Packaging / build artifacts
+build/
+dist/
+*.spec.bak
+src-tauri/target/
+node_modules/
+
+# Local model cache (if ever placed in-tree)
+.cache/
+models/
+
+# macOS / editors
+.DS_Store
+*.swp
+.idea/
+.vscode/

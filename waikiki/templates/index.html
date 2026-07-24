@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Waikiki{% endblock %}
+{% block content %}
+  <h1>All pages</h1>
+  {% if pages %}
+    <ul class="pagelist">
+      {% for p in pages %}
+        <li>
+          <a href="/wiki/{{ p.slug }}">{{ p.title }}</a>
+          <span class="muted">updated {{ p.updated_at }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">Nothing here yet. <a href="/new">Create the first page →</a></p>
+  {% endif %}
+{% endblock %}

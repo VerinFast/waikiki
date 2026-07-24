@@ -1,0 +1,8 @@
+@import url("default.css");
+:root{
+  --bg:#0d1117; --surface:#161b22; --text:#e6edf3; --muted:#8b949e;
+  --border:#30363d; --accent:#4493f8; --accent-contrast:#0d1117;
+  --code-bg:#1f2530; --danger:#f85149; --mark:#5a4a00;
+}
+.badge.ai{background:#0c2d48}
+.badge.human{background:#12331c}

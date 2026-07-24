@@ -1,0 +1,9 @@
+@import url("default.css");
+:root{
+  --bg:#f4ecd8; --surface:#fbf6e9; --text:#3b352b; --muted:#8a7f68;
+  --border:#e0d5bd; --accent:#a8642a; --accent-contrast:#fbf6e9;
+  --code-bg:#efe6d0; --danger:#b3261e; --mark:#ffe08a;
+  --font: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+}
+.badge.ai{background:#e7dcc4}
+.badge.human{background:#e3ead0}

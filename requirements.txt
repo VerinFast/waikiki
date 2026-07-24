@@ -1,0 +1,33 @@
+# --- Core web ---
+fastapi>=0.115
+uvicorn[standard]>=0.30
+jinja2>=3.1
+python-multipart>=0.0.9        # form / file uploads
+
+# --- Markdown -> HTML (GFM tables, etc.) ---
+markdown-it-py>=3.0
+mdit-py-plugins>=0.4
+linkify-it-py>=2.0             # GFM autolinking (bare URLs)
+pygments>=2.18                  # optional fenced-code highlighting
+
+# --- Hybrid RAG ---
+sqlite-vec>=0.1.6               # vector search inside the same sqlite file (FTS5/bm25 is built in)
+apsw>=3.47                      # SQLite with loadable-extension support (needed for sqlite-vec)
+
+# --- Pluggable embeddings ---
+# Local (default): sentence-transformers pulls in torch. Heavy but fully offline.
+sentence-transformers>=3.0
+# Cloud (Anthropic-recommended): Voyage. Uses httpx (already a FastAPI dep) — no extra pkg required,
+# but the official client is nicer if you want it:
+# voyageai>=0.3
+httpx>=0.27
+
+# --- AI streaming into the wiki ---
+anthropic>=0.40
+
+# --- MCP server (Human/LLM collaboration) ---
+fastmcp>=2.0
+
+# --- Real-time collaborative editing (CRDT) ---
+pycrdt>=0.10               # Yjs/Yrs bindings — the shared document engine
+pycrdt-websocket>=0.15     # y-websocket-compatible server for browser sync

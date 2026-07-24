@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Waikiki{% endblock %}</title>
+  <link rel="stylesheet" href="/static/themes/{{ theme }}.css">
+  <style>{{ pygments_css | safe }}</style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">🌺 Waikiki</a>
+    <form class="search" action="/search" method="get">
+      <input type="search" name="q" placeholder="Search the wiki…" value="{{ q or '' }}">
+    </form>
+    <nav class="actions">
+      <a href="/new">+ New</a>
+      <a href="/settings">Settings</a>
+    </nav>
+  </header>
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>Pages</h3>
+      <ul>
+        {% for p in nav_pages %}
+          <li><a href="/wiki/{{ p.slug }}">{{ p.title }}</a></li>
+        {% else %}
+          <li class="muted">No pages yet.</li>
+        {% endfor %}
+      </ul>
+      {% if not vec_available %}
+        <p class="muted note">Vector search off (sqlite-vec not loaded) — BM25 only.</p>
+      {% endif %}
+    </aside>
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

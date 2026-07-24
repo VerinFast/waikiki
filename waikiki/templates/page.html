@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} — Waikiki{% endblock %}
+{% block content %}
+  <article class="article">
+    <div class="article-head">
+      <h1>{{ page.title }}</h1>
+      <div class="tools">
+        <a class="btn" href="/wiki/{{ page.slug }}/edit">Edit</a>
+        <form method="post" action="/wiki/{{ page.slug }}/delete"
+              onsubmit="return confirm('Delete this page?')">
+          <button class="btn danger" type="submit">Delete</button>
+        </form>
+      </div>
+    </div>
+    <div class="rendered">{{ page.html | safe }}</div>
+    {% if versions %}
+      <details class="history">
+        <summary>History ({{ versions | length }})</summary>
+        <ul>
+          {% for v in versions %}
+            <li><span class="badge {{ v.author }}">{{ v.author }}</span>
+              {{ v.title }} <span class="muted">{{ v.created_at }}</span></li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+  </article>
+{% endblock %}

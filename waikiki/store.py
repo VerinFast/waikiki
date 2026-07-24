@@ -95,7 +95,7 @@ def page_versions(slug: str) -> List[dict]:
         return []
     rows = db.get_conn().execute(
         "SELECT id, title, author, created_at FROM page_versions "
-        "WHERE page_id=? ORDER BY created_at DESC",
+        "WHERE page_id=? ORDER BY created_at DESC, id DESC",
         (page["id"],),
     ).fetchall()
     return [dict(r) for r in rows]

@@ -1,0 +1,10 @@
+[project]
+name = "waikiki"
+version = "0.0.1"
+description = "A small local wiki for Human/LLM collaboration (SQLite, hybrid RAG, MCP, CRDT co-editing)."
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"

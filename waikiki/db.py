@@ -104,6 +104,9 @@ def _load_sqlite_vec(conn) -> bool:
 def get_conn():
     """One connection per thread (FastAPI handlers run across a threadpool)."""
     conn = getattr(_local, "conn", None)
+    # Reconnect if the configured DB path changed (e.g. between tests).
+    if conn is not None and getattr(_local, "path", None) != str(config.DB_PATH):
+        conn = None
     if conn is None:
         if _HAS_APSW:
             conn = _ApswConn(str(config.DB_PATH))
@@ -114,6 +117,7 @@ def get_conn():
             conn.execute("PRAGMA foreign_keys=ON")
         _load_sqlite_vec(conn)
         _local.conn = conn
+        _local.path = str(config.DB_PATH)
     return conn
 
 

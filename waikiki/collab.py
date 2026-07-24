@@ -13,9 +13,11 @@ Flow:
                                       v
                           render HTML + snapshot to SQLite + RAG reindex
 
-The web app process owns the rooms (single source of truth). The MCP server is a
-separate process, so it mutates rooms via the HTTP endpoints in api.py, which
-call the functions here.
+Persistence uses a snapshot-diff in the background flusher (rather than a pycrdt
+change observer, whose Subscription is unsendable across threads): every tick we
+compare each room's current text to the last-saved copy and persist once it has
+settled. The web app process owns the rooms; the MCP server mutates them via the
+HTTP endpoints in api.py, which call the functions here.
 """
 from __future__ import annotations
 
@@ -28,19 +30,18 @@ from pycrdt.websocket import ASGIServer, WebsocketServer
 
 from . import store
 
-# One websocket server hosts every room. Keep rooms alive for the process
-# lifetime so their ydoc + seed state stay consistent (no auto-clean races).
 server = WebsocketServer(auto_clean_rooms=False)
-asgi_app = ASGIServer(server)  # mount at /collab in the FastAPI app
+asgi_app = ASGIServer(server)  # available if you prefer to mount it directly
 
 CLAUDE = {"name": "Claude", "color": "#c0392b"}
-_FLUSH_IDLE = 1.5      # seconds of quiet before snapshotting a room to SQLite
+_FLUSH_IDLE = 1.5      # seconds a room must be unchanged before we persist it
 _CLAUDE_IDLE = 8.0     # seconds before the "Claude is editing" presence clears
 
 _seeded: set[str] = set()
-_dirty: dict[str, float] = {}          # slug -> monotonic ts of last edit
-_claude_seen: dict[str, float] = {}    # slug -> monotonic ts of last MCP write
-_subs: dict[str, object] = {}          # slug -> Text.observe Subscription (must be kept alive!)
+_last_text: dict[str, str] = {}     # slug -> text seen on the previous tick
+_stable_since: dict[str, float] = {}  # slug -> when the text last changed
+_last_saved: dict[str, str] = {}    # slug -> text last persisted to SQLite
+_claude_seen: dict[str, float] = {}  # slug -> monotonic ts of last MCP write
 
 
 def _ytext(room) -> Text:
@@ -58,17 +59,10 @@ async def ensure_room(slug: str):
             if page and page["markdown"]:
                 with room.ydoc.transaction():
                     txt += page["markdown"]
-        # Mark the room dirty on every edit (from anyone) so the flusher persists.
-        # Use a real closure that swallows all args — pycrdt calls the observer
-        # with (event[, txn]), so a positional default like `s=slug` would be
-        # clobbered by the transaction. observe() returns a Subscription that
-        # MUST be retained, or the callback is garbage-collected.
-        def _make_observer(s: str):
-            def _cb(*_args):
-                _dirty[s] = time.monotonic()
-            return _cb
-
-        _subs[slug] = txt.observe(_make_observer(slug))
+        current = str(txt)
+        _last_text[slug] = current
+        _last_saved[slug] = current  # equals the DB copy → no immediate re-save
+        _stable_since[slug] = time.monotonic()
     return room
 
 
@@ -78,7 +72,6 @@ async def append_text(slug: str, text: str) -> str:
     txt = _ytext(room)
     with room.ydoc.transaction():
         txt += text
-    _dirty[slug] = time.monotonic()
     _claude_present(slug, room)
     return str(txt)
 
@@ -91,7 +84,6 @@ async def replace_text(slug: str, markdown: str) -> str:
         if len(txt):
             del txt[0:len(txt)]
         txt += markdown
-    _dirty[slug] = time.monotonic()
     _claude_present(slug, room)
     return str(txt)
 
@@ -120,10 +112,29 @@ def _persist(slug: str, markdown: str) -> None:
 
 
 async def flusher() -> None:
-    """Background loop: debounced persistence + expiring Claude presence."""
+    """Background loop: debounced snapshot-diff persistence + Claude presence."""
     while True:
         await asyncio.sleep(1.0)
         now = time.monotonic()
+
+        for slug in list(_seeded):
+            try:
+                room = await server.get_room(slug)
+                current = str(_ytext(room))
+            except Exception:
+                continue
+
+            if current != _last_text.get(slug):
+                _last_text[slug] = current           # still changing → reset timer
+                _stable_since[slug] = now
+                continue
+            # Settled: persist if it differs from what's on disk.
+            if current != _last_saved.get(slug) and now - _stable_since.get(slug, now) >= _FLUSH_IDLE:
+                try:
+                    await anyio.to_thread.run_sync(_persist, slug, current)
+                    _last_saved[slug] = current
+                except Exception as exc:
+                    print(f"[waikiki] collab flush failed for {slug}: {exc}")
 
         for slug, ts in list(_claude_seen.items()):
             if now - ts > _CLAUDE_IDLE:
@@ -133,14 +144,3 @@ async def flusher() -> None:
                     room.awareness.set_local_state(None)
                 except Exception:
                     pass
-
-        for slug, ts in list(_dirty.items()):
-            if now - ts < _FLUSH_IDLE:
-                continue  # still being edited; wait for a quiet moment
-            _dirty.pop(slug, None)
-            try:
-                room = await server.get_room(slug)
-                markdown = str(_ytext(room))
-                await anyio.to_thread.run_sync(_persist, slug, markdown)
-            except Exception as exc:
-                print(f"[waikiki] collab flush failed for {slug}: {exc}")

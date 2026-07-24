@@ -83,4 +83,13 @@ mark{background:var(--mark)}
 .remote-caret>div{position:absolute;top:-1.4em;left:-2px;font-size:.65rem;color:#fff;background:#c0392b;
   padding:0 .3em;border-radius:3px;white-space:nowrap}
 
+.banner{padding:.6rem .9rem;border-radius:8px;margin:.6rem 0}
+.banner.ok{background:#e6ffec;color:#0a5f2c;border:1px solid #a6e5b8}
+.banner.err{background:#ffebe9;color:#a11;border:1px solid #f3b0ab}
+.modeltable{border-collapse:collapse;width:100%;margin:.6rem 0}
+.modeltable td{border-bottom:1px solid var(--border);padding:.4rem .5rem;vertical-align:middle}
+.addmodel{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-top:.4rem}
+.addmodel input[type=text]{flex:1;min-width:240px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)}
+.addmodel select,.settings select{padding:.4rem .6rem;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)}
+
 @media(max-width:720px){.layout{grid-template-columns:1fr}.sidebar{display:none}}

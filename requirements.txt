@@ -15,12 +15,12 @@ sqlite-vec>=0.1.6               # vector search inside the same sqlite file (FTS
 apsw>=3.47                      # SQLite with loadable-extension support (needed for sqlite-vec)
 
 # --- Pluggable embeddings ---
-# Local (default): sentence-transformers pulls in torch. Heavy but fully offline.
-sentence-transformers>=3.0
-# Cloud (Anthropic-recommended): Voyage. Uses httpx (already a FastAPI dep) — no extra pkg required,
-# but the official client is nicer if you want it:
-# voyageai>=0.3
+# Default: fastembed (ONNX runtime, NO PyTorch) — small, fast, bundles cleanly.
+fastembed>=0.3
+# Cloud (Anthropic-recommended): Voyage, over httpx. No extra package required.
 httpx>=0.27
+# The "local" provider (sentence-transformers / any HF slug, needs PyTorch) is an
+# optional heavy extra — see requirements-local.txt. Not bundled in the Mac app.
 
 # --- AI streaming into the wiki ---
 anthropic>=0.40

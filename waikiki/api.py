@@ -15,12 +15,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import ai, collab, config, db, rag, render, store
+from . import ai, collab, config, db, embeddings, rag, render, store
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    embeddings.seed_library()
     # Pre-load the embedding model once, off the event loop, so the first search
     # and a concurrent reindex don't both try to cold-load it and race.
     async def _warm():
@@ -171,32 +172,42 @@ def search_view(request: Request, q: str = ""):
 
 
 @app.get("/settings", response_class=HTMLResponse)
-def settings_view(request: Request):
+def settings_view(request: Request, msg: str = "", error: str = ""):
     themes = sorted(p.stem for p in (_STATIC / "themes").glob("*.css"))
+    provider, model = embeddings.active()
     return templates.TemplateResponse(request,
         "settings.html",
-        _ctx(request, settings=db.all_settings(), themes=themes),
+        _ctx(request, settings=db.all_settings(), themes=themes,
+             library=embeddings.get_library(), active_provider=provider,
+             active_model=model, catalog=embeddings.fastembed_catalog(),
+             msg=msg, error=error),
     )
 
 
 @app.post("/settings")
-def settings_save(
-    theme: str = Form(...),
-    embedder_provider: str = Form(...),
-    embedder_local_model: str = Form(...),
-    embedder_voyage_model: str = Form(...),
-    reindex: str = Form(""),
-):
-    prev = (db.get_setting("embedder_provider"), db.get_setting("embedder_local_model"),
-            db.get_setting("embedder_voyage_model"))
+def settings_save(theme: str = Form(...)):
     db.set_setting("theme", theme)
-    db.set_setting("embedder_provider", embedder_provider)
-    db.set_setting("embedder_local_model", embedder_local_model)
-    db.set_setting("embedder_voyage_model", embedder_voyage_model)
-    now = (embedder_provider, embedder_local_model, embedder_voyage_model)
-    if reindex or prev != now:
-        rag.reindex_all()  # embedder changed → rebuild vectors
-    return RedirectResponse("/settings", status_code=303)
+    return RedirectResponse("/settings?msg=Theme+saved", status_code=303)
+
+
+@app.post("/settings/models/add")
+def settings_add_model(provider: str = Form(...), slug: str = Form(...)):
+    """Add an embedding model by slug, make it active, and re-embed all pages."""
+    result = embeddings.add_model(provider, slug)
+    if not result["ok"]:
+        return RedirectResponse(f"/settings?error={result['error']}", status_code=303)
+    rag.reindex_all()
+    return RedirectResponse(
+        f"/settings?msg=Added+and+activated+{slug}+(dim+{result['dim']})",
+        status_code=303,
+    )
+
+
+@app.post("/settings/models/activate")
+def settings_activate_model(provider: str = Form(...), model: str = Form(...)):
+    embeddings.set_active(provider, model)
+    rag.reindex_all()
+    return RedirectResponse(f"/settings?msg=Activated+{model}", status_code=303)
 
 
 @app.get("/image/{image_id}")

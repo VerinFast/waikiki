@@ -32,10 +32,10 @@ VOYAGE_API_KEY_ENV = "VOYAGE_API_KEY"
 # Defaults for the settings table (seeded on first run; editable in the UI) -------
 DEFAULT_SETTINGS = {
     "theme": "default",
-    # embedder: "local" (sentence-transformers / any HF model) or "voyage" (cloud)
-    "embedder_provider": "local",
-    "embedder_local_model": "sentence-transformers/all-MiniLM-L6-v2",  # dim 384
-    "embedder_voyage_model": "voyage-3.5",  # dim 1024
+    # Active embedder: provider in {fastembed, local, voyage} + a model slug.
+    # fastembed (ONNX, no torch) is the default so the packaged app stays small.
+    "embedder_provider": "fastembed",
+    "embedder_model": "BAAI/bge-small-en-v1.5",  # dim 384
 }
 
 # Retrieval / chunking -----------------------------------------------------------

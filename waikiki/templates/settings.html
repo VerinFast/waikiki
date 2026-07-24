@@ -2,6 +2,9 @@
 {% block title %}Settings — Waikiki{% endblock %}
 {% block content %}
   <h1>Settings</h1>
+  {% if msg %}<div class="banner ok">{{ msg }}</div>{% endif %}
+  {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
+
   <form method="post" action="/settings" class="settings">
     <fieldset>
       <legend>Theme</legend>
@@ -10,33 +13,55 @@
           <option value="{{ t }}" {{ 'selected' if settings.theme == t }}>{{ t }}</option>
         {% endfor %}
       </select>
+      <button class="btn primary" type="submit">Save theme</button>
     </fieldset>
-
-    <fieldset>
-      <legend>Embeddings (RAG)</legend>
-      <label>Provider
-        <select name="embedder_provider">
-          <option value="local" {{ 'selected' if settings.embedder_provider == 'local' }}>
-            local — sentence-transformers (offline, no key)</option>
-          <option value="voyage" {{ 'selected' if settings.embedder_provider == 'voyage' }}>
-            voyage — cloud (Anthropic-recommended, needs VOYAGE_API_KEY)</option>
-        </select>
-      </label>
-      <label>Local model (HuggingFace id)
-        <input type="text" name="embedder_local_model"
-               value="{{ settings.embedder_local_model }}">
-      </label>
-      <label>Voyage model
-        <input type="text" name="embedder_voyage_model"
-               value="{{ settings.embedder_voyage_model }}">
-      </label>
-      <label class="rag-toggle">
-        <input type="checkbox" name="reindex" value="1"> re-embed all pages on save
-      </label>
-      <p class="muted note">Changing the embedder changes the vector dimension, so the
-        vector index is rebuilt and all pages are re-embedded automatically.</p>
-    </fieldset>
-
-    <button class="btn primary" type="submit">Save settings</button>
   </form>
+
+  <section class="settings">
+    <fieldset>
+      <legend>Embedding model (RAG)</legend>
+      <p class="muted">Active: <strong>{{ active_provider }}</strong> · <code>{{ active_model }}</code></p>
+
+      {% if library %}
+        <table class="modeltable">
+          <tbody>
+          {% for m in library %}
+            <tr>
+              <td>{{ m.provider }}</td>
+              <td><code>{{ m.model }}</code></td>
+              <td>
+                {% if m.provider == active_provider and m.model == active_model %}
+                  <span class="badge human">active</span>
+                {% else %}
+                  <form method="post" action="/settings/models/activate">
+                    <input type="hidden" name="provider" value="{{ m.provider }}">
+                    <input type="hidden" name="model" value="{{ m.model }}">
+                    <button class="btn" type="submit">Activate</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
+
+      <h4>Add a model</h4>
+      <p class="muted note">Paste a HuggingFace slug and click Add. It downloads,
+        becomes active, and all pages are re-embedded. Changing the vector size is
+        handled automatically.</p>
+      <form method="post" action="/settings/models/add" class="addmodel">
+        <select name="provider">
+          <option value="fastembed">fastembed (ONNX, no PyTorch — recommended)</option>
+          <option value="local">local (sentence-transformers, needs PyTorch)</option>
+          <option value="voyage">voyage (cloud, needs VOYAGE_API_KEY)</option>
+        </select>
+        <input type="text" name="slug" list="fe-catalog" placeholder="e.g. BAAI/bge-small-en-v1.5" required>
+        <button class="btn primary" type="submit">Add model</button>
+      </form>
+      <datalist id="fe-catalog">
+        {% for s in catalog %}<option value="{{ s }}"></option>{% endfor %}
+      </datalist>
+    </fieldset>
+  </section>
 {% endblock %}

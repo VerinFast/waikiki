@@ -1,0 +1,7 @@
+# Optional "local" embedding provider: sentence-transformers + PyTorch.
+# Install this ONLY if you want to use arbitrary HuggingFace sentence-transformers
+# models via the "local" provider. It's heavy (PyTorch) and is deliberately NOT
+# bundled in the packaged Mac app — the app defaults to fastembed (ONNX).
+#
+#   pip install -r requirements-local.txt
+sentence-transformers>=3.0

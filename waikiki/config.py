@@ -7,11 +7,19 @@ so they can be edited from the browser without touching code.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 # Project root and data location -------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent
-DATA_DIR = Path(os.environ.get("WAIKIKI_DATA", ROOT / "data"))
+if os.environ.get("WAIKIKI_DATA"):
+    _default_data = Path(os.environ["WAIKIKI_DATA"])
+elif getattr(sys, "frozen", False):
+    # Packaged .app: never write inside the (possibly read-only) bundle.
+    _default_data = Path.home() / "Library" / "Application Support" / "Waikiki"
+else:
+    _default_data = ROOT / "data"
+DATA_DIR = _default_data
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 # Legacy single-DB path (pre multi-wiki). Migrated into wikis/main.db on first run.
 DB_PATH = Path(os.environ.get("WAIKIKI_DB", DATA_DIR / "waikiki.db"))

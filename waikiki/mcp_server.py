@@ -1,118 +1,199 @@
-"""MCP server for Waikiki — lets Claude (Claude Desktop / Code) edit the wiki,
-including writing into a page **live** so a human watching in the browser sees
-it appear in real time.
+"""MCP server for Waikiki — lets Claude edit the wiki, with strict wiki isolation.
 
-Run over stdio (for Claude Desktop):
+Waikiki hosts several fully-isolated wikis (e.g. Beaconlight, Crosslake,
+StartupOS). To prevent cross-wiki contamination, this server keeps its OWN
+active-wiki pointer, separate from whatever the human is viewing in the browser.
+Every content tool refuses to run until you pick a wiki with `switch_wiki`, and
+every result echoes the wiki it acted on.
 
-    python -m waikiki.mcp_server
+    Typical flow: list_wikis() → switch_wiki("beaconlight") → search()/get_page()/
+    append_to_page() … then switch_wiki("crosslake") to move deliberately.
 
-Live-edit tools (`append_to_page`, `replace_page`) POST to the running web app,
-which applies the change to the shared CRDT room and broadcasts it to every open
-browser. Read/search tools work directly against the SQLite file, so they still
-function even if the web app isn't running (in that case live edits fall back to
-a plain DB write with no real-time sync).
+Run over stdio (Claude Desktop):  python -m waikiki.mcp_server
+Live-edit tools POST to the running web app (which owns the CRDT rooms) with an
+X-Waikiki-Wiki header; read/search tools open the wiki's SQLite file directly.
 """
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import httpx
 from fastmcp import FastMCP
 
-from . import config, db, rag, store
+from . import config, db, rag, store, wikis
 
-mcp = FastMCP("waikiki")
 WEB = config.WEB_URL
+_ACTIVE_FILE = config.DATA_DIR / "mcp_active_wiki"
+
+mcp = FastMCP(
+    "waikiki",
+    instructions=(
+        "Waikiki has multiple isolated wikis. You MUST call switch_wiki(slug) "
+        "before reading or writing pages; content tools error otherwise. Wikis "
+        "never share content — switching is the only way to cross between them. "
+        "Every result includes the 'wiki' it acted on; check it to avoid mixing "
+        "contexts."
+    ),
+)
 
 
-def _post_live(path: str, payload: dict) -> dict | None:
-    """POST to the running web app; return None if it's unreachable."""
+def _load_active() -> str | None:
     try:
-        r = httpx.post(f"{WEB}{path}", json=payload, timeout=15)
-        r.raise_for_status()
-        return r.json()
+        val = _ACTIVE_FILE.read_text().strip()
+        return val if val and wikis.exists(val) else None
     except Exception:
         return None
 
 
+def _save_active(slug: str) -> None:
+    try:
+        _ACTIVE_FILE.write_text(slug)
+    except Exception:
+        pass
+
+
+_ACTIVE: str | None = None
+
+
+def _require_wiki() -> str:
+    if _ACTIVE is None:
+        raise RuntimeError(
+            "No active wiki. Call list_wikis() then switch_wiki(slug) before "
+            "reading or writing pages."
+        )
+    db.current_wiki.set(_ACTIVE)  # scope direct DB access to this wiki
+    return _ACTIVE
+
+
+def _headers() -> dict:
+    return {"X-Waikiki-Wiki": _ACTIVE} if _ACTIVE else {}
+
+
+# --- Wiki selection -----------------------------------------------------------
+
 @mcp.tool
-def list_pages() -> list[dict]:
-    """List all wiki pages (slug, title, last-updated)."""
-    return store.list_pages()
+def list_wikis() -> dict:
+    """List the available isolated wikis and which one is currently active."""
+    return {"active": _ACTIVE, "wikis": wikis.list_wikis()}
+
+
+@mcp.tool
+def current_wiki() -> dict:
+    """Which wiki is active for you right now (None until you switch_wiki)."""
+    return {"active": _ACTIVE}
+
+
+@mcp.tool
+def switch_wiki(slug: str) -> dict:
+    """Switch your active wiki. Required before any page read/write. This does
+    NOT change what the human sees in their browser."""
+    global _ACTIVE
+    if not wikis.exists(slug):
+        return {"error": f"no wiki '{slug}'", "wikis": [w["slug"] for w in wikis.list_wikis()]}
+    _ACTIVE = slug
+    _save_active(slug)
+    return {"active": _ACTIVE, "name": wikis.name_of(slug)}
+
+
+@mcp.tool
+def create_wiki(name: str) -> dict:
+    """Create a new isolated wiki and switch to it."""
+    global _ACTIVE
+    slug = wikis.create_wiki(name)
+    _ACTIVE = slug
+    _save_active(slug)
+    return {"active": slug, "name": name}
+
+
+# --- Pages (all scoped to the active wiki) ------------------------------------
+
+@mcp.tool
+def list_pages() -> dict:
+    """List pages in the active wiki."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "pages": store.list_pages()}
 
 
 @mcp.tool
 def get_page(slug: str) -> dict:
     """Get a page's title and current markdown (reflects unsaved live edits)."""
+    wiki = _require_wiki()
     page = store.get_page(slug)
     if not page:
-        return {"error": f"no page with slug '{slug}'"}
-    # Prefer the live (possibly unsaved) text from the running web app.
+        return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
     try:
-        r = httpx.get(f"{WEB}/api/collab/{slug}/live", timeout=10)
+        r = httpx.get(f"{WEB}/api/collab/{slug}/live", headers=_headers(), timeout=10)
         markdown = r.json()["markdown"] if r.status_code == 200 else page["markdown"]
     except Exception:
         markdown = page["markdown"]
-    return {"slug": page["slug"], "title": page["title"], "markdown": markdown}
+    return {"wiki": wiki, "slug": page["slug"], "title": page["title"], "markdown": markdown}
 
 
 @mcp.tool
 def create_page(title: str, markdown: str = "") -> dict:
-    """Create a new wiki page. Returns its slug (then edit it live with the
-    append_to_page / replace_page tools)."""
+    """Create a new page in the active wiki."""
+    wiki = _require_wiki()
     page = store.create_page(title, markdown, author="ai")
-    return {"slug": page["slug"], "title": page["title"]}
+    return {"wiki": wiki, "slug": page["slug"], "title": page["title"]}
 
 
 @mcp.tool
 def append_to_page(slug: str, text: str) -> dict:
-    """Append text to a page **live** — anyone viewing it in the editor sees it
-    stream in immediately. Call repeatedly to write incrementally, as if typing
-    into the document beside the human. Falls back to a plain save if the web app
-    isn't running."""
-    result = _post_live(f"/api/collab/{slug}/append", {"text": text})
-    if result is not None:
-        return {"slug": slug, "live": True, "length": result.get("length")}
+    """Append text to a page **live** in the active wiki — anyone viewing it sees
+    it stream in. Call repeatedly to write incrementally."""
+    wiki = _require_wiki()
+    try:
+        r = httpx.post(f"{WEB}/api/collab/{slug}/append", json={"text": text},
+                       headers=_headers(), timeout=15)
+        if r.status_code == 200:
+            return {"wiki": wiki, "slug": slug, "live": True, "length": r.json().get("length")}
+    except Exception:
+        pass
     page = store.get_page(slug)  # headless fallback: no live sync
     if not page:
-        return {"error": f"no page with slug '{slug}'"}
+        return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
     store.update_page(slug, page["title"], page["markdown"] + text, author="ai")
-    return {"slug": slug, "live": False}
+    return {"wiki": wiki, "slug": slug, "live": False}
 
 
 @mcp.tool
 def replace_page(slug: str, markdown: str) -> dict:
-    """Replace a page's entire body **live**. Falls back to a plain save if the
-    web app isn't running."""
-    result = _post_live(f"/api/collab/{slug}/replace", {"markdown": markdown})
-    if result is not None:
-        return {"slug": slug, "live": True, "length": result.get("length")}
+    """Replace a page's entire body **live** in the active wiki."""
+    wiki = _require_wiki()
+    try:
+        r = httpx.post(f"{WEB}/api/collab/{slug}/replace", json={"markdown": markdown},
+                       headers=_headers(), timeout=15)
+        if r.status_code == 200:
+            return {"wiki": wiki, "slug": slug, "live": True, "length": r.json().get("length")}
+    except Exception:
+        pass
     page = store.get_page(slug)
     if not page:
-        return {"error": f"no page with slug '{slug}'"}
+        return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
     store.update_page(slug, page["title"], markdown, author="ai")
-    return {"slug": slug, "live": False}
+    return {"wiki": wiki, "slug": slug, "live": False}
 
 
 @mcp.tool
 def delete_page(slug: str) -> dict:
-    """Delete a wiki page by slug."""
-    return {"deleted": store.delete_page(slug), "slug": slug}
+    """Delete a page from the active wiki."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "deleted": store.delete_page(slug), "slug": slug}
 
 
 @mcp.tool
-def search(query: str, k: int = 6) -> list[dict]:
-    """Hybrid BM25 + vector search over the wiki (RAG). Returns ranked snippets
-    with their source page, for grounding answers or finding what to edit."""
-    return rag.search_chunks(query, k)
+def search(query: str, k: int = 6) -> dict:
+    """Hybrid BM25 + vector search over the active wiki only (RAG)."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "results": rag.search_chunks(query, k)}
 
 
 def main() -> None:
+    global _ACTIVE
     db.init_db()
-    if "--http" in sys.argv:
-        mcp.run(transport="http", host="127.0.0.1", port=8788)
-    else:
-        mcp.run()  # stdio
+    _ACTIVE = _load_active()
+    mcp.run()
 
 
 if __name__ == "__main__":

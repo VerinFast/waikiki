@@ -13,7 +13,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("WAIKIKI_DATA", ROOT / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+# Legacy single-DB path (pre multi-wiki). Migrated into wikis/main.db on first run.
 DB_PATH = Path(os.environ.get("WAIKIKI_DB", DATA_DIR / "waikiki.db"))
+# Each wiki is an isolated SQLite file under here — no cross-wiki links possible.
+WIKIS_DIR = DATA_DIR / "wikis"
+# Wikis created automatically on first run (besides migrated "main").
+SEED_WIKIS = ["Beaconlight", "Crosslake", "StartupOS"]
 
 # Server -------------------------------------------------------------------------
 HOST = os.environ.get("WAIKIKI_HOST", "127.0.0.1")
@@ -36,6 +41,7 @@ DEFAULT_SETTINGS = {
     # fastembed (ONNX, no torch) is the default so the packaged app stays small.
     "embedder_provider": "fastembed",
     "embedder_model": "BAAI/bge-small-en-v1.5",  # dim 384
+    "model_library": '[{"provider": "fastembed", "model": "BAAI/bge-small-en-v1.5"}]',
 }
 
 # Retrieval / chunking -----------------------------------------------------------

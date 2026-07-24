@@ -12,6 +12,7 @@ the rest of the app uses (dict rows, `.fetchone/.fetchall`, `.lastrowid`,
 """
 from __future__ import annotations
 
+import contextvars
 import threading
 from typing import Optional
 
@@ -19,6 +20,28 @@ from . import config
 
 _local = threading.local()
 VEC_AVAILABLE = False  # set True once sqlite-vec loads in this process
+
+# The wiki whose database the current request/task operates on. Set per-request
+# by the web app's middleware (from the X-Waikiki-Wiki header or cookie) and set
+# explicitly by the MCP server / background flusher. Isolation depends on this.
+current_wiki: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar(
+    "current_wiki", default=None
+)
+_schema_ready: set[str] = set()  # wikis whose schema has been ensured this process
+
+
+def active_wiki() -> str:
+    """Resolve the active wiki slug, falling back to the registry default."""
+    from . import wikis
+
+    w = current_wiki.get()
+    if w and wikis.exists(w):
+        return w
+    d = wikis.default_slug()
+    if d is None:
+        wikis.ensure_initialized()
+        d = wikis.default_slug()
+    return d
 
 # --- Backend detection --------------------------------------------------------
 try:
@@ -102,22 +125,29 @@ def _load_sqlite_vec(conn) -> bool:
 
 
 def get_conn():
-    """One connection per thread (FastAPI handlers run across a threadpool)."""
-    conn = getattr(_local, "conn", None)
-    # Reconnect if the configured DB path changed (e.g. between tests).
-    if conn is not None and getattr(_local, "path", None) != str(config.DB_PATH):
-        conn = None
+    """Connection for the active wiki, cached per (thread, wiki)."""
+    from . import wikis
+
+    wiki = active_wiki()
+    conns = getattr(_local, "conns", None)
+    if conns is None:
+        conns = {}
+        _local.conns = conns
+    conn = conns.get(wiki)
     if conn is None:
+        path = str(wikis.db_path(wiki))
         if _HAS_APSW:
-            conn = _ApswConn(str(config.DB_PATH))
+            conn = _ApswConn(path)
         else:
-            conn = sqlite3.connect(config.DB_PATH, check_same_thread=False)
+            conn = sqlite3.connect(path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA foreign_keys=ON")
         _load_sqlite_vec(conn)
-        _local.conn = conn
-        _local.path = str(config.DB_PATH)
+        conns[wiki] = conn
+    if wiki not in _schema_ready:
+        _ensure_schema(conn)
+        _schema_ready.add(wiki)
     return conn
 
 
@@ -198,14 +228,21 @@ END;
 """
 
 
-def init_db() -> None:
-    conn = get_conn()
+def _ensure_schema(conn) -> None:
     conn.executescript(SCHEMA)
     for key, value in config.DEFAULT_SETTINGS.items():
         conn.execute(
             "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value)
         )
     conn.commit()
+
+
+def init_db() -> None:
+    """Ensure the wiki registry exists and the active/default wiki is schema-ready."""
+    from . import wikis
+
+    wikis.ensure_initialized()
+    get_conn()  # lazily runs _ensure_schema for the active wiki
 
 
 def ensure_vec_table(dim: int) -> None:

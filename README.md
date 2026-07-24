@@ -21,6 +21,22 @@ time**, seeing each other's changes live.
 | **Real-time co-editing (CRDT)** | **Yjs / `pycrdt` room per page; browser + Claude edit live with presence** |
 | AI streaming | Claude writes into the live doc via MCP; plus an optional pull-model "Generate" button |
 
+## Multiple isolated wikis
+
+Waikiki hosts several **fully isolated** wikis (e.g. Beaconlight, Crosslake,
+StartupOS) — each is its own SQLite file under `data/wikis/`. Pages, search, and
+`[[wiki links]]` **never cross between wikis**: a link resolves only within the
+active wiki's own database, so contamination is structurally impossible.
+
+- **Humans** switch with the wiki dropdown in the header (a per-browser cookie).
+- **Claude** has a *separate* active wiki, changed only with the MCP
+  `switch_wiki` tool. Every content tool refuses to run until a wiki is chosen
+  and **echoes the wiki it acted on**, so the AI can never silently cross wikis.
+
+The two are independent by design — the human browsing Crosslake doesn't move
+Claude, and vice-versa. To co-edit, ask Claude to `switch_wiki` to the one you're
+in.
+
 ## How the collaboration works
 
 ```
@@ -106,8 +122,10 @@ Restart Claude Desktop. Then, with a page's editor open in your browser, ask
 Claude to "add a section on X to the kayaking page" and watch it type in beside
 you.
 
-MCP tools: `list_pages`, `get_page`, `create_page`, `append_to_page` (live),
-`replace_page` (live), `delete_page`, `search` (hybrid RAG).
+MCP tools: `list_wikis`, `current_wiki`, `switch_wiki`, `create_wiki` (wiki
+selection — required first), then `list_pages`, `get_page`, `create_page`,
+`append_to_page` (live), `replace_page` (live), `delete_page`, `search` (hybrid
+RAG) — all scoped to the active wiki.
 
 ## REST API
 

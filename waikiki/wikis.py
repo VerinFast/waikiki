@@ -1,0 +1,141 @@
+"""Wiki registry — the list of isolated wikis and which is the default.
+
+Each wiki is a separate SQLite file (``data/wikis/<slug>.db``). Physical
+separation is what guarantees the isolation the app promises: a page in one
+wiki can never link to or surface a page in another, because every lookup,
+search, and ``[[wiki link]]`` resolves against a single wiki's database.
+
+The registry itself is a small JSON file (``data/wikis.json``) read fresh on
+each call so the web app and the (separate-process) MCP server always agree.
+"""
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import threading
+from pathlib import Path
+
+from . import config
+
+_lock = threading.Lock()
+
+
+def _registry_path() -> Path:
+    return config.DATA_DIR / "wikis.json"
+
+
+def _wikis_dir() -> Path:
+    config.WIKIS_DIR.mkdir(parents=True, exist_ok=True)
+    return config.WIKIS_DIR
+
+
+def slugify(name: str) -> str:
+    s = re.sub(r"[^\w\s-]", "", (name or "").strip().lower())
+    return re.sub(r"[\s_-]+", "-", s).strip("-") or "wiki"
+
+
+def _load() -> dict:
+    p = _registry_path()
+    if p.exists():
+        try:
+            return json.loads(p.read_text())
+        except Exception:
+            pass
+    return {"wikis": [], "default": None}
+
+
+def _save(reg: dict) -> None:
+    _registry_path().write_text(json.dumps(reg, indent=2))
+
+
+def list_wikis() -> list[dict]:
+    return _load()["wikis"]
+
+
+def exists(slug: str) -> bool:
+    return any(w["slug"] == slug for w in list_wikis())
+
+
+def name_of(slug: str) -> str:
+    for w in list_wikis():
+        if w["slug"] == slug:
+            return w["name"]
+    return slug
+
+
+def default_slug() -> str | None:
+    reg = _load()
+    if reg.get("default") and exists(reg["default"]):
+        return reg["default"]
+    wl = reg["wikis"]
+    return wl[0]["slug"] if wl else None
+
+
+def db_path(slug: str) -> Path:
+    return _wikis_dir() / f"{slug}.db"
+
+
+def create_wiki(name: str) -> str:
+    """Register a new wiki; returns its unique slug. The DB file is created
+    lazily on first access (db.get_conn ensures the schema)."""
+    base = slugify(name)
+    with _lock:
+        reg = _load()
+        existing = {w["slug"] for w in reg["wikis"]}
+        slug, n = base, 2
+        while slug in existing:
+            slug, n = f"{base}-{n}", n + 1
+        reg["wikis"].append({"slug": slug, "name": name.strip() or slug})
+        if not reg.get("default"):
+            reg["default"] = slug
+        _save(reg)
+    return slug
+
+
+def delete_wiki(slug: str) -> bool:
+    with _lock:
+        reg = _load()
+        before = len(reg["wikis"])
+        reg["wikis"] = [w for w in reg["wikis"] if w["slug"] != slug]
+        if len(reg["wikis"]) == before:
+            return False
+        if reg.get("default") == slug:
+            reg["default"] = reg["wikis"][0]["slug"] if reg["wikis"] else None
+        _save(reg)
+    for suffix in ("", "-wal", "-shm"):
+        f = Path(str(db_path(slug)) + suffix)
+        if f.exists():
+            f.unlink()
+    return True
+
+
+def ensure_initialized() -> None:
+    """First-run setup: migrate the legacy single DB into a 'main' wiki and
+    seed the named wikis. Idempotent."""
+    if _load()["wikis"]:
+        return
+    with _lock:
+        reg = _load()
+        if reg["wikis"]:
+            return
+        wdir = _wikis_dir()
+        wikis: list[dict] = []
+
+        # Migrate the pre-multi-wiki database into "main", if present.
+        legacy = config.DB_PATH
+        if legacy.exists():
+            for suffix in ("", "-wal", "-shm"):
+                src = Path(str(legacy) + suffix)
+                if src.exists():
+                    shutil.move(str(src), str(wdir / ("main.db" + suffix)))
+            wikis.append({"slug": "main", "name": "Main"})
+        else:
+            wikis.append({"slug": "main", "name": "Main"})
+
+        for name in config.SEED_WIKIS:
+            slug = slugify(name)
+            if not any(w["slug"] == slug for w in wikis):
+                wikis.append({"slug": slug, "name": name})
+
+        _save({"wikis": wikis, "default": "main"})

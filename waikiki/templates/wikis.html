@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Wikis — Waikiki{% endblock %}
+{% block content %}
+  <h1>Wikis</h1>
+  {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
+  <p class="muted">Each wiki is a fully isolated database — pages, search, and
+    <code>[[links]]</code> never cross between them.</p>
+
+  <table class="modeltable">
+    <tbody>
+    {% for w in wikis %}
+      <tr>
+        <td><strong>{{ w.name }}</strong> <span class="muted">/{{ w.slug }}</span>
+          {% if w.slug == current_wiki %}<span class="badge human">active</span>{% endif %}
+        </td>
+        <td>
+          <form method="post" action="/switch-wiki">
+            <input type="hidden" name="wiki" value="{{ w.slug }}">
+            <button class="btn" type="submit">Open</button>
+          </form>
+        </td>
+        <td>
+          <form method="post" action="/wikis/{{ w.slug }}/delete"
+                onsubmit="return confirm('Delete the {{ w.name }} wiki and all its pages? This cannot be undone.')">
+            <button class="btn danger" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h4>Create a wiki</h4>
+  <form method="post" action="/wikis/create" class="addmodel">
+    <input type="text" name="name" placeholder="e.g. Beaconlight" required>
+    <button class="btn primary" type="submit">Create wiki</button>
+  </form>
+{% endblock %}

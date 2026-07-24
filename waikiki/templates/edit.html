@@ -51,7 +51,8 @@
     window.WAIKIKI = {
       collab: {{ 'true' if collab else 'false' }},
       slug: {{ page.slug | tojson }},
-      wsBase: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/collab'
+      wsBase: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host
+              + '/collab/' + {{ current_wiki | tojson }}
     };
   </script>
   <script type="module" src="/static/app.js"></script>

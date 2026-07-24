@@ -15,19 +15,18 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import ai, collab, config, db, embeddings, rag, render, store
+from . import ai, collab, config, db, embeddings, rag, render, store, wikis
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db.init_db()
-    embeddings.seed_library()
-    # Pre-load the embedding model once, off the event loop, so the first search
-    # and a concurrent reindex don't both try to cold-load it and race.
+    db.init_db()  # ensures the wiki registry + default wiki schema
+    # Pre-load the embedding model once (under the default wiki context), off the
+    # event loop, so the first search and a concurrent reindex don't race to load.
     async def _warm():
         try:
             import anyio
-            from . import embeddings
+            db.current_wiki.set(wikis.default_slug())
             await anyio.to_thread.run_sync(lambda: embeddings.get_embedder().embed(["warmup"]))
         except Exception as exc:
             print(f"[waikiki] embedder warmup skipped: {exc}")
@@ -43,6 +42,48 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Waikiki", version="0.1.0", lifespan=lifespan)
+
+
+def _resolve_wiki(scope) -> str:
+    """Pick the active wiki for a request: /collab/{wiki}/... path segment, then
+    the X-Waikiki-Wiki header (MCP), then the waikiki_wiki cookie (browser)."""
+    path = scope.get("path", "") or ""
+    if path.startswith("/collab/"):
+        parts = path.split("/")
+        if len(parts) >= 3 and parts[2] and wikis.exists(parts[2]):
+            return parts[2]
+    headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+    cand = headers.get("x-waikiki-wiki")
+    if cand and wikis.exists(cand):
+        return cand
+    for part in headers.get("cookie", "").split(";"):
+        if "=" in part:
+            k, v = part.strip().split("=", 1)
+            if k == "waikiki_wiki" and wikis.exists(v):
+                return v
+    return wikis.default_slug() or "main"
+
+
+class WikiContextMiddleware:
+    """Pure-ASGI middleware: bind db.current_wiki for the whole request in one
+    task, so the contextvar reaches sync endpoints (a BaseHTTPMiddleware would
+    run downstream in a separate task and lose it)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            token = db.current_wiki.set(_resolve_wiki(scope))
+            try:
+                await self.app(scope, receive, send)
+            finally:
+                db.current_wiki.reset(token)
+        else:
+            await self.app(scope, receive, send)
+
+
+app.add_middleware(WikiContextMiddleware)
 
 _STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
@@ -76,11 +117,15 @@ class _StarletteChannel:
         return await self._ws.receive_bytes()
 
 
-@app.websocket("/collab/{slug}")
-async def collab_ws(websocket: WebSocket, slug: str):
+@app.websocket("/collab/{wiki}/{slug}")
+async def collab_ws(websocket: WebSocket, wiki: str, slug: str):
+    if not wikis.exists(wiki):
+        await websocket.close(code=4004)
+        return
     await websocket.accept()
-    await collab.ensure_room(slug)  # seed from DB before serving
-    channel = _StarletteChannel(websocket, slug)
+    db.current_wiki.set(wiki)
+    await collab.ensure_room(wiki, slug)  # seed from the wiki's DB before serving
+    channel = _StarletteChannel(websocket, collab.room_key(wiki, slug))
     try:
         await collab.server.serve(channel)
     except WebSocketDisconnect:
@@ -88,13 +133,17 @@ async def collab_ws(websocket: WebSocket, slug: str):
 
 
 def _ctx(request: Request, **extra) -> dict:
-    """Common template context: active theme, nav pages, pygments styles."""
+    """Common template context: active wiki, theme, nav pages, pygments styles."""
+    wiki = db.active_wiki()
     base = {
         "request": request,
         "theme": db.get_setting("theme", "default"),
         "nav_pages": store.list_pages()[:50],
         "pygments_css": render.pygments_css(),
         "vec_available": db.VEC_AVAILABLE,
+        "current_wiki": wiki,
+        "current_wiki_name": wikis.name_of(wiki),
+        "wikis": wikis.list_wikis(),
     }
     base.update(extra)
     return base
@@ -109,6 +158,37 @@ def home(request: Request):
     return templates.TemplateResponse(request,
         "index.html", _ctx(request, pages=store.list_pages())
     )
+
+
+@app.get("/wikis", response_class=HTMLResponse)
+def wikis_manage(request: Request, error: str = ""):
+    return templates.TemplateResponse(request,
+        "wikis.html", _ctx(request, error=error))
+
+
+@app.post("/switch-wiki")
+def switch_wiki(wiki: str = Form(...)):
+    resp = RedirectResponse("/", status_code=303)
+    if wikis.exists(wiki):
+        resp.set_cookie("waikiki_wiki", wiki, max_age=60 * 60 * 24 * 365,
+                        samesite="lax")
+    return resp
+
+
+@app.post("/wikis/create")
+def wikis_create(name: str = Form(...)):
+    if not name.strip():
+        return RedirectResponse("/wikis?error=Name+is+required", status_code=303)
+    slug = wikis.create_wiki(name)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie("waikiki_wiki", slug, max_age=60 * 60 * 24 * 365, samesite="lax")
+    return resp
+
+
+@app.post("/wikis/{slug}/delete")
+def wikis_delete(slug: str):
+    wikis.delete_wiki(slug)
+    return RedirectResponse("/wikis", status_code=303)
 
 
 @app.get("/new", response_class=HTMLResponse)
@@ -142,7 +222,7 @@ async def edit_page(request: Request, slug: str):
         raise HTTPException(404, "Page not found")
     # Seed the CRDT room from the DB before the browser's websocket connects,
     # so the live document already has the page content.
-    await collab.ensure_room(slug)
+    await collab.ensure_room(db.active_wiki(), slug)
     return templates.TemplateResponse(request,
         "edit.html", _ctx(request, page=page, is_new=False, collab=True)
     )
@@ -312,27 +392,30 @@ class CollabReplace(BaseModel):
 
 @app.post("/api/collab/{slug}/append")
 async def api_collab_append(slug: str, body: CollabAppend):
+    wiki = db.active_wiki()
     if not store.get_page(slug):
         raise HTTPException(404, "Page not found")
-    text = await collab.append_text(slug, body.text)
-    return {"slug": slug, "length": len(text)}
+    text = await collab.append_text(wiki, slug, body.text)
+    return {"wiki": wiki, "slug": slug, "length": len(text)}
 
 
 @app.post("/api/collab/{slug}/replace")
 async def api_collab_replace(slug: str, body: CollabReplace):
+    wiki = db.active_wiki()
     if not store.get_page(slug):
         raise HTTPException(404, "Page not found")
-    text = await collab.replace_text(slug, body.markdown)
-    return {"slug": slug, "length": len(text)}
+    text = await collab.replace_text(wiki, slug, body.markdown)
+    return {"wiki": wiki, "slug": slug, "length": len(text)}
 
 
 @app.get("/api/collab/{slug}/live")
 async def api_collab_live(slug: str):
     """Current live (possibly unsaved) markdown for a page."""
-    md = await collab.live_markdown(slug)
+    wiki = db.active_wiki()
+    md = await collab.live_markdown(wiki, slug)
     if md is None:
         page = store.get_page(slug)
         if not page:
             raise HTTPException(404, "Page not found")
         md = page["markdown"]
-    return {"slug": slug, "markdown": md}
+    return {"wiki": wiki, "slug": slug, "markdown": md}

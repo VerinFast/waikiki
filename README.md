@@ -52,8 +52,14 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-First run downloads the local embedding model (`all-MiniLM-L6-v2`, ~90 MB) and
-warms it at startup.
+First run downloads the default embedding model (`fastembed` BGE-small, ONNX,
+~130 MB) and warms it at startup. No PyTorch required.
+
+**Embedding models are managed in the UI** — Settings → *Embedding model* → paste
+a HuggingFace slug and click **Add model**. It downloads, becomes active, and all
+pages are re-embedded (vector-dimension changes handled automatically). The
+`fastembed` provider (ONNX, default) needs no PyTorch; the `local` provider
+(any sentence-transformers slug) needs the optional `requirements-local.txt`.
 
 ## Run the web app
 
@@ -61,6 +67,20 @@ warms it at startup.
 python run.py
 # → http://127.0.0.1:8787
 ```
+
+## Desktop app (macOS)
+
+Waikiki ships as a native `.app` (a WKWebView window over the local server) — see
+[Releases](https://github.com/VerinFast/waikiki/releases). Or build it yourself:
+
+```bash
+bash scripts/build_macos.sh
+# → dist/Waikiki.app  (+ dist/Waikiki-macos.zip)
+```
+
+The app is currently **unsigned**, so on first launch macOS Gatekeeper will warn:
+right-click the app → **Open** → **Open** to allow it (once). Signing/notarization
+is a later step.
 
 ## Connect Claude Desktop (MCP)
 

@@ -245,6 +245,42 @@ def init_db() -> None:
     get_conn()  # lazily runs _ensure_schema for the active wiki
 
 
+def backup_db(src_path: str, dest_path: str) -> None:
+    """Write a consistent single-file copy of a SQLite DB (safe while it's in use).
+    Used for Save/Export and Open/Import of wikis."""
+    if _HAS_APSW:
+        src = apsw.Connection(src_path)
+        dest = apsw.Connection(dest_path)
+        try:
+            with dest.backup("main", src, "main") as b:
+                b.step()  # copy all pages
+        finally:
+            dest.close()
+            src.close()
+    else:  # pragma: no cover
+        s = sqlite3.connect(src_path)
+        d = sqlite3.connect(dest_path)
+        try:
+            s.backup(d)
+        finally:
+            d.close()
+            s.close()
+
+
+def is_wiki_db(path: str) -> bool:
+    """True if `path` looks like a Waikiki wiki file (has our core tables)."""
+    try:
+        conn = apsw.Connection(path) if _HAS_APSW else sqlite3.connect(path)
+        try:
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            conn.close()
+        return {"pages", "settings"} <= tables
+    except Exception:
+        return False
+
+
 def ensure_vec_table(dim: int) -> None:
     """Create (or recreate on dimension change) the sqlite-vec vector table.
 

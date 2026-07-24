@@ -57,6 +57,38 @@ def main() -> None:
 
     import webview
 
+    class DesktopApi:
+        """Exposed to the page as window.pywebview.api — native Save/Open dialogs."""
+
+        def save_wiki(self, slug):
+            from waikiki import wikis
+            win = webview.windows[0]
+            result = win.create_file_dialog(
+                webview.SAVE_DIALOG, save_filename=f"{wikis.name_of(slug)}.wiki")
+            if not result:
+                return {"ok": False, "cancelled": True}
+            path = result if isinstance(result, str) else result[0]
+            try:
+                wikis.export_to(slug, path)
+                return {"ok": True, "path": path}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+
+        def open_wiki(self):
+            from waikiki import wikis
+            win = webview.windows[0]
+            result = win.create_file_dialog(
+                webview.OPEN_DIALOG,
+                file_types=("Waikiki wiki (*.wiki;*.db)", "All files (*.*)"))
+            if not result:
+                return {"ok": False, "cancelled": True}
+            path = result[0] if isinstance(result, (list, tuple)) else result
+            try:
+                slug = wikis.import_from(path)
+                return {"ok": True, "slug": slug, "name": wikis.name_of(slug)}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+
     server = uvicorn.Server(
         uvicorn.Config(fastapi_app, host=host, port=port, log_level="warning")
     )
@@ -72,7 +104,8 @@ def main() -> None:
         sys.exit(1)
 
     webview.create_window(
-        "Waikiki", f"http://{host}:{port}/", width=1200, height=820, min_size=(800, 600)
+        "Waikiki", f"http://{host}:{port}/", width=1200, height=820,
+        min_size=(800, 600), js_api=DesktopApi(),
     )
     webview.start()  # blocks until the window is closed
 

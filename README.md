@@ -38,6 +38,21 @@ The two are independent by design — the human browsing Crosslake doesn't move
 Claude, and vice-versa. To co-edit, ask Claude to `switch_wiki` to the one you're
 in.
 
+### Save / Open wikis to files
+
+Because each wiki is a single self-contained SQLite file, you can **Save** one to
+a location you choose and **Open** an external wiki file back in — from the
+**Wikis** page (⚙ in the header):
+
+- **Save to file…** writes a consistent `.wiki` snapshot (safe even while the wiki
+  is in use). In the desktop app this is a native Save dialog; in a browser it
+  downloads the file.
+- **Open wiki file…** validates the file and brings it in as a new isolated wiki.
+  Native Open dialog in the app; a file upload in a browser.
+
+`.wiki` files are just SQLite, so they're easy to back up, move between machines,
+or share.
+
 ## How the collaboration works
 
 ```

@@ -1,10 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Wikis — Waikiki{% endblock %}
 {% block content %}
-  <h1>Wikis</h1>
+  <div class="article-head">
+    <h1>Wikis</h1>
+    <div class="tools">
+      <button class="btn" type="button" id="open-file">Open wiki file…</button>
+    </div>
+  </div>
   {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
-  <p class="muted">Each wiki is a fully isolated database — pages, search, and
-    <code>[[links]]</code> never cross between them.</p>
+  <p class="muted">Each wiki is a fully isolated database file — pages, search, and
+    <code>[[links]]</code> never cross between them. Save a wiki to a file to back
+    it up or move it; open one to bring it in.</p>
+
+  {# Browser fallback for Open (the desktop app uses a native dialog instead). #}
+  <form id="import-form" method="post" action="/wikis/import"
+        enctype="multipart/form-data" class="addmodel" style="display:none">
+    <input type="file" name="file" accept=".wiki,.db" required>
+    <button class="btn primary" type="submit">Open</button>
+  </form>
 
   <table class="modeltable">
     <tbody>
@@ -16,8 +29,11 @@
         <td>
           <form method="post" action="/switch-wiki">
             <input type="hidden" name="wiki" value="{{ w.slug }}">
-            <button class="btn" type="submit">Open</button>
+            <button class="btn" type="submit">Switch to</button>
           </form>
+        </td>
+        <td>
+          <button class="btn" type="button" data-save="{{ w.slug }}">Save to file…</button>
         </td>
         <td>
           <form method="post" action="/wikis/{{ w.slug }}/delete"
@@ -35,4 +51,37 @@
     <input type="text" name="name" placeholder="e.g. Beaconlight" required>
     <button class="btn primary" type="submit">Create wiki</button>
   </form>
+
+  <script>
+    function native() { return window.pywebview && window.pywebview.api; }
+
+    document.querySelectorAll('[data-save]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var slug = btn.getAttribute('data-save');
+        if (native()) {
+          window.pywebview.api.save_wiki(slug).then(function (r) {
+            if (r.ok) alert('Saved to ' + r.path);
+            else if (!r.cancelled) alert('Save failed: ' + r.error);
+          });
+        } else {
+          window.location = '/wikis/' + slug + '/export';   // browser: download
+        }
+      });
+    });
+
+    document.getElementById('open-file').addEventListener('click', function () {
+      if (native()) {
+        window.pywebview.api.open_wiki().then(function (r) {
+          if (r.ok) {
+            document.cookie = 'waikiki_wiki=' + r.slug + ';path=/;max-age=31536000';
+            window.location = '/';
+          } else if (!r.cancelled) {
+            alert('Open failed: ' + r.error);
+          }
+        });
+      } else {
+        document.getElementById('import-form').style.display = 'flex';  // browser: upload
+      }
+    });
+  </script>
 {% endblock %}

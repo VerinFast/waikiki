@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import (FastAPI, Form, HTTPException, Request, UploadFile,
                      WebSocket, WebSocketDisconnect)
-from fastapi.responses import (HTMLResponse, RedirectResponse,
+from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
                                StreamingResponse, Response)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -224,6 +225,31 @@ def wikis_create(name: str = Form(...)):
 def wikis_delete(slug: str):
     wikis.delete_wiki(slug)
     return RedirectResponse("/wikis", status_code=303)
+
+
+@app.get("/wikis/{slug}/export")
+def wikis_export(slug: str):
+    """Save a wiki to a downloadable .wiki file (browser fallback for Save)."""
+    if not wikis.exists(slug):
+        raise HTTPException(404, "No such wiki")
+    dest = Path(tempfile.mkdtemp()) / f"{slug}.wiki"
+    wikis.export_to(slug, str(dest))
+    return FileResponse(str(dest), filename=f"{wikis.name_of(slug)}.wiki",
+                        media_type="application/octet-stream")
+
+
+@app.post("/wikis/import")
+async def wikis_import(file: UploadFile):
+    """Open a wiki from an uploaded file (browser fallback for Open)."""
+    tmp = Path(tempfile.mkdtemp()) / (file.filename or "import.wiki")
+    tmp.write_bytes(await file.read())
+    try:
+        slug = wikis.import_from(str(tmp), name=Path(file.filename or "Imported").stem)
+    except ValueError as exc:
+        return RedirectResponse(f"/wikis?error={exc}", status_code=303)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie("waikiki_wiki", slug, max_age=60 * 60 * 24 * 365, samesite="lax")
+    return resp
 
 
 @app.get("/new", response_class=HTMLResponse)

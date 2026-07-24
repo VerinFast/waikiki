@@ -62,6 +62,28 @@ def test_wikilink_cannot_cross_wikis(wiki):
     assert store.get_page("shared") is None
 
 
+def test_export_import_roundtrip(wiki, tmp_path):
+    db.current_wiki.set("main")
+    store.create_page("Portable", "content about turtles that should survive export")
+
+    dest = tmp_path / "backup.wiki"
+    wikis.export_to("main", str(dest))
+    assert dest.exists() and db.is_wiki_db(str(dest))
+
+    slug = wikis.import_from(str(dest), name="Imported")
+    assert slug == "imported" and wikis.exists("imported")
+    db.current_wiki.set("imported")
+    assert any(p["slug"] == "portable" for p in store.list_pages())
+
+
+def test_import_rejects_non_wiki_file(wiki, tmp_path):
+    junk = tmp_path / "notawiki.wiki"
+    junk.write_bytes(b"this is not a sqlite database")
+    assert db.is_wiki_db(str(junk)) is False
+    with pytest.raises(ValueError):
+        wikis.import_from(str(junk))
+
+
 def test_mcp_requires_active_wiki(monkeypatch):
     monkeypatch.setattr(mcp_server, "_ACTIVE", None)
     with pytest.raises(RuntimeError):

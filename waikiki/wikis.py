@@ -16,7 +16,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from . import config
+from . import config, db
 
 _lock = threading.Lock()
 
@@ -108,6 +108,35 @@ def delete_wiki(slug: str) -> bool:
         if f.exists():
             f.unlink()
     return True
+
+
+def export_to(slug: str, dest_path: str) -> str:
+    """Save a wiki out to a file the user chose (a consistent SQLite snapshot)."""
+    if not exists(slug):
+        raise ValueError(f"no wiki '{slug}'")
+    db.backup_db(str(db_path(slug)), dest_path)
+    return dest_path
+
+
+def import_from(src_path: str, name: str | None = None) -> str:
+    """Open an external wiki file: validate it, copy it into the managed wikis
+    dir under a fresh slug, and register it. Returns the new slug."""
+    if not db.is_wiki_db(src_path):
+        raise ValueError("Not a Waikiki wiki file (missing pages/settings tables)")
+    display = (name or Path(src_path).stem or "Imported").strip()
+    base = slugify(display)
+    with _lock:
+        reg = _load()
+        existing = {w["slug"] for w in reg["wikis"]}
+        slug, n = base, 2
+        while slug in existing:
+            slug, n = f"{base}-{n}", n + 1
+        db.backup_db(src_path, str(db_path(slug)))  # consistent copy into the app
+        reg["wikis"].append({"slug": slug, "name": display})
+        if not reg.get("default"):
+            reg["default"] = slug
+        _save(reg)
+    return slug
 
 
 def ensure_initialized() -> None:

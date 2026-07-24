@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Help — Connect Claude — Waikiki{% endblock %}
+{% block content %}
+  <h1>Connect Claude</h1>
+  <p class="muted">Let Claude (via Claude Desktop) read and edit your wikis over
+    MCP, and co-edit pages with you live. The config below is filled in with this
+    install's real paths — just copy it in.</p>
+
+  <ol class="steps">
+    <li>Keep Waikiki running (this window). It serves at <code>{{ web_url }}</code>.</li>
+    <li>Open Claude Desktop’s config file (create it if it doesn’t exist):
+      <div class="copywrap">
+        <code id="cfgpath">{{ config_path }}</code>
+        <button class="btn" type="button" data-copy="cfgpath">Copy path</button>
+      </div>
+    </li>
+    <li>Paste this, then save. If you already have an <code>mcpServers</code>
+      block, add the <code>"waikiki"</code> entry inside it.
+      <div class="copywrap">
+        <pre id="cfgjson">{{ claude_config }}</pre>
+        <button class="btn primary" type="button" data-copy="cfgjson">Copy config</button>
+      </div>
+    </li>
+    <li><strong>Fully quit and reopen Claude Desktop</strong> (⌘Q — not just close
+      the window) so it picks up the new server.</li>
+    <li>In Claude, pick a wiki first — say <em>“list the waikiki wikis and switch
+      to Beaconlight”</em>. Claude must <code>switch_wiki</code> before it can read
+      or write pages; this keeps the wikis from mixing.</li>
+  </ol>
+
+  <h3>Try it</h3>
+  <p>Open a page’s editor here, then ask Claude:
+    <em>“In the Beaconlight wiki, add a ‘Getting started’ section to the Overview
+    page.”</em> Watch it type into your editor live, with a <span class="badge ai">Claude</span>
+    presence chip.</p>
+
+  <h3>What Claude can do</h3>
+  <ul>
+    <li><code>list_wikis</code>, <code>switch_wiki</code>, <code>current_wiki</code>,
+      <code>create_wiki</code> — pick which isolated wiki to work in (required first).</li>
+    <li><code>list_pages</code>, <code>get_page</code>, <code>search</code> — read &
+      hybrid-search the active wiki only.</li>
+    <li><code>create_page</code>, <code>append_to_page</code>,
+      <code>replace_page</code>, <code>delete_page</code> — write; append/replace
+      stream in live.</li>
+  </ul>
+  <p class="muted note">Every tool result names the wiki it acted on, so Claude
+    never silently crosses between wikis. Claude’s active wiki is independent of
+    the one you’re viewing here — tell it to <code>switch_wiki</code> to match.</p>
+
+  <script>
+    document.querySelectorAll('[data-copy]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var el = document.getElementById(btn.getAttribute('data-copy'));
+        navigator.clipboard.writeText(el.innerText.trim()).then(function () {
+          var t = btn.textContent; btn.textContent = 'Copied ✓';
+          setTimeout(function () { btn.textContent = t; }, 1500);
+        });
+      });
+    });
+  </script>
+{% endblock %}

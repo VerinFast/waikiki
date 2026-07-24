@@ -35,6 +35,14 @@ def _pick_port(host: str, start: int) -> int:
 
 
 def main() -> None:
+    # MCP mode: run the stdio MCP server instead of the window. Lets Claude
+    # Desktop launch the packaged .app directly as an MCP server (no source
+    # checkout needed) — see the in-app Help page for the copy-paste config.
+    if os.environ.get("WAIKIKI_MCP") or "--mcp" in sys.argv:
+        from waikiki import mcp_server
+        mcp_server.main()
+        return
+
     host = config.HOST
     port = _pick_port(host, config.PORT)
 

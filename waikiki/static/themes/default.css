@@ -88,6 +88,12 @@ mark{background:var(--mark)}
 .remote-caret>div{position:absolute;top:-1.4em;left:-2px;font-size:.65rem;color:#fff;background:#c0392b;
   padding:0 .3em;border-radius:3px;white-space:nowrap}
 
+.steps{line-height:1.8}
+.steps li{margin:.6rem 0}
+.copywrap{position:relative;margin:.5rem 0;display:flex;gap:.5rem;align-items:flex-start}
+.copywrap pre{flex:1;background:var(--code-bg);padding:1rem;border-radius:8px;overflow:auto;margin:0}
+.copywrap code{background:var(--code-bg);padding:.4rem .6rem;border-radius:6px;flex:1;word-break:break-all}
+.copywrap .btn{white-space:nowrap}
 .banner{padding:.6rem .9rem;border-radius:8px;margin:.6rem 0}
 .banner.ok{background:#e6ffec;color:#0a5f2c;border:1px solid #a6e5b8}
 .banner.err{background:#ffebe9;color:#a11;border:1px solid #f3b0ab}

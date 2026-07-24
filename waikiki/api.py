@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -158,6 +159,40 @@ def home(request: Request):
     return templates.TemplateResponse(request,
         "index.html", _ctx(request, pages=store.list_pages())
     )
+
+
+def _claude_config(request: Request) -> dict:
+    """Build the exact Claude Desktop MCP config for THIS install, with real
+    paths auto-filled — so the Help page is copy-paste ready."""
+    web_url = f"{request.url.scheme}://{request.url.netloc}"
+    data_dir = str(config.DATA_DIR)
+    if getattr(sys, "frozen", False):
+        # Packaged .app: Claude Desktop launches the binary itself in MCP mode.
+        server = {
+            "command": sys.executable,
+            "env": {"WAIKIKI_MCP": "1", "WAIKIKI_DATA": data_dir,
+                    "WAIKIKI_WEB_URL": web_url},
+        }
+    else:
+        # Running from source: launch the venv Python with the package.
+        server = {
+            "command": sys.executable,
+            "args": ["-m", "waikiki.mcp_server"],
+            "env": {"PYTHONPATH": str(config.ROOT), "WAIKIKI_DATA": data_dir,
+                    "WAIKIKI_WEB_URL": web_url},
+        }
+    return {"mcpServers": {"waikiki": server}}
+
+
+@app.get("/help", response_class=HTMLResponse)
+def help_page(request: Request):
+    return templates.TemplateResponse(request, "help.html", _ctx(
+        request,
+        claude_config=json.dumps(_claude_config(request), indent=2),
+        config_path=str(Path.home() / "Library" / "Application Support" /
+                        "Claude" / "claude_desktop_config.json"),
+        web_url=f"{request.url.scheme}://{request.url.netloc}",
+    ))
 
 
 @app.get("/wikis", response_class=HTMLResponse)

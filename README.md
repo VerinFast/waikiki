@@ -8,7 +8,8 @@ time**, seeing each other's changes live.
 
 | Requirement | How |
 |---|---|
-| Python + SQLite-backed | FastAPI app; one `data/waikiki.db` holds pages, images, FTS index, and vectors |
+| Python + SQLite-backed | FastAPI app; one SQLite file per wiki (`data/wikis/<slug>.db`) holds its pages, images, FTS index, and vectors |
+| Multiple isolated wikis | Separate DB per wiki; pages, search, and `[[links]]` never cross |
 | Themes | Swappable CSS in `waikiki/static/themes/` (default / dark / sepia) |
 | Images | Upload / paste / drag → stored in SQLite, served at `/image/{id}` |
 | Extensible | Clean `store` + `rag` + `collab` service layers; open-source deps |
@@ -18,7 +19,7 @@ time**, seeing each other's changes live.
 | Human editing | EasyMDE editor with live preview |
 | Versioning | Every save snapshots to `page_versions` (human / ai / collab authored) |
 | BM25 / RAG | SQLite **FTS5 `bm25()`** + **sqlite-vec** vectors, fused with RRF |
-| **Real-time co-editing (CRDT)** | **Yjs / `pycrdt` room per page; browser + Claude edit live with presence** |
+| **Real-time co-editing (CRDT)** | **Yjs / `pycrdt` room per (wiki, page); browser + Claude edit live with presence** |
 | AI streaming | Claude writes into the live doc via MCP; plus an optional pull-model "Generate" button |
 
 ## Multiple isolated wikis
@@ -98,19 +99,32 @@ The app is currently **unsigned**, so on first launch macOS Gatekeeper will warn
 right-click the app → **Open** → **Open** to allow it (once). Signing/notarization
 is a later step.
 
+The packaged app stores its data in **`~/Library/Application Support/Waikiki`**
+(not inside the bundle), so it survives moving/replacing the app. Override with
+`WAIKIKI_DATA`.
+
 ## Connect Claude Desktop (MCP)
 
-Add Waikiki to `~/Library/Application Support/Claude/claude_desktop_config.json`
-(keep the web app running so live edits reach your browser):
+**Easiest:** open Waikiki and click **Connect Claude** in the header (or visit
+`/help`). That page shows a config **pre-filled with this install's real paths**
+and a copy button — paste it into Claude Desktop's config and you're done.
+
+The config file lives at
+`~/Library/Application Support/Claude/claude_desktop_config.json` (create it if
+it doesn't exist). Keep Waikiki running, paste the config, then **fully quit and
+reopen Claude Desktop** (⌘Q). Two forms:
+
+**A) Packaged app** — Claude Desktop launches the `.app` itself in MCP mode
+(no source checkout needed). Replace the path with where your app lives:
 
 ```json
 {
   "mcpServers": {
     "waikiki": {
-      "command": "/Users/jason/localdev/waikiki/.venv/bin/python",
-      "args": ["-m", "waikiki.mcp_server"],
+      "command": "/Applications/Waikiki.app/Contents/MacOS/Waikiki",
       "env": {
-        "PYTHONPATH": "/Users/jason/localdev/waikiki",
+        "WAIKIKI_MCP": "1",
+        "WAIKIKI_DATA": "/Users/YOU/Library/Application Support/Waikiki",
         "WAIKIKI_WEB_URL": "http://127.0.0.1:8787"
       }
     }
@@ -118,9 +132,32 @@ Add Waikiki to `~/Library/Application Support/Claude/claude_desktop_config.json`
 }
 ```
 
-Restart Claude Desktop. Then, with a page's editor open in your browser, ask
-Claude to "add a section on X to the kayaking page" and watch it type in beside
-you.
+**B) Running from source** — launch the venv Python:
+
+```json
+{
+  "mcpServers": {
+    "waikiki": {
+      "command": "/Users/YOU/localdev/waikiki/.venv/bin/python",
+      "args": ["-m", "waikiki.mcp_server"],
+      "env": {
+        "PYTHONPATH": "/Users/YOU/localdev/waikiki",
+        "WAIKIKI_DATA": "/Users/YOU/localdev/waikiki/data",
+        "WAIKIKI_WEB_URL": "http://127.0.0.1:8787"
+      }
+    }
+  }
+}
+```
+
+> `WAIKIKI_DATA` **must match** the data directory the running app uses, so the
+> MCP server and the window share the same wikis. The in-app Help page fills this
+> in for you.
+
+Then, in Claude: *"list the waikiki wikis and switch to Beaconlight."* Claude
+must `switch_wiki` before it can read or write — this is what keeps wikis from
+mixing. Open a page's editor and ask Claude to add a section; watch it type in
+beside you.
 
 MCP tools: `list_wikis`, `current_wiki`, `switch_wiki`, `create_wiki` (wiki
 selection — required first), then `list_pages`, `get_page`, `create_page`,
@@ -140,7 +177,9 @@ RAG) — all scoped to the active wiki.
 | GET | `/api/collab/{slug}/live` | current live (unsaved) markdown |
 | POST | `/api/ai/stream` | SSE token stream (pull-model Generate button) |
 
-Interactive docs at `/docs`. Websocket sync at `ws://host/collab/{slug}`.
+Interactive docs at `/docs`. Websocket sync at `ws://host/collab/{wiki}/{slug}`.
+REST/collab requests select the wiki via the `X-Waikiki-Wiki` header (default:
+the registry's default wiki).
 
 ## Notes
 

@@ -47,3 +47,8 @@ def test_rest_and_collab_flow(wiki):
         assert c.get("/").status_code == 200
         assert c.get("/settings").status_code == 200
         assert c.get("/wiki/reef").status_code == 200
+        assert c.get("/wikis").status_code == 200
+
+        # --- Help page carries a valid, copy-paste Claude config ---
+        help_html = c.get("/help").text
+        assert "mcpServers" in help_html and "WAIKIKI_DATA" in help_html

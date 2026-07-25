@@ -2,9 +2,34 @@
 from __future__ import annotations
 
 import re
+from html import escape as _esc
 
 from markdown_it import MarkdownIt
 from mdit_py_plugins.anchors import anchors_plugin
+
+
+def _timeline_html(code: str) -> str:
+    """A ```timeline fenced block: one 'When: What' per line -> a timeline."""
+    items = []
+    for line in code.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        when, sep, what = line.partition(":")
+        if not sep:
+            when, what = "", when
+        items.append(f'<div class="tl-item"><div class="tl-when">{_esc(when.strip())}'
+                     f'</div><div class="tl-what">{_esc(what.strip())}</div></div>')
+    return '<div class="timeline">' + "".join(items) + "</div>"
+
+
+def infobox(meta: dict) -> str:
+    """Render frontmatter properties as an infobox (structured-data table)."""
+    if not meta:
+        return ""
+    rows = "".join(f"<tr><th>{_esc(str(k))}</th><td>{_esc(str(v))}</td></tr>"
+                   for k, v in meta.items())
+    return f'<table class="infobox">{rows}</table>'
 
 try:
     from pygments import highlight
@@ -17,6 +42,8 @@ except Exception:  # pragma: no cover
 
 
 def _highlight(code: str, lang: str, _attrs) -> str:
+    if lang == "timeline":            # component: ```timeline fenced block
+        return _timeline_html(code)
     if _HAS_PYGMENTS:
         try:
             lexer = get_lexer_by_name(lang) if lang else guess_lexer(code)
@@ -56,9 +83,14 @@ _AUDIO = ("mp3", "wav", "ogg", "m4a")
 _IMG_MEDIA = re.compile(
     r'<img\b[^>]*\bsrc="([^"]+\.(?:mp4|webm|mov|ogv|mp3|wav|ogg|m4a))"[^>]*>', re.I)
 _EXT_LINK = re.compile(r'<a href="(https?://[^"]+)"')
+# the ```timeline component returns raw HTML that markdown-it wraps in <pre><code>.
+_TL_WRAP = re.compile(
+    r'<pre><code class="language-timeline">(.*?)</code></pre>', re.S)
 
 
 def _post_process(html: str) -> str:
+    html = _TL_WRAP.sub(lambda m: m.group(1), html)   # unwrap timeline component
+
     def media(m: re.Match) -> str:
         src = m.group(1)
         kind = "video" if src.rsplit(".", 1)[-1].lower() in _VIDEO else "audio"

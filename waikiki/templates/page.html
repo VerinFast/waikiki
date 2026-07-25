@@ -36,6 +36,11 @@
     {% if parent %}
       <p class="muted">↳ child of <a href="/wiki/{{ parent.slug }}">{{ parent.title }}</a></p>
     {% endif %}
+    {% if tags %}
+      <div class="tagcloud">
+        {% for t in tags %}<a class="tagchip" href="/tag/{{ t }}">{{ t }}</a>{% endfor %}
+      </div>
+    {% endif %}
 
     {% if toc and toc | length >= 2 %}
       <details class="toc" open>

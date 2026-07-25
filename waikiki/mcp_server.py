@@ -418,6 +418,21 @@ def upload_asset(filename: str = "", path: str = "", base64_data: str = "") -> d
 
 
 @mcp.tool
+def list_tags() -> dict:
+    """List tags in the active wiki with page counts. Tag a page by adding a
+    frontmatter block: ---\\ntags: character, spirit\\n---"""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "tags": store.all_tags()}
+
+
+@mcp.tool
+def pages_by_tag(tag: str) -> dict:
+    """List pages in the active wiki tagged with `tag` (an auto-index)."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "tag": tag, "pages": store.pages_with_tag(tag)}
+
+
+@mcp.tool
 def clone_page(slug: str) -> dict:
     """Duplicate a page as a new top-level page ('<Title> (copy)')."""
     wiki = _require_wiki()

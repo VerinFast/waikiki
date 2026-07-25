@@ -3,9 +3,12 @@ so Human and LLM callers go through identical logic (render + version + index).
 """
 from __future__ import annotations
 
+import re
 from typing import List, Optional
 
-from . import db, rag, render
+from . import db, edits, rag, render, structure
+
+_INCLUDE = re.compile(r"!\[\[([^\]]+?)\]\]")   # ![[Page]] / ![[Page#Section]] transclusion
 
 
 # --- Pages --------------------------------------------------------------------
@@ -130,6 +133,7 @@ def create_page(title: str, markdown: str = "", author: str = "human") -> dict:
     )
     page_id = cur.lastrowid
     _snapshot(page_id, title, markdown, author)
+    _index_meta(page_id, markdown)
     conn.commit()
     rag.reindex_page(page_id, markdown)
     return get_page(slug)
@@ -146,6 +150,7 @@ def _set_body(slug: str, title: str, markdown: str, author: str) -> None:
         (title, markdown, html, slug),
     )
     _snapshot(page["id"], title, markdown, author)
+    _index_meta(page["id"], markdown)
     conn.commit()
     rag.reindex_page(page["id"], markdown)
 
@@ -265,10 +270,67 @@ def restore_version(slug: str, version_id: int) -> Optional[dict]:
 
 # --- Links & change feed ------------------------------------------------------
 
+def _expand_includes(markdown: str, depth: int = 3) -> str:
+    """Expand ![[Page]] / ![[Page#Section]] transclusions inline (bounded depth)."""
+    if depth <= 0 or "![[" not in markdown:
+        return markdown
+    idx = link_index()
+
+    def repl(m: re.Match) -> str:
+        page_part, _, section = m.group(1).strip().partition("#")
+        slug = idx.get(render.slugify(page_part))
+        page = get_page(slug) if slug else None
+        if not page:
+            return m.group(0)
+        _, _, body = structure.parse_frontmatter(page["markdown"])
+        if section.strip():
+            span = edits.section_span(body, section.strip())
+            if span:
+                body = body[span[0]:span[1]]
+        return _expand_includes(body, depth - 1)
+
+    return _INCLUDE.sub(repl, markdown)
+
+
 def render_html(markdown: str) -> str:
-    """Render markdown for the active wiki (link-by-title + per-wiki HTML setting)."""
+    """Render for the active wiki: frontmatter infobox + transclusions +
+    link-by-title + per-wiki HTML setting."""
     allow_html = db.get_setting("allow_html", "0") == "1"
-    return render.render_markdown(markdown, link_index().get, allow_html=allow_html)
+    meta, _tags, body = structure.parse_frontmatter(markdown)
+    body = _expand_includes(body)
+    html = render.render_markdown(body, link_index().get, allow_html=allow_html)
+    return render.infobox(meta) + html
+
+
+def _index_meta(page_id: int, markdown: str) -> None:
+    """Refresh a page's tags from its frontmatter."""
+    _meta, tags, _body = structure.parse_frontmatter(markdown)
+    conn = db.get_conn()
+    conn.execute("DELETE FROM page_tags WHERE page_id=?", (page_id,))
+    for t in dict.fromkeys(tags):  # dedupe, keep order
+        conn.execute("INSERT OR IGNORE INTO page_tags(page_id, tag) VALUES (?, ?)",
+                     (page_id, t))
+
+
+def all_tags() -> List[dict]:
+    return [dict(r) for r in db.get_conn().execute(
+        "SELECT t.tag, COUNT(*) AS count FROM page_tags t JOIN pages p ON p.id=t.page_id "
+        "WHERE p.deleted_at IS NULL GROUP BY t.tag ORDER BY t.tag").fetchall()]
+
+
+def pages_with_tag(tag: str) -> List[dict]:
+    return [dict(r) for r in db.get_conn().execute(
+        "SELECT p.slug, p.title FROM page_tags t JOIN pages p ON p.id=t.page_id "
+        "WHERE t.tag=? AND p.deleted_at IS NULL ORDER BY p.title COLLATE NOCASE",
+        (tag.lower(),)).fetchall()]
+
+
+def tags_of(slug: str) -> List[str]:
+    page = get_page(slug)
+    if not page:
+        return []
+    return [r["tag"] for r in db.get_conn().execute(
+        "SELECT tag FROM page_tags WHERE page_id=? ORDER BY tag", (page["id"],)).fetchall()]
 
 
 def rerender_all() -> int:

@@ -171,6 +171,20 @@ pre.diff .hunk{color:var(--muted);display:block}
 .EasyMDEContainer .CodeMirror-fullscreen{background:var(--surface)}
 
 .rendered a.ext::after{content:"\2197";font-size:.75em;opacity:.55;margin-left:1px}
+/* infobox (frontmatter properties) */
+.infobox{float:right;max-width:300px;margin:0 0 1rem 1.2rem;border-collapse:collapse;border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:.9rem}
+.infobox th,.infobox td{border-bottom:1px solid var(--border);padding:.35rem .6rem;text-align:left;vertical-align:top}
+.infobox th{background:var(--code-bg);white-space:nowrap;color:var(--muted)}
+/* tags */
+.tagcloud{display:flex;flex-wrap:wrap;gap:.4rem;margin:.4rem 0}
+.tagchip{display:inline-block;padding:.15rem .6rem;border-radius:999px;background:var(--code-bg);color:var(--text);font-size:.82rem;text-decoration:none;border:1px solid var(--border)}
+.tagchip:hover{border-color:var(--accent);text-decoration:none}
+/* timeline component */
+.timeline{border-left:2px solid var(--border);margin:1rem 0;padding-left:1rem}
+.tl-item{position:relative;margin:0 0 1rem}
+.tl-item::before{content:"";position:absolute;left:calc(-1rem - 6px);top:.35rem;width:9px;height:9px;border-radius:50%;background:var(--accent)}
+.tl-when{font-weight:700;color:var(--accent)}
+.tl-what{color:var(--text)}
 .rendered video,.rendered audio{max-width:100%;margin:.5rem 0;border-radius:8px}
 
 @media print{

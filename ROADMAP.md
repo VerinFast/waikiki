@@ -28,11 +28,14 @@ find/replace (`edit_page`); broken-link counts in wiki stats.
 - [ ] Table cell editing — deferred (a WYSIWYG table widget; doesn't fit the
       markdown editor well — revisit)
 
-## Sprint C — Structure & reuse
-- [ ] Structured data / property tables (typed fields → queryable grid/heatmap views)
-- [ ] Transclusion / includes (one source block embedded in many pages)
-- [ ] Tags / frontmatter + auto-generated index pages
-- [ ] Components (Wikipedia-style), starting with timelines
+## Sprint C — Structure & reuse  ✅ shipped (v0.0.6)
+- [x] Structured data — YAML-lite frontmatter properties render as an **infobox**
+- [x] Transclusion / includes — `![[Page]]` / `![[Page#Section]]` embeds
+- [x] Tags / frontmatter + auto-index pages (`/tags`, `/tag/{tag}`; MCP
+      `list_tags` / `pages_by_tag`)
+- [x] Components — ` ```timeline ` fenced block renders a timeline (extensible)
+- [ ] Follow-up: query pages by arbitrary property value (heatmap/grid views) —
+      infobox + tag-index cover display + one query axis for now
 
 ## Sprint D — Review & interop
 - [ ] Comments / suggestion mode; propose-vs-apply for big rewrites

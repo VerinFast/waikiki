@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}#{{ tag }} — Waikiki{% endblock %}
+{% block content %}
+  <h1><span class="muted">tag:</span> {{ tag }}</h1>
+  {% if pages %}
+    <ul class="pagelist">
+      {% for p in pages %}
+        <li><a href="/wiki/{{ p.slug }}">{{ p.title }}</a></li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">No pages tagged <code>{{ tag }}</code>.</p>
+  {% endif %}
+{% endblock %}

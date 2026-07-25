@@ -182,6 +182,13 @@ CREATE TABLE IF NOT EXISTS page_versions (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS page_tags (
+    page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    tag     TEXT NOT NULL,
+    PRIMARY KEY (page_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_page_tags_tag ON page_tags(tag);
+
 CREATE TABLE IF NOT EXISTS templates (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     name     TEXT UNIQUE NOT NULL,

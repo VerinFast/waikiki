@@ -341,8 +341,20 @@ def view_page(request: Request, slug: str):
                           toc=render.extract_toc(page["markdown"]),
                           backlinks=store.backlinks(slug),
                           children=store.children(slug), parent=parent,
-                          all_pages=all_pages)
+                          all_pages=all_pages, tags=store.tags_of(slug))
     )
+
+
+@app.get("/tags", response_class=HTMLResponse)
+def tags_view(request: Request):
+    return templates.TemplateResponse(request,
+        "tags.html", _ctx(request, tags=store.all_tags()))
+
+
+@app.get("/tag/{tag}", response_class=HTMLResponse)
+def tag_index_view(request: Request, tag: str):
+    return templates.TemplateResponse(request,
+        "tag.html", _ctx(request, tag=tag, pages=store.pages_with_tag(tag)))
 
 
 @app.get("/changes", response_class=HTMLResponse)

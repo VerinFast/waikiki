@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Tags — Waikiki{% endblock %}
+{% block content %}
+  <h1>Tags <span class="muted">— {{ current_wiki_name }}</span></h1>
+  <p class="muted">Tag a page with a frontmatter block at the top:
+    <code>---</code> / <code>tags: character, spirit</code> / <code>---</code></p>
+  {% if tags %}
+    <div class="tagcloud">
+      {% for t in tags %}
+        <a class="tagchip" href="/tag/{{ t.tag }}">{{ t.tag }} <span class="muted">{{ t.count }}</span></a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="muted">No tags yet.</p>
+  {% endif %}
+{% endblock %}

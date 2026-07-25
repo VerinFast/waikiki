@@ -293,11 +293,19 @@ def view_page(request: Request, slug: str):
                                 "markdown": ""}, is_new=True, missing=slug),
             status_code=404,
         )
+    parent = None
+    if page.get("parent_id"):
+        prow = db.get_conn().execute(
+            "SELECT slug, title FROM pages WHERE id=?", (page["parent_id"],)).fetchone()
+        parent = dict(prow) if prow else None
+    all_pages = [p for p in store.list_pages() if p["slug"] != slug]
     return templates.TemplateResponse(request,
         "page.html", _ctx(request, page=page, versions=store.page_versions(slug),
                           trashed=bool(page.get("deleted_at")),
                           toc=render.extract_toc(page["markdown"]),
-                          backlinks=store.backlinks(slug))
+                          backlinks=store.backlinks(slug),
+                          children=store.children(slug), parent=parent,
+                          all_pages=all_pages)
     )
 
 
@@ -345,6 +353,18 @@ def delete_page_view(slug: str):
 def star_page_view(slug: str, next: str = Form("/")):
     store.toggle_star(slug)
     return RedirectResponse(next or "/", status_code=303)
+
+
+@app.post("/wiki/{slug}/clone")
+def clone_page_view(slug: str):
+    page = store.clone_page(slug)
+    return RedirectResponse(f"/wiki/{page['slug']}" if page else "/", status_code=303)
+
+
+@app.post("/wiki/{slug}/parent")
+def set_parent_view(slug: str, parent: str = Form("")):
+    store.set_parent(slug, parent or None)
+    return RedirectResponse(f"/wiki/{slug}", status_code=303)
 
 
 @app.post("/wiki/{slug}/restore")

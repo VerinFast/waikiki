@@ -36,17 +36,27 @@
 
   <h3>What Claude can do</h3>
   <ul>
-    <li><code>list_wikis</code>, <code>switch_wiki</code>, <code>current_wiki</code>,
-      <code>create_wiki</code> — pick which isolated wiki to work in (required first).</li>
-    <li><code>list_pages</code>, <code>get_page</code>, <code>search</code> — read &
-      hybrid-search the active wiki only.</li>
-    <li><code>create_page</code>, <code>append_to_page</code>,
-      <code>replace_page</code>, <code>delete_page</code> — write; append/replace
-      stream in live.</li>
+    <li><strong>Wikis:</strong> <code>list_wikis</code>, <code>switch_wiki</code>,
+      <code>current_wiki</code>, <code>create_wiki</code> — pick which isolated wiki
+      to work in (required first).</li>
+    <li><strong>Read:</strong> <code>list_pages</code>, <code>get_page</code>
+      (with a heading outline), <code>search</code>, <code>backlinks</code>,
+      <code>broken_links</code>, <code>changes_since</code> (a change feed).</li>
+    <li><strong>Edit (live, merge-safe):</strong> <code>edit_page</code> (find/
+      replace — preferred), <code>replace_section</code>, <code>insert_after</code>
+      / <code>insert_before</code>, <code>prepend_to_page</code>,
+      <code>remove_from_page</code>, <code>append_to_page</code>. Whole-body
+      <code>replace_page</code> is a last resort.</li>
+    <li><strong>Manage:</strong> <code>create_page</code>, <code>clone_page</code>,
+      <code>delete_page</code> (to trash), <code>list_trash</code>,
+      <code>restore_page</code>, <code>set_parent</code> /
+      <code>list_children</code> / <code>search_subpages</code>.</li>
   </ul>
   <p class="muted note">Every tool result names the wiki it acted on, so Claude
     never silently crosses between wikis. Claude’s active wiki is independent of
-    the one you’re viewing here — tell it to <code>switch_wiki</code> to match.</p>
+    the one you’re viewing here — tell it to <code>switch_wiki</code> to match.
+    <strong>After a Waikiki update, fully quit and reopen Claude Desktop</strong>
+    so it picks up new tools.</p>
 
   <script>
     document.querySelectorAll('[data-copy]').forEach(function (btn) {

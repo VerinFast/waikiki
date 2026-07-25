@@ -14,17 +14,58 @@ _SORTS = {"updated": "updated_at DESC", "title": "title COLLATE NOCASE ASC"}
 
 
 def list_pages(include_deleted: bool = False, sort: str = "updated",
-               starred_only: bool = False) -> List[dict]:
+               starred_only: bool = False, include_children: bool = False) -> List[dict]:
     clauses = [] if include_deleted else ["deleted_at IS NULL"]
     if starred_only:
         clauses.append("starred = 1")
+    if not include_children:
+        clauses.append("parent_id IS NULL")  # children never show in the rail
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     order = _SORTS.get(sort, _SORTS["updated"])
     rows = db.get_conn().execute(
-        f"SELECT slug, title, updated_at, deleted_at, starred FROM pages {where} "
-        f"ORDER BY {order}"
+        f"SELECT slug, title, updated_at, deleted_at, starred, parent_id "
+        f"FROM pages {where} ORDER BY {order}"
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def children(parent_slug: str) -> List[dict]:
+    """Direct child pages of a parent (not shown in the rail)."""
+    parent = get_page(parent_slug)
+    if not parent:
+        return []
+    rows = db.get_conn().execute(
+        "SELECT slug, title FROM pages WHERE parent_id=? AND deleted_at IS NULL "
+        "ORDER BY title COLLATE NOCASE", (parent["id"],)
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_parent(slug: str, parent_slug: Optional[str]) -> Optional[dict]:
+    """Make `slug` a child of `parent_slug` (or top-level if None). Re-indexes so
+    its vectors move between the main and partitioned (child) indices."""
+    conn = db.get_conn()
+    page = get_page(slug)
+    if not page:
+        return None
+    parent_id = None
+    if parent_slug:
+        parent = get_page(parent_slug)
+        if not parent or parent["id"] == page["id"]:
+            return None
+        parent_id = parent["id"]
+    conn.execute("UPDATE pages SET parent_id=? WHERE slug=?", (parent_id, slug))
+    conn.commit()
+    rag.reindex_page(page["id"], page["markdown"])  # route vectors correctly
+    return get_page(slug)
+
+
+def clone_page(slug: str) -> Optional[dict]:
+    """Duplicate a page as a new top-level page ('<Title> (copy)')."""
+    page = get_page(slug)
+    if not page:
+        return None
+    return create_page(f"{page['title']} (copy)", page["markdown"], author="clone")
 
 
 def toggle_star(slug: str) -> Optional[bool]:

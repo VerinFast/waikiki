@@ -20,6 +20,9 @@
       {% if not trashed %}
         <div class="tools">
           <a class="btn" href="/wiki/{{ page.slug }}/edit">Edit</a>
+          <form method="post" action="/wiki/{{ page.slug }}/clone">
+            <button class="btn" type="submit">Clone</button>
+          </form>
           <form method="post" action="/wiki/{{ page.slug }}/delete"
                 onsubmit="return confirm('Move this page to the Trash?')">
             <button class="btn danger" type="submit">Delete</button>
@@ -27,6 +30,10 @@
         </div>
       {% endif %}
     </div>
+
+    {% if parent %}
+      <p class="muted">↳ child of <a href="/wiki/{{ parent.slug }}">{{ parent.title }}</a></p>
+    {% endif %}
 
     {% if toc and toc | length >= 2 %}
       <details class="toc" open>
@@ -40,6 +47,32 @@
     {% endif %}
 
     <div class="rendered">{{ page.html | safe }}</div>
+
+    {% if children %}
+      <details class="history" open>
+        <summary>Sub-pages ({{ children | length }})</summary>
+        <ul>
+          {% for c in children %}<li><a href="/wiki/{{ c.slug }}">{{ c.title }}</a></li>{% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+
+    {% if not trashed %}
+      <details class="history">
+        <summary>Page settings</summary>
+        <form method="post" action="/wiki/{{ page.slug }}/parent" class="addmodel">
+          <label>Parent page (children are hidden from the sidebar &amp; main search)
+            <select name="parent">
+              <option value="">— none (top-level) —</option>
+              {% for p in all_pages %}
+                <option value="{{ p.slug }}" {{ 'selected' if parent and parent.slug == p.slug }}>{{ p.title }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <button class="btn" type="submit">Save parent</button>
+        </form>
+      </details>
+    {% endif %}
 
     {% if backlinks %}
       <details class="history">

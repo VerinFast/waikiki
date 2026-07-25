@@ -67,6 +67,22 @@
     </main>
   </div>
   <script>
+    // Reliable in-page anchor scrolling (WebKit/pywebview can ignore CSS anchor
+    // navigation + scroll-behavior). Handles the Contents list and heading "#"s.
+    document.addEventListener('click', function (e) {
+      var a = e.target.closest('a[href^="#"]');
+      if (!a) return;
+      var id = decodeURIComponent(a.getAttribute('href').slice(1));
+      var el = id && document.getElementById(id);
+      if (!el) return;
+      e.preventDefault();
+      // Explicit window scroll (WebKit/pywebview can ignore CSS anchor nav +
+      // scroll-behavior). 64px offset clears the sticky header.
+      var y = el.getBoundingClientRect().top + window.pageYOffset - 64;
+      window.scrollTo({ top: y, behavior: 'smooth' });
+      history.replaceState(null, '', '#' + id);
+    });
+
     (function () {
       function setPref(name, val) {
         document.cookie = name + '=' + val + ';path=/;max-age=31536000;samesite=lax';

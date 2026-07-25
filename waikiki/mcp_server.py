@@ -351,6 +351,48 @@ def broken_links() -> dict:
     return {"wiki": wiki, "broken": store.broken_links()}
 
 
+@mcp.tool
+def clone_page(slug: str) -> dict:
+    """Duplicate a page as a new top-level page ('<Title> (copy)')."""
+    wiki = _require_wiki()
+    page = store.clone_page(slug)
+    if not page:
+        return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
+    return {"wiki": wiki, "slug": page["slug"], "title": page["title"]}
+
+
+@mcp.tool
+def set_parent(slug: str, parent_slug: str = "") -> dict:
+    """Make `slug` a child of `parent_slug` (empty to make it top-level again).
+    Child pages are hidden from the sidebar and excluded from the main search
+    index (they live in the parent's own partition). Use search_subpages to
+    search within a parent."""
+    wiki = _require_wiki()
+    page = store.set_parent(slug, parent_slug or None)
+    if not page:
+        return {"wiki": wiki, "error": f"could not set parent for '{slug}'"}
+    return {"wiki": wiki, "slug": slug, "parent": parent_slug or None}
+
+
+@mcp.tool
+def list_children(parent_slug: str) -> dict:
+    """List the child pages of `parent_slug` (they're hidden from the sidebar)."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "parent": parent_slug, "children": store.children(parent_slug)}
+
+
+@mcp.tool
+def search_subpages(parent_slug: str, query: str, k: int = 6) -> dict:
+    """Hybrid search restricted to one parent's child pages (its own index
+    partition) — for large sub-collections kept out of the main index."""
+    wiki = _require_wiki()
+    parent = store.get_page(parent_slug)
+    if not parent:
+        return {"wiki": wiki, "error": f"no page '{parent_slug}' in {wiki}"}
+    return {"wiki": wiki, "parent": parent_slug,
+            "results": rag.search_subtree(query, parent["id"], k)}
+
+
 def main() -> None:
     global _ACTIVE
     db.init_db()

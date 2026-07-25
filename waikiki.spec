@@ -72,7 +72,7 @@ coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="Waikiki")
 app = BUNDLE(
     coll,
     name="Waikiki.app",
-    icon=None,
+    icon="assets/Waikiki.icns",
     bundle_identifier="com.verinfast.waikiki",
     info_plist={
         "NSHighResolutionCapable": True,

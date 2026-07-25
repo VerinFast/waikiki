@@ -81,6 +81,41 @@ def test_sweep_trash_respects_days(wiki):
     assert store.get_page("old") is None
 
 
+def test_clone_page(wiki):
+    store.create_page("Original", "body text")
+    copy = store.clone_page("original")
+    assert copy["slug"] == "original-copy"
+    assert copy["title"] == "Original (copy)"
+    assert store.get_page("original-copy")["markdown"] == "body text"
+
+
+def test_parent_pages_hidden_from_rail(wiki):
+    store.create_page("Parent", "p")
+    store.create_page("Child", "c content")
+    store.set_parent("child", "parent")
+    rail = [p["slug"] for p in store.list_pages()]
+    assert "parent" in rail and "child" not in rail          # child hidden
+    assert [c["slug"] for c in store.children("parent")] == ["child"]
+    assert store.get_page("child")["parent_id"] is not None
+
+
+def test_child_excluded_from_main_search(wiki):
+    from waikiki import rag
+    store.create_page("Top", "unique aardvark content")
+    store.create_page("Sub", "unique aardvark content in child")
+    store.set_parent("sub", "top")
+    hits = [h["slug"] for h in rag.search_chunks("aardvark")]
+    assert "sub" not in hits and "top" in hits               # child out of main RAG
+
+
+def test_set_parent_top_level_again(wiki):
+    store.create_page("P", "x")
+    store.create_page("K", "y")
+    store.set_parent("k", "p")
+    store.set_parent("k", None)                              # back to top-level
+    assert "k" in [p["slug"] for p in store.list_pages()]
+
+
 def test_backlinks_and_broken(wiki):
     store.create_page("Home", "see [[Guide]] and [[Ghost Town]]")
     store.create_page("Guide", "back to [[Home]]")

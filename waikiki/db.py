@@ -168,7 +168,8 @@ CREATE TABLE IF NOT EXISTS pages (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     deleted_at TEXT,                      -- NULL = active; timestamp = in trash
-    starred    INTEGER NOT NULL DEFAULT 0 -- 1 = starred (favorite)
+    starred    INTEGER NOT NULL DEFAULT 0, -- 1 = starred (favorite)
+    parent_id  INTEGER REFERENCES pages(id) ON DELETE SET NULL  -- child page if set
 );
 
 -- Lightweight history: one row per save. Not CRDT, but gives undo/audit.
@@ -236,6 +237,7 @@ def _ensure_schema(conn) -> None:
     for stmt in (
         "ALTER TABLE pages ADD COLUMN deleted_at TEXT",
         "ALTER TABLE pages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE pages ADD COLUMN parent_id INTEGER REFERENCES pages(id)",
     ):
         try:
             conn.execute(stmt)
@@ -305,9 +307,16 @@ def ensure_vec_table(dim: int) -> None:
     current = get_setting("vec_dim")
     if current is not None and int(current) != dim:
         conn.execute("DROP TABLE IF EXISTS vec_chunks")
+        conn.execute("DROP TABLE IF EXISTS vec_chunks_sub")
     conn.execute(
         f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0("
         f"chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])"
+    )
+    # Child pages' vectors live in a separate index so the main index (used by
+    # RAG) stays small — faster insertion and search. `parent_id` partitions it.
+    conn.execute(
+        f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks_sub USING vec0("
+        f"chunk_id INTEGER PRIMARY KEY, parent_id INTEGER, embedding FLOAT[{dim}])"
     )
     set_setting("vec_dim", str(dim))
     conn.commit()

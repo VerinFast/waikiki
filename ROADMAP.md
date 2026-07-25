@@ -31,7 +31,17 @@ find/replace (`edit_page`); broken-link counts in wiki stats.
 - [ ] Tags / frontmatter + auto-generated index pages
 - [ ] Components (Wikipedia-style), starting with timelines
 
-## Later / cross-cutting
+## Sprint D — Review & interop
 - [ ] Comments / suggestion mode; propose-vs-apply for big rewrites
 - [ ] Markdown/git export to `docs/` (round-trip)
 - [ ] Universal2 + signed/notarized macOS build
+
+## Sprint E — Polish & structure  ✅ shipped (v0.0.4)
+- [x] Clone an article (UI + MCP `clone_page`)
+- [x] App icon — 🌺 hibiscus over 💾 floppy (assets/Waikiki.icns)
+- [x] Connect Claude help page refreshed with the current toolset
+- [x] Parent pages — mark a page a child of another; children are hidden from
+      the rail and excluded from the main RAG index; their vectors live in a
+      partitioned sub-index (`vec_chunks_sub`, keyed by parent) with
+      `set_parent` / `list_children` / `search_subpages` tools
+- [x] Bug: Contents/anchor links now scroll reliably (explicit window scroll)

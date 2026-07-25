@@ -85,6 +85,53 @@ def plan_replace_section(text: str, heading: str, new_markdown: str
     return (start, end, body)
 
 
+_SEP = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
+
+
+def _split_row(line: str) -> list[str]:
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|"):
+        s = s[:-1]
+    return [c.strip() for c in s.split("|")]
+
+
+def _find_tables(lines: list[str]) -> list[tuple[int, list[int]]]:
+    """Return (header_line_index, [data_line_indices]) for each GFM table."""
+    tables, i = [], 0
+    while i < len(lines) - 1:
+        if "|" in lines[i] and "|" in lines[i + 1] and _SEP.match(lines[i + 1]):
+            data, j = [], i + 2
+            while j < len(lines) and lines[j].strip() and "|" in lines[j]:
+                data.append(j)
+                j += 1
+            tables.append((i, data))
+            i = j
+        else:
+            i += 1
+    return tables
+
+
+def set_table_cell(markdown: str, table: int, row: int, col: int, value: str) -> str:
+    """Update one cell of the `table`-th GFM table (row 0 = header, 1+ = data)."""
+    lines = markdown.split("\n")
+    tables = _find_tables(lines)
+    if table >= len(tables):
+        raise ValueError("table not found")
+    header_i, data = tables[table]
+    row_lines = [header_i] + data
+    if not (0 <= row < len(row_lines)):
+        raise ValueError("row out of range")
+    li = row_lines[row]
+    cells = _split_row(lines[li])
+    if not (0 <= col < len(cells)):
+        raise ValueError("column out of range")
+    cells[col] = value.replace("|", "\\|").replace("\n", " ").strip()
+    lines[li] = "| " + " | ".join(cells) + " |"
+    return "\n".join(lines)
+
+
 def make_planner(b: dict):
     """Build a planner from a JSON op description (op + args). None if unknown."""
     op = b.get("op")

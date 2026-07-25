@@ -43,3 +43,14 @@ def test_section_span_ambiguous_returns_none():
 
 def test_make_planner_unknown():
     assert edits.make_planner({"op": "bogus"}) is None
+
+
+def test_set_table_cell():
+    md = "intro\n\n| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |\n\nafter"
+    assert "| A | BEE |" in edits.set_table_cell(md, 0, 0, 1, "BEE")   # header
+    assert "| 1 | TWO |" in edits.set_table_cell(md, 0, 1, 1, "TWO")   # first data row
+    assert "| X | 4 |" in edits.set_table_cell(md, 0, 2, 0, "X")       # second data row
+    with pytest.raises(ValueError):
+        edits.set_table_cell(md, 0, 9, 0, "z")                          # row out of range
+    with pytest.raises(ValueError):
+        edits.set_table_cell(md, 5, 0, 0, "z")                          # no such table

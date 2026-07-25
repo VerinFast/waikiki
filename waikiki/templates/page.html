@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ page.title }} — Waikiki{% endblock %}
 {% block content %}
+  <script>window.WAIKIKI_PAGE = {slug: {{ page.slug | tojson }}, wiki: {{ current_wiki | tojson }}};</script>
   <article class="article">
     {% if trashed %}
       <div class="banner err">
@@ -20,7 +21,8 @@
       {% if not trashed %}
         <div class="tools">
           <a class="btn" href="/wiki/{{ page.slug }}/edit">Edit</a>
-          <a class="btn" href="/wiki/{{ page.slug }}/pdf" target="_blank">PDF</a>
+          <button class="btn" type="button"
+                  data-open-url="/wiki/{{ page.slug }}/pdf?wiki={{ current_wiki }}">PDF</button>
           <button class="btn" type="button" onclick="window.print()">Print</button>
           <form method="post" action="/wiki/{{ page.slug }}/clone">
             <button class="btn" type="submit">Clone</button>

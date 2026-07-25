@@ -13,8 +13,8 @@ SZ = 1024
 canvas = Image.new("RGBA", (SZ, SZ), (0, 0, 0, 0))
 floppy = emoji_img("\U0001F4BE", int(SZ * 0.86))          # 💾 background
 canvas.alpha_composite(floppy, ((SZ - floppy.width) // 2, (SZ - floppy.height) // 2))
-flower = emoji_img("\U0001F33A", int(SZ * 0.46))           # 🌺 centered on top
-canvas.alpha_composite(flower, ((SZ - flower.width) // 2, int(SZ * 0.34)))
+flower = emoji_img("\U0001F33A", int(SZ * 0.44))           # 🌺 over the label area
+canvas.alpha_composite(flower, ((SZ - flower.width) // 2, int(SZ * 0.46)))
 canvas.save("assets/icon-1024.png")
 
 # Build .iconset with the sizes macOS wants.

@@ -60,6 +60,12 @@ def main() -> None:
     class DesktopApi:
         """Exposed to the page as window.pywebview.api — native Save/Open dialogs."""
 
+        def open_url(self, url):
+            """Open a URL in the system default browser/viewer (e.g. a PDF)."""
+            import webbrowser
+            webbrowser.open(url)
+            return {"ok": True}
+
         def save_wiki(self, slug):
             from waikiki import wikis
             win = webview.windows[0]

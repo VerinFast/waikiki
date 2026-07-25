@@ -11,12 +11,26 @@ function init() {
     spellChecker: false,
     autoDownloadFontAwesome: true,
     toolbar: ["bold", "italic", "heading", "|", "quote", "code", "table",
-              "unordered-list", "ordered-list", "|", "link", "image", "|",
-              "preview", "side-by-side", "fullscreen", "|", "guide"],
+              "unordered-list", "ordered-list", "|", "link", "image",
+              {name: "attach", className: "fa fa-paperclip",
+               title: "Attach image / video / audio", action: attachMedia},
+              "|", "preview", "side-by-side", "fullscreen", "|", "guide"],
     uploadImage: true,
     imageUploadFunction: uploadImage,
   });
   const cm = easymde.codemirror;
+
+  // --- Attach any local media (image / video / audio) via a file picker ---
+  function attachMedia() {
+    const inp = document.createElement("input");
+    inp.type = "file";
+    inp.accept = "image/*,video/*,audio/*";
+    inp.onchange = () => {
+      const f = inp.files[0];
+      if (f) uploadImage(f, (url) => insertAtCursor(`![${f.name}](${url})\n`));
+    };
+    inp.click();
+  }
 
   // Keep the hidden textarea in sync on submit (Save posts current content).
   const form = document.getElementById("editform");

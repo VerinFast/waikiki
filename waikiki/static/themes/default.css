@@ -6,15 +6,16 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 *{box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{margin:0;font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.6}
+html,body{height:100%}
+body{margin:0;font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.6;
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
 .muted{color:var(--muted);font-size:.88em}
 .note{margin-top:.5rem}
 
-.topbar{display:flex;align-items:center;gap:1rem;padding:.6rem 1rem;
-  background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:5}
+.topbar{display:flex;align-items:center;gap:1rem;padding:.6rem 1rem;flex:0 0 auto;
+  background:var(--surface);border-bottom:1px solid var(--border);z-index:20}
 .brand{font-weight:700;font-size:1.15rem}
 .wiki-switch{margin:0}
 .wiki-switch select{padding:.4rem .6rem;border:1px solid var(--border);border-radius:8px;
@@ -24,10 +25,20 @@ a:hover{text-decoration:underline}
 .topbar .search{flex:1}
 .topbar .search input{width:100%;max-width:520px;padding:.45rem .7rem;border:1px solid var(--border);
   border-radius:8px;background:var(--bg);color:var(--text)}
-.actions{display:flex;gap:1rem}
+.actions{display:flex;gap:1rem;align-items:center}
+.menu{position:relative}
+.menu>summary{cursor:pointer;list-style:none;color:var(--accent)}
+.menu>summary::-webkit-details-marker{display:none}
+.menu>summary::after{content:" \25BE";font-size:.8em}
+.menu[open]>summary{color:var(--text)}
+.menu .menu-items{position:absolute;right:0;top:calc(100% + .4rem);background:var(--surface);
+  border:1px solid var(--border);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);
+  min-width:150px;padding:.3rem;display:flex;flex-direction:column;z-index:30}
+.menu .menu-items a{padding:.4rem .6rem;border-radius:6px}
+.menu .menu-items a:hover{background:var(--code-bg);text-decoration:none}
 
-.layout{display:grid;grid-template-columns:240px 1fr;gap:0;min-height:calc(100vh - 56px)}
-.sidebar{border-right:1px solid var(--border);padding:1rem;background:var(--surface)}
+.layout{display:grid;grid-template-columns:240px 1fr;gap:0;flex:1 1 auto;min-height:0}
+.sidebar{border-right:1px solid var(--border);padding:1rem;background:var(--surface);overflow-y:auto}
 .sidebar h3{margin:.2rem 0 .6rem;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
 .sidebar ul{list-style:none;margin:0;padding:0}
 .sidebar li{margin:.15rem 0}
@@ -42,7 +53,8 @@ a:hover{text-decoration:underline}
 .star{border:none;background:none;cursor:pointer;font-size:1rem;line-height:1;color:var(--muted);padding:0}
 .star.on{color:#e3b341}
 .star:hover{color:#e3b341}
-.content{padding:1.5rem 2rem;max-width:900px}
+.content{overflow-y:auto;min-height:0}
+.content-inner{max-width:900px;margin:0 auto;padding:1.5rem 2rem}
 
 h1{margin-top:0}
 .pagelist{list-style:none;padding:0}
@@ -57,7 +69,7 @@ form{display:inline}
 
 .article-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem}
 .article-head .tools{display:flex;gap:.5rem}
-.rendered :is(h1,h2,h3,h4,h5,h6){scroll-margin-top:70px}
+.rendered :is(h1,h2,h3,h4,h5,h6){scroll-margin-top:12px}
 .rendered .header-anchor{opacity:0;margin-left:.35em;color:var(--muted);text-decoration:none;font-weight:400}
 .rendered :is(h1,h2,h3,h4,h5,h6):hover .header-anchor{opacity:.6}
 .rendered .header-anchor:hover{opacity:1;color:var(--accent)}
@@ -71,6 +83,13 @@ form{display:inline}
 .rendered table{border-collapse:collapse;width:100%;margin:1rem 0}
 .rendered th,.rendered td{border:1px solid var(--border);padding:.5rem .7rem;text-align:left}
 .rendered th{background:var(--code-bg)}
+.rendered td,.rendered th{position:relative}
+.cell-edit{position:absolute;top:1px;right:1px;border:none;background:none;cursor:pointer;
+  opacity:0;font-size:.72rem;color:var(--muted);padding:0 2px;line-height:1}
+.rendered td:hover .cell-edit,.rendered th:hover .cell-edit{opacity:.55}
+.cell-edit:hover{opacity:1 !important;color:var(--accent)}
+.cell-input{width:100%;box-sizing:border-box;font:inherit;padding:2px;
+  border:1px solid var(--accent);border-radius:4px;background:var(--surface);color:var(--text)}
 .rendered code{background:var(--code-bg);padding:.15em .35em;border-radius:4px;font-family:var(--mono);font-size:.9em}
 .rendered pre{background:var(--code-bg);padding:1rem;border-radius:8px;overflow:auto}
 .rendered pre code{background:none;padding:0}
@@ -163,7 +182,11 @@ pre.diff .hunk{color:var(--muted);display:block}
   border-color:var(--border);
 }
 .EasyMDEContainer .CodeMirror-cursor{border-left-color:var(--text)}
-.EasyMDEContainer .CodeMirror-selected{background:var(--code-bg)}
+/* selection highlight — a neutral translucent tint readable in light & dark */
+.EasyMDEContainer .CodeMirror-selected{background:rgba(128,128,140,.4) !important}
+.EasyMDEContainer .CodeMirror-focused .CodeMirror-selected{background:rgba(128,128,140,.45) !important}
+.EasyMDEContainer .CodeMirror-line::selection,
+.EasyMDEContainer .CodeMirror-line span::selection{background:rgba(128,128,140,.45)}
 .EasyMDEContainer .editor-preview,
 .EasyMDEContainer .editor-preview-side{
   background:var(--bg);

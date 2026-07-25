@@ -25,8 +25,8 @@ find/replace (`edit_page`); broken-link counts in wiki stats.
       auto-detects zip vs raw db)
 - [x] External links — open-in-new-tab + ↗ marker
 - [x] Links to local files (`file://` allowed; `javascript:` blocked)
-- [ ] Table cell editing — deferred (a WYSIWYG table widget; doesn't fit the
-      markdown editor well — revisit)
+- [x] Table cell editing — click the ✎ in any cell while viewing a page to edit
+      it in place (v0.0.8)
 
 ## Sprint C — Structure & reuse  ✅ shipped (v0.0.6)
 - [x] Structured data — YAML-lite frontmatter properties render as an **infobox**

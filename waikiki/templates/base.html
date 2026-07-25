@@ -23,12 +23,22 @@
     </form>
     <nav class="actions">
       <a href="/new">+ New</a>
-      <a href="/templates">Templates</a>
-      <a href="/tags">Tags</a>
-      <a href="/changes">Changes</a>
-      <a href="/trash">Trash</a>
-      <a href="/help">Connect Claude</a>
-      <a href="/settings">Settings</a>
+      <details class="menu">
+        <summary>Settings</summary>
+        <div class="menu-items">
+          <a href="/settings">Settings</a>
+          <a href="/templates">Templates</a>
+          <a href="/tags">Tags</a>
+          <a href="/changes">Changes</a>
+          <a href="/trash">Trash</a>
+        </div>
+      </details>
+      <details class="menu">
+        <summary>Help</summary>
+        <div class="menu-items">
+          <a href="/help">Connect Claude</a>
+        </div>
+      </details>
     </nav>
   </header>
   <div class="layout">
@@ -65,12 +75,14 @@
       {% endif %}
     </aside>
     <main class="content">
-      {% block content %}{% endblock %}
+      <div class="content-inner">
+        {% block content %}{% endblock %}
+      </div>
     </main>
   </div>
   <script>
-    // Reliable in-page anchor scrolling (WebKit/pywebview can ignore CSS anchor
-    // navigation + scroll-behavior). Handles the Contents list and heading "#"s.
+    // Reliable in-page anchor scrolling. The .content pane is the scroll
+    // container (WebKit/pywebview don't scroll the window here), so scroll it.
     document.addEventListener('click', function (e) {
       var a = e.target.closest('a[href^="#"]');
       if (!a) return;
@@ -78,12 +90,69 @@
       var el = id && document.getElementById(id);
       if (!el) return;
       e.preventDefault();
-      // Explicit window scroll (WebKit/pywebview can ignore CSS anchor nav +
-      // scroll-behavior). 64px offset clears the sticky header.
-      var y = el.getBoundingClientRect().top + window.pageYOffset - 64;
-      window.scrollTo({ top: y, behavior: 'smooth' });
+      var box = document.querySelector('.content');
+      if (box) {
+        var top = el.getBoundingClientRect().top - box.getBoundingClientRect().top
+                  + box.scrollTop - 8;
+        box.scrollTop = top;                 // instant: always works in WKWebView
+      } else {
+        el.scrollIntoView();
+      }
       history.replaceState(null, '', '#' + id);
     });
+
+    // "Open in browser/viewer" buttons (e.g. PDF) — use the system app in desktop.
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-open-url]');
+      if (!b) return;
+      e.preventDefault();
+      var url = b.getAttribute('data-open-url');
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.open_url) {
+        window.pywebview.api.open_url(url);
+      } else {
+        window.open(url, '_blank');
+      }
+    });
+
+    // Inline table-cell editing (view mode): a pencil in each cell.
+    if (window.WAIKIKI_PAGE) {
+      document.querySelectorAll('.content .rendered table').forEach(function (table, ti) {
+        table.querySelectorAll('tr').forEach(function (tr, ri) {
+          tr.querySelectorAll('th,td').forEach(function (cell, ci) {
+            cell.setAttribute('data-val', cell.textContent.trim());
+            var p = document.createElement('button');
+            p.type = 'button'; p.className = 'cell-edit'; p.textContent = '✎';
+            p.title = 'Edit cell';
+            p.addEventListener('click', function (ev) {
+              ev.stopPropagation(); editTableCell(cell, ti, ri, ci);
+            });
+            cell.appendChild(p);
+          });
+        });
+      });
+    }
+    function editTableCell(cell, t, r, c) {
+      var prev = cell.innerHTML, done = false;
+      var inp = document.createElement('input');
+      inp.type = 'text'; inp.className = 'cell-input';
+      inp.value = cell.getAttribute('data-val') || '';
+      cell.innerHTML = ''; cell.appendChild(inp); inp.focus(); inp.select();
+      function save() {
+        if (done) return; done = true;
+        fetch('/wiki/' + WAIKIKI_PAGE.slug + '/table-cell', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table: t, row: r, col: c, value: inp.value })
+        }).then(function (r) { return r.json(); }).then(function (res) {
+          if (res.ok) location.reload();
+          else { cell.innerHTML = prev; alert(res.error || 'edit failed'); }
+        });
+      }
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); save(); }
+        else if (e.key === 'Escape') { done = true; cell.innerHTML = prev; }
+      });
+      inp.addEventListener('blur', save);
+    }
 
     (function () {
       function setPref(name, val) {

@@ -69,6 +69,10 @@ def _resolve_wiki(scope) -> str:
         parts = path.split("/")
         if len(parts) >= 3 and parts[2] and wikis.exists(parts[2]):
             return parts[2]
+    from urllib.parse import parse_qs
+    q = parse_qs(scope.get("query_string", b"").decode())
+    if q.get("wiki") and wikis.exists(q["wiki"][0]):
+        return q["wiki"][0]
     headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
     cand = headers.get("x-waikiki-wiki")
     if cand and wikis.exists(cand):
@@ -306,6 +310,27 @@ def templates_save(name: str = Form(...), markdown: str = Form(""),
 def templates_delete(tid: int):
     store.template_delete(tid)
     return RedirectResponse("/templates", status_code=303)
+
+
+class TableCell(BaseModel):
+    table: int
+    row: int
+    col: int
+    value: str
+
+
+@app.post("/wiki/{slug}/table-cell")
+def table_cell_edit(slug: str, body: TableCell):
+    page = store.get_page(slug)
+    if not page:
+        raise HTTPException(404, "Page not found")
+    try:
+        new_md = edits.set_table_cell(page["markdown"], body.table, body.row,
+                                      body.col, body.value)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    store.update_page(slug, page["title"], new_md, author="human")
+    return {"ok": True}
 
 
 @app.get("/wiki/{slug}/pdf")

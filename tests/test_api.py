@@ -43,6 +43,14 @@ def test_rest_and_collab_flow(wiki):
         assert r.status_code == 200
         assert c.get("/api/collab/reef/live").json()["markdown"] == "wiped"
 
+        # --- targeted, merge-safe edit (what the AI should use) ---
+        c.post("/api/collab/reef/replace", json={"markdown": "alpha beta gamma"})
+        assert c.post("/api/collab/reef/edit",
+                      json={"old": "beta", "new": "BETA"}).json()["ok"] is True
+        assert c.get("/api/collab/reef/live").json()["markdown"] == "alpha BETA gamma"
+        assert c.post("/api/collab/reef/edit",
+                      json={"old": "nope", "new": "x"}).json()["ok"] is False
+
         # --- HTML views render ---
         assert c.get("/").status_code == 200
         assert c.get("/settings").status_code == 200

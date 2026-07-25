@@ -17,23 +17,46 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 from fastmcp import FastMCP
+from mcp.types import Icon
 
 from . import config, db, rag, store, wikis
 
 WEB = config.WEB_URL
 _ACTIVE_FILE = config.DATA_DIR / "mcp_active_wiki"
 
+# Connector-list logo: a 🌺 drawn as text inside a tiny SVG, inlined as a data
+# URI so no asset needs hosting. Clients render it with the system emoji font,
+# replacing the plain "W" initial fallback.
+_ICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+    '<text x="32" y="33" font-size="52" text-anchor="middle" '
+    'dominant-baseline="central">\U0001f33a</text></svg>'
+)
+_ICON = Icon(
+    src="data:image/svg+xml;utf8," + quote(_ICON_SVG, safe=""),
+    mimeType="image/svg+xml",
+    sizes=["any"],
+)
+
 mcp = FastMCP(
     "🌺 Waikiki",
+    icons=[_ICON],
     instructions=(
         "Waikiki has multiple isolated wikis. You MUST call switch_wiki(slug) "
         "before reading or writing pages; content tools error otherwise. Wikis "
         "never share content — switching is the only way to cross between them. "
         "Every result includes the 'wiki' it acted on; check it to avoid mixing "
-        "contexts."
+        "contexts.\n\n"
+        "To CHANGE an existing page, prefer edit_page (a targeted find/replace) or "
+        "append_to_page — these apply as surgical live edits that merge with a "
+        "human editing the same page. Use replace_page ONLY to rewrite a page from "
+        "scratch; it overwrites everything and discards concurrent human edits. "
+        "Workflow: get_page to read exact current text, then edit_page with a "
+        "unique snippet."
     ),
 )
 
@@ -158,8 +181,47 @@ def append_to_page(slug: str, text: str) -> dict:
 
 
 @mcp.tool
+def edit_page(slug: str, old_text: str, new_text: str) -> dict:
+    """PREFERRED way to modify a page: replace an exact snippet of its current
+    markdown (`old_text`) with `new_text`. Only that region changes, so it applies
+    as a live surgical edit that MERGES with a human editing the same page at the
+    same time — unlike replace_page, which overwrites everything.
+
+    `old_text` must match the page's current text exactly and occur exactly once;
+    if it's ambiguous, include more surrounding lines. Call get_page first to copy
+    the exact text. To add new content at the end, use append_to_page instead."""
+    wiki = _require_wiki()
+    try:
+        r = httpx.post(f"{WEB}/api/collab/{slug}/edit",
+                       json={"old": old_text, "new": new_text},
+                       headers=_headers(), timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            if not data.get("ok", True):
+                return {"wiki": wiki, "slug": slug, "error": data.get("error")}
+            return {"wiki": wiki, "slug": slug, "edited": True, "live": True,
+                    "length": data.get("length")}
+    except Exception:
+        pass
+    # headless fallback: direct str-replace in the DB
+    page = store.get_page(slug)
+    if not page:
+        return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
+    md = page["markdown"]
+    n = md.count(old_text)
+    if n == 0:
+        return {"wiki": wiki, "error": "old_text was not found in the page"}
+    if n > 1:
+        return {"wiki": wiki, "error": "old_text is not unique — include more context"}
+    store.update_page(slug, page["title"], md.replace(old_text, new_text, 1), author="ai")
+    return {"wiki": wiki, "slug": slug, "edited": True, "live": False}
+
+
+@mcp.tool
 def replace_page(slug: str, markdown: str) -> dict:
-    """Replace a page's entire body **live** in the active wiki."""
+    """Overwrite a page's ENTIRE body — use only to rewrite a page from scratch.
+    For changes to an existing page, prefer edit_page (targeted, merge-safe) or
+    append_to_page; replace_page discards any concurrent human edits."""
     wiki = _require_wiki()
     try:
         r = httpx.post(f"{WEB}/api/collab/{slug}/replace", json={"markdown": markdown},

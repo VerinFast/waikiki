@@ -525,6 +525,20 @@ class CollabReplace(BaseModel):
     markdown: str
 
 
+class CollabEdit(BaseModel):
+    old: str
+    new: str
+
+
+@app.post("/api/collab/{slug}/edit")
+async def api_collab_edit(slug: str, body: CollabEdit):
+    wiki = db.active_wiki()
+    if not store.get_page(slug):
+        raise HTTPException(404, "Page not found")
+    result = await collab.edit_text(wiki, slug, body.old, body.new)
+    return {"wiki": wiki, "slug": slug, **result}
+
+
 @app.post("/api/collab/{slug}/append")
 async def api_collab_append(slug: str, body: CollabAppend):
     wiki = db.active_wiki()

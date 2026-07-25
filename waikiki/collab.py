@@ -91,6 +91,26 @@ async def replace_text(wiki: str, slug: str, markdown: str) -> str:
     return str(txt)
 
 
+async def edit_text(wiki: str, slug: str, old: str, new: str) -> dict:
+    """Targeted edit: replace an exact snippet with new text as a *surgical* CRDT
+    change (only the changed range moves), so it merges with concurrent human
+    edits. `old` must occur exactly once."""
+    room = await ensure_room(wiki, slug)
+    txt = _ytext(room)
+    s = str(txt)
+    idx = s.find(old)
+    if idx == -1:
+        return {"ok": False, "error": "old_text was not found in the page"}
+    if s.find(old, idx + len(old)) != -1:
+        return {"ok": False,
+                "error": "old_text is not unique — include more surrounding context"}
+    with room.ydoc.transaction():
+        del txt[idx:idx + len(old)]
+        txt.insert(idx, new)
+    _claude_present(room_key(wiki, slug), room)
+    return {"ok": True, "length": len(str(txt))}
+
+
 async def live_markdown(wiki: str, slug: str) -> str | None:
     key = room_key(wiki, slug)
     if key not in _seeded:

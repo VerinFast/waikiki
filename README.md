@@ -189,7 +189,8 @@ beside you.
 
 MCP tools: `list_wikis`, `current_wiki`, `switch_wiki`, `create_wiki` (wiki
 selection — required first), then `list_pages`, `get_page`, `create_page`,
-`append_to_page` (live), `replace_page` (live), `delete_page` (to trash),
+`edit_page` (targeted, merge-safe — the preferred way to change a page),
+`append_to_page` (live), `replace_page` (full rewrite), `delete_page` (to trash),
 `list_trash`, `restore_page`, `search` (hybrid RAG) — all scoped to the active
 wiki.
 

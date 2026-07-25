@@ -292,14 +292,79 @@ def _expand_includes(markdown: str, depth: int = 3) -> str:
     return _INCLUDE.sub(repl, markdown)
 
 
+_PROP = re.compile(r"\{\{\s*([A-Za-z0-9 _.\-]+?)\s*\}\}")
+
+
+def _lookup_prop(meta: dict, key: str) -> Optional[str]:
+    if key in meta:
+        return meta[key]
+    norm = key.replace(" ", "").lower()
+    for k, v in meta.items():
+        if k.replace(" ", "").lower() == norm:
+            return v
+    return None
+
+
+def _interpolate_props(text: str, local_meta: dict) -> str:
+    """Replace {{Key}} (this page's property) and {{Slug.Key}} (another page's)."""
+    if "{{" not in text:
+        return text
+
+    def repl(m: re.Match) -> str:
+        ref = m.group(1).strip()
+        if "." in ref:
+            slug_part, key = ref.split(".", 1)
+            slug = link_index().get(render.slugify(slug_part))
+            page = get_page(slug) if slug else None
+            if not page:
+                return m.group(0)
+            meta, _t, _b = structure.parse_frontmatter(page["markdown"])
+            val = _lookup_prop(meta, key.strip())
+        else:
+            val = _lookup_prop(local_meta, ref)
+        return str(val) if val is not None else m.group(0)
+
+    return _PROP.sub(repl, text)
+
+
 def render_html(markdown: str) -> str:
     """Render for the active wiki: frontmatter infobox + transclusions +
-    link-by-title + per-wiki HTML setting."""
+    property interpolation + link-by-title + per-wiki HTML setting."""
     allow_html = db.get_setting("allow_html", "0") == "1"
     meta, _tags, body = structure.parse_frontmatter(markdown)
     body = _expand_includes(body)
+    body = _interpolate_props(body, meta)
     html = render.render_markdown(body, link_index().get, allow_html=allow_html)
     return render.infobox(meta) + html
+
+
+def get_property(slug: str, key: str) -> Optional[str]:
+    page = get_page(slug)
+    if not page:
+        return None
+    meta, _t, _b = structure.parse_frontmatter(page["markdown"])
+    return _lookup_prop(meta, key)
+
+
+def set_property(slug: str, key: str, value: str) -> Optional[dict]:
+    """Set a frontmatter property on a page (creating the frontmatter if absent)."""
+    page = get_page(slug)
+    if not page:
+        return None
+    meta, tags, body = structure.parse_frontmatter(page["markdown"])
+    # replace an existing key (case/space-insensitive) or add it
+    target = key
+    norm = key.replace(" ", "").lower()
+    for k in meta:
+        if k.replace(" ", "").lower() == norm:
+            target = k
+            break
+    meta[target] = value
+    lines = [f"{k}: {v}" for k, v in meta.items()]
+    if tags:
+        lines.insert(0, "tags: " + ", ".join(tags))
+    fm = "---\n" + "\n".join(lines) + "\n---\n"
+    return update_page(slug, page["title"], fm + body.lstrip("\n"), author="ai")
 
 
 def _index_meta(page_id: int, markdown: str) -> None:

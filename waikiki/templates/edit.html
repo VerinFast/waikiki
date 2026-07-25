@@ -25,6 +25,21 @@
       <span id="ai-status" class="muted"></span>
     </div>
 
+    <div class="edit-tabs">
+      <button type="button" class="tab on" data-tab="content">Content</button>
+      <button type="button" class="tab" data-tab="meta">Metadata</button>
+    </div>
+    <div id="meta-panel" hidden>
+      <p class="muted">Structured properties, stored as frontmatter. Reference them
+        elsewhere as <code>{{ '{{Slug.Key}}' }}</code> (or <code>{{ '{{Key}}' }}</code>
+        on this page).</p>
+      <table id="meta-rows"></table>
+      <div class="editor-actions">
+        <button type="button" class="btn" id="meta-add">+ property</button>
+        <button type="button" class="btn primary" id="meta-apply">Apply to page</button>
+      </div>
+    </div>
+
     {# In collab mode the textarea starts empty; the CRDT room delivers the content. #}
     <textarea id="editor" name="markdown">{% if not collab %}{{ page.markdown }}{% endif %}</textarea>
 

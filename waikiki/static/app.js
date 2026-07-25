@@ -63,6 +63,66 @@ function init() {
 
   // --- Pull-model AI streaming (the "Generate" convenience button) ---
   setupAI(easymde);
+  setupMetaTab(easymde);
+}
+
+// --- Metadata tab: edit frontmatter properties as fields ---
+const _FM_RE = /^\s*---[ \t]*\n([\s\S]*?)\n---[ \t]*\n?/;
+
+function setupMetaTab(easymde) {
+  const panel = document.getElementById("meta-panel");
+  const tabs = document.querySelectorAll(".edit-tabs .tab");
+  if (!panel || !tabs.length) return;
+  const container = document.querySelector(".EasyMDEContainer");
+
+  tabs.forEach((t) => t.addEventListener("click", () => {
+    tabs.forEach((x) => x.classList.remove("on"));
+    t.classList.add("on");
+    const isMeta = t.getAttribute("data-tab") === "meta";
+    if (container) container.style.display = isMeta ? "none" : "";
+    panel.hidden = !isMeta;
+    if (isMeta) loadRows();
+  }));
+
+  function loadRows() {
+    const m = easymde.value().match(_FM_RE);
+    const rows = [];
+    if (m) m[1].split("\n").forEach((line) => {
+      const i = line.indexOf(":");
+      if (i > 0) rows.push([line.slice(0, i).trim(), line.slice(i + 1).trim()]);
+    });
+    const tbody = document.getElementById("meta-rows");
+    tbody.innerHTML = "";
+    (rows.length ? rows : [["", ""]]).forEach((kv) => addRow(kv[0], kv[1]));
+  }
+
+  function addRow(k, v) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = '<td><input class="mk" placeholder="key"></td>'
+      + '<td><input class="mv" placeholder="value"></td>'
+      + '<td><button type="button" class="btn small mdel">✕</button></td>';
+    tr.querySelector(".mk").value = k;
+    tr.querySelector(".mv").value = v;
+    tr.querySelector(".mdel").addEventListener("click", () => tr.remove());
+    document.getElementById("meta-rows").appendChild(tr);
+  }
+
+  document.getElementById("meta-add").addEventListener("click", () => addRow("", ""));
+
+  document.getElementById("meta-apply").addEventListener("click", () => {
+    const lines = [];
+    document.querySelectorAll("#meta-rows tr").forEach((tr) => {
+      const k = tr.querySelector(".mk").value.trim();
+      const v = tr.querySelector(".mv").value.trim();
+      if (k) lines.push(k + ": " + v);
+    });
+    const fm = lines.length ? "---\n" + lines.join("\n") + "\n---\n" : "";
+    const doc = easymde.codemirror.getDoc();
+    const m = easymde.value().match(_FM_RE);
+    if (m) doc.replaceRange(fm, { line: 0, ch: 0 }, doc.posFromIndex(m[0].length));
+    else doc.replaceRange(fm, { line: 0, ch: 0 });
+    document.querySelector('.edit-tabs .tab[data-tab="content"]').click();
+  });
 }
 
 async function setupCollab(cm) {

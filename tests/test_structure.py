@@ -41,6 +41,27 @@ def test_frontmatter_renders_infobox(wiki):
     assert "Role:" not in p["html"].split("<h1")[0] or "infobox" in p["html"]
 
 
+def test_property_interpolation(wiki):
+    store.create_page("Meru", "---\nHitPoints: 42\n---\nMeru has {{HitPoints}} HP.")
+    store.create_page("Battle", "Meru brings {{Meru.HitPoints}} HP to the fight.")
+    assert "42" in store.get_page("meru")["html"]        # {{Key}} local
+    assert "42" in store.get_page("battle")["html"]       # {{Slug.Key}} cross-page
+
+
+def test_set_get_property(wiki):
+    store.create_page("Ansel", "# Ansel\nbody text")
+    store.set_property("ansel", "Class", "Mage")
+    assert store.get_property("ansel", "Class") == "Mage"
+    assert "body text" in store.get_page("ansel")["markdown"]   # body preserved
+    store.create_page("Ref", "Ansel is a {{Ansel.Class}}.")
+    assert "Mage" in store.get_page("ref")["html"]
+
+
+def test_property_normalized_lookup(wiki):
+    store.create_page("Ansel", "---\nHit Points: 10\n---\nbody")
+    assert "10" in store.render_html("{{Ansel.HitPoints}}")      # spaceless ref matches
+
+
 def test_transclusion(wiki):
     store.create_page("Snippet", "Reusable **fact** line.")
     host = store.create_page("Host", "Before.\n\n![[Snippet]]\n\nAfter.")

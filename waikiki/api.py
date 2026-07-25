@@ -319,6 +319,32 @@ class TableCell(BaseModel):
     value: str
 
 
+@app.get("/wiki/{slug}/section", response_class=HTMLResponse)
+def section_edit_view(request: Request, slug: str, heading: str = ""):
+    page = store.get_page(slug)
+    if not page:
+        raise HTTPException(404, "Page not found")
+    span = edits.section_span(page["markdown"], heading)
+    section_md = page["markdown"][span[0]:span[1]] if span else ""
+    return templates.TemplateResponse(request, "section.html",
+        _ctx(request, page=page, heading=heading, section_md=section_md,
+             found=span is not None))
+
+
+@app.post("/wiki/{slug}/section")
+def section_save(slug: str, heading: str = Form(...), markdown: str = Form(...)):
+    page = store.get_page(slug)
+    if page:
+        try:
+            new_md = edits.apply_to_string(
+                page["markdown"],
+                lambda s: edits.plan_replace_section(s, heading, markdown))
+            store.update_page(slug, page["title"], new_md, author="human")
+        except ValueError:
+            pass
+    return RedirectResponse(f"/wiki/{slug}#{render.slugify(heading)}", status_code=303)
+
+
 @app.post("/wiki/{slug}/table-cell")
 def table_cell_edit(slug: str, body: TableCell):
     page = store.get_page(slug)

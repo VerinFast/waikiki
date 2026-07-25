@@ -468,6 +468,26 @@ def export_markdown(dest_dir: str) -> dict:
 
 
 @mcp.tool
+def set_property(slug: str, key: str, value: str) -> dict:
+    """Set an arbitrary property on a page (stored as frontmatter). Reference it
+    elsewhere as {{Key}} on the same page or {{Slug.Key}} on another page —
+    e.g. set_property('meru', 'HitPoints', '42') then write {{Meru.HitPoints}}."""
+    wiki = _require_wiki()
+    page = store.set_property(slug, key, value)
+    if not page:
+        return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
+    return {"wiki": wiki, "slug": slug, "key": key, "value": value}
+
+
+@mcp.tool
+def get_property(slug: str, key: str) -> dict:
+    """Get a page's property value (from its frontmatter)."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "slug": slug, "key": key,
+            "value": store.get_property(slug, key)}
+
+
+@mcp.tool
 def list_tags() -> dict:
     """List tags in the active wiki with page counts. Tag a page by adding a
     frontmatter block: ---\\ntags: character, spirit\\n---"""

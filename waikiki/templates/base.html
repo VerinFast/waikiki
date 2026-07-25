@@ -114,6 +114,23 @@
       }
     });
 
+    // Per-section "edit" links next to headings (view mode).
+    if (window.WAIKIKI_PAGE) {
+      document.querySelectorAll('.content .rendered h1, .content .rendered h2, .content .rendered h3')
+        .forEach(function (h) {
+          var clone = h.cloneNode(true);
+          var a = clone.querySelector('.header-anchor');
+          if (a) a.remove();
+          var text = clone.textContent.trim();
+          if (!text) return;
+          var link = document.createElement('a');
+          link.className = 'section-edit';
+          link.textContent = 'edit';
+          link.href = '/wiki/' + WAIKIKI_PAGE.slug + '/section?heading=' + encodeURIComponent(text);
+          h.appendChild(link);
+        });
+    }
+
     // Inline table-cell editing (view mode): a pencil in each cell.
     if (window.WAIKIKI_PAGE) {
       document.querySelectorAll('.content .rendered table').forEach(function (table, ti) {
@@ -143,8 +160,17 @@
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ table: t, row: r, col: c, value: inp.value })
         }).then(function (r) { return r.json(); }).then(function (res) {
-          if (res.ok) location.reload();
-          else { cell.innerHTML = prev; alert(res.error || 'edit failed'); }
+          if (res.ok) {
+            cell.setAttribute('data-val', inp.value);
+            cell.textContent = inp.value;      // update in place — keeps scroll
+            var p = document.createElement('button');
+            p.type = 'button'; p.className = 'cell-edit'; p.textContent = '✎';
+            p.title = 'Edit cell';
+            p.addEventListener('click', function (ev) {
+              ev.stopPropagation(); editTableCell(cell, t, r, c);
+            });
+            cell.appendChild(p);
+          } else { cell.innerHTML = prev; alert(res.error || 'edit failed'); }
         });
       }
       inp.addEventListener('keydown', function (e) {

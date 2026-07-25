@@ -41,6 +41,48 @@
       </label>
     </fieldset>
 
+    <fieldset>
+      <legend>AI generation <span class="muted">(the editor's Generate button)</span></legend>
+      <label>Provider
+        <select name="gen_provider">
+          <option value="anthropic" {{ 'selected' if settings.gen_provider != 'ollama' }}>Anthropic (cloud)</option>
+          <option value="ollama" {{ 'selected' if settings.gen_provider == 'ollama' }}>Ollama (local)</option>
+        </select>
+      </label>
+      <label>Anthropic model
+        <input type="text" name="gen_model" value="{{ settings.gen_model }}"
+               placeholder="claude-opus-4-8">
+      </label>
+      <label>Local (Ollama) model
+        <input type="text" name="gen_model_local" value="{{ settings.gen_model_local }}"
+               placeholder="phi3">
+      </label>
+      <label>Ollama URL
+        <input type="text" name="ollama_url" value="{{ settings.ollama_url }}"
+               placeholder="http://localhost:11434">
+      </label>
+      <p class="muted note">Local generation needs <a href="https://ollama.com">Ollama</a>
+        running (<code>ollama serve</code>) with the model pulled
+        (<code>ollama pull phi3</code>).</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Chat <span class="muted">(chat with an article)</span></legend>
+      <label>CLI
+        <select name="chat_provider">
+          <option value="claude" {{ 'selected' if settings.chat_provider != 'gemini' }}>Claude Code</option>
+          <option value="gemini" {{ 'selected' if settings.chat_provider == 'gemini' }}>Gemini</option>
+        </select>
+      </label>
+      <label>Model <span class="muted">(blank = CLI default)</span>
+        <input type="text" name="chat_model" value="{{ settings.chat_model }}"
+               placeholder="e.g. claude-sonnet-4-5 / gemini-2.5-pro">
+      </label>
+      <p class="muted note">Chat shells out to a local CLI. Install the
+        <code>claude</code> or <code>gemini</code> command and make sure it's
+        signed in.</p>
+    </fieldset>
+
     <button class="btn primary" type="submit">Save settings</button>
   </form>
 

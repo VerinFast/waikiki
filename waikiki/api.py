@@ -18,12 +18,24 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import ai, collab, config, db, edits, embeddings, pdfgen, rag, render, store, wikis
+from . import (ai, chat, collab, config, db, edits, embeddings, help_content,
+               pdfgen, rag, render, store, wikis)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()  # ensures the wiki registry + default wiki schema
+    wikis.ensure_help_wiki()  # so the Help wiki shows in the switcher immediately
+
+    async def _seed_help():
+        # Populate the Help wiki (prose + editable AI system prompts) off-thread;
+        # idempotent, so it just no-ops on subsequent starts.
+        import anyio
+        try:
+            await anyio.to_thread.run_sync(help_content.seed)
+        except Exception as exc:
+            print(f"[waikiki] help seed skipped: {exc}")
+
     # Pre-load the embedding model once (under the default wiki context), off the
     # event loop, so the first search and a concurrent reindex don't race to load.
     async def _warm():
@@ -48,12 +60,14 @@ async def lifespan(app: FastAPI):
 
     async with collab.server:                       # start the CRDT websocket server
         warm_task = asyncio.create_task(_warm())
+        seed_task = asyncio.create_task(_seed_help())
         flush_task = asyncio.create_task(collab.flusher())
         retention_task = asyncio.create_task(_retention())
         try:
             yield
         finally:
             warm_task.cancel()
+            seed_task.cancel()
             flush_task.cancel()
             retention_task.cancel()
 
@@ -171,6 +185,7 @@ def _ctx(request: Request, **extra) -> dict:
         "current_wiki": wiki,
         "current_wiki_name": wikis.name_of(wiki),
         "wikis": wikis.list_wikis(),
+        "version": config.VERSION,
     }
     base.update(extra)
     return base
@@ -210,8 +225,25 @@ def _claude_config(request: Request) -> dict:
     return {"mcpServers": {"waikiki": server}}
 
 
-@app.get("/help", response_class=HTMLResponse)
-def help_page(request: Request):
+def _help_cookie(resp):
+    resp.set_cookie("waikiki_wiki", config.HELP_WIKI, max_age=60 * 60 * 24 * 365,
+                    samesite="lax")
+    return resp
+
+
+@app.get("/help")
+def help_home():
+    """Open the Help wiki (switches the browser's active wiki to Help)."""
+    return _help_cookie(RedirectResponse("/wiki/getting-started", status_code=303))
+
+
+@app.get("/help/{slug}")
+def help_slug(slug: str):
+    return _help_cookie(RedirectResponse(f"/wiki/{slug}", status_code=303))
+
+
+@app.get("/connect", response_class=HTMLResponse)
+def connect_page(request: Request):
     return templates.TemplateResponse(request, "help.html", _ctx(
         request,
         claude_config=json.dumps(_claude_config(request), indent=2),
@@ -357,6 +389,24 @@ def table_cell_edit(slug: str, body: TableCell):
         return {"ok": False, "error": str(exc)}
     store.update_page(slug, page["title"], new_md, author="human")
     return {"ok": True}
+
+
+class ChatIn(BaseModel):
+    question: str
+    provider: str | None = None
+    model: str | None = None
+    history: list[dict] = []
+
+
+@app.post("/wiki/{slug}/chat")
+async def chat_endpoint(slug: str, body: ChatIn):
+    """Answer a question about a page via the configured CLI (claude/gemini),
+    grounded in the page + wiki-search excerpts. Runs the subprocess off-thread."""
+    import anyio
+    provider = body.provider or db.get_setting("chat_provider", "claude")
+    model = body.model if body.model is not None else db.get_setting("chat_model", "")
+    return await anyio.to_thread.run_sync(
+        lambda: chat.answer(slug, body.question, provider, model, body.history or []))
 
 
 @app.get("/wiki/{slug}/pdf")
@@ -573,10 +623,24 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
 def settings_save(theme: str = Form(...),
                   retention_versions: str = Form("50"),
                   retention_trash_days: str = Form("30"),
-                  allow_html: str = Form("")):
+                  allow_html: str = Form(""),
+                  gen_provider: str = Form("anthropic"),
+                  gen_model: str = Form(""),
+                  gen_model_local: str = Form("phi3"),
+                  ollama_url: str = Form("http://localhost:11434"),
+                  chat_provider: str = Form("claude"),
+                  chat_model: str = Form("")):
     db.set_setting("theme", theme)
     db.set_setting("retention_versions", str(max(0, int(retention_versions or 0))))
     db.set_setting("retention_trash_days", str(max(0, int(retention_trash_days or 0))))
+    db.set_setting("gen_provider",
+                   gen_provider if gen_provider in ("anthropic", "ollama") else "anthropic")
+    db.set_setting("gen_model", gen_model.strip() or config.ANTHROPIC_MODEL)
+    db.set_setting("gen_model_local", gen_model_local.strip() or "phi3")
+    db.set_setting("ollama_url", ollama_url.strip() or "http://localhost:11434")
+    db.set_setting("chat_provider",
+                   chat_provider if chat_provider in ("claude", "gemini") else "claude")
+    db.set_setting("chat_model", chat_model.strip())
     new_html = "1" if allow_html else "0"
     if new_html != db.get_setting("allow_html", "0"):
         db.set_setting("allow_html", new_html)

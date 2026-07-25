@@ -554,6 +554,12 @@ def search_subpages(parent_slug: str, query: str, k: int = 6) -> dict:
             "results": rag.search_subtree(query, parent["id"], k)}
 
 
+@mcp.tool
+def version() -> dict:
+    """Return the running Waikiki release version. No wiki selection required."""
+    return {"waikiki_version": config.VERSION}
+
+
 def main() -> None:
     global _ACTIVE
     db.init_db()

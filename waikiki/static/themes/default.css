@@ -235,4 +235,39 @@ pre.diff .hunk{color:var(--muted);display:block}
   .header-anchor{display:none}
 }
 
+/* Top-bar back/forward + version chip */
+.histnav{display:inline-flex;gap:.15rem}
+.histbtn{border:1px solid var(--border);background:var(--surface);color:var(--text);
+  width:1.9rem;height:1.9rem;border-radius:8px;cursor:pointer;font-size:1.1rem;line-height:1;
+  display:inline-flex;align-items:center;justify-content:center}
+.histbtn:hover{border-color:var(--accent);color:var(--accent)}
+.brand .ver{font-size:.7rem;font-weight:600;color:var(--muted);vertical-align:super}
+
+/* Page options summary reads as a button, not a link */
+.tools .menu>summary.btn{color:var(--text);display:inline-block}
+.tools .menu .menu-items{min-width:170px}
+
+/* Custom right-click context menu (Copy/Paste/Select All) */
+.ctxmenu{position:fixed;z-index:1000;background:var(--surface);border:1px solid var(--border);
+  border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.22);padding:.25rem;min-width:150px;
+  display:flex;flex-direction:column}
+.ctxmenu button{border:none;background:none;color:var(--text);text-align:left;
+  padding:.4rem .7rem;border-radius:6px;cursor:pointer;font-size:.9rem;font-family:inherit}
+.ctxmenu button:hover{background:var(--accent);color:var(--accent-contrast)}
+
+/* Chat with an article */
+.chatpanel{margin-top:1.5rem}
+.chatlog{display:flex;flex-direction:column;gap:.5rem;margin:.6rem 0;max-height:340px;overflow-y:auto}
+.chatlog:empty{display:none}
+.chatmsg{padding:.5rem .75rem;border-radius:10px;max-width:85%;white-space:pre-wrap;word-wrap:break-word}
+.chatmsg.user{align-self:flex-end;background:var(--accent);color:var(--accent-contrast)}
+.chatmsg.assistant{align-self:flex-start;background:var(--code-bg);color:var(--text);border:1px solid var(--border)}
+.chatmsg.thinking{opacity:.6;font-style:italic}
+.chatmsg.err{background:transparent;border:1px solid var(--danger);color:var(--danger)}
+.chatform{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.chatform input[type=text]{flex:1;min-width:200px;padding:.5rem .7rem;border:1px solid var(--border);
+  border-radius:8px;background:var(--bg);color:var(--text)}
+.chatform select{padding:.45rem .5rem;border:1px solid var(--border);border-radius:8px;
+  background:var(--bg);color:var(--text)}
+
 @media(max-width:720px){.layout{grid-template-columns:1fr}.sidebar{display:none}}

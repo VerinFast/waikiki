@@ -9,7 +9,13 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/">🌺 Waikiki</a>
+    <div class="histnav" role="group" aria-label="History">
+      <button type="button" class="histbtn" onclick="history.back()"
+              title="Back" aria-label="Back">‹</button>
+      <button type="button" class="histbtn" onclick="history.forward()"
+              title="Forward" aria-label="Forward">›</button>
+    </div>
+    <a class="brand" href="/">🌺 Waikiki <span class="ver" title="Version">v{{ version }}</span></a>
     <form class="wiki-switch" method="post" action="/switch-wiki">
       <select name="wiki" onchange="this.form.submit()" title="Active wiki">
         {% for w in wikis %}
@@ -36,7 +42,9 @@
       <details class="menu">
         <summary>Help</summary>
         <div class="menu-items">
-          <a href="/help">Connect Claude</a>
+          <a href="/help">Help contents</a>
+          <a href="/help/about">About</a>
+          <a href="/connect">Connect Claude</a>
         </div>
       </details>
     </nav>
@@ -81,8 +89,13 @@
     </main>
   </div>
   <script>
-    // Copy support: a pywebview window has no Edit menu, so ⌘C/Ctrl+C never
-    // reaches a native copy handler. Do it ourselves from the current selection.
+    // Clipboard support: a pywebview window has no Edit menu, so ⌘C/⌘V/⌘A and the
+    // right-click menu never reach native handlers. We implement them ourselves.
+    // These are also invoked from the native app menu via evaluate_js.
+    function _isEditable(el) {
+      return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+                    || el.isContentEditable);
+    }
     function _copyText(text) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).catch(function () { _copyFallback(text); });
@@ -95,19 +108,94 @@
       try { document.execCommand('copy'); } catch (e) {}
       document.body.removeChild(ta);
     }
-    document.addEventListener('keydown', function (e) {
-      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'c') return;
-      var ae = document.activeElement, text = '';
-      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')
-          && ae.selectionStart != null && ae.selectionEnd > ae.selectionStart) {
-        text = ae.value.substring(ae.selectionStart, ae.selectionEnd);
-      } else {
-        text = (window.getSelection && window.getSelection().toString()) || '';
+    function _fieldSel(el) {
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')
+          && el.selectionStart != null && el.selectionEnd > el.selectionStart) {
+        return el.value.substring(el.selectionStart, el.selectionEnd);
       }
-      if (!text) return;
-      e.preventDefault();
-      _copyText(text);
+      return '';
+    }
+    function _selectionText() {
+      return _fieldSel(document.activeElement)
+             || (window.getSelection && window.getSelection().toString()) || '';
+    }
+    window.wkCopy = function () {
+      var text = _selectionText();
+      if (text) _copyText(text);
+      return !!text;
+    };
+    window.wkPaste = function () {
+      var ae = document.activeElement;
+      if (!_isEditable(ae) || !navigator.clipboard || !navigator.clipboard.readText)
+        return false;
+      navigator.clipboard.readText().then(function (text) {
+        if (!text) return;
+        if (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') {
+          var s = ae.selectionStart || 0, e = ae.selectionEnd || 0;
+          ae.value = ae.value.slice(0, s) + text + ae.value.slice(e);
+          ae.selectionStart = ae.selectionEnd = s + text.length;
+          ae.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+          document.execCommand('insertText', false, text);
+        }
+      }).catch(function () {});
+      return true;
+    };
+    window.wkSelectAll = function () {
+      var ae = document.activeElement;
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) {
+        ae.select(); return true;
+      }
+      var target = document.querySelector('.content .rendered') ||
+                   document.querySelector('.content');
+      if (target) {
+        var r = document.createRange(); r.selectNodeContents(target);
+        var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+      }
+      return true;
+    };
+    document.addEventListener('keydown', function (e) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      var k = e.key.toLowerCase();
+      if (k === 'c') { if (window.wkCopy()) e.preventDefault(); }
+      else if (k === 'v') { if (_isEditable(document.activeElement) && window.wkPaste()) e.preventDefault(); }
+      else if (k === 'a' && !_isEditable(document.activeElement)) { window.wkSelectAll(); e.preventDefault(); }
     });
+
+    // Right-click context menu with Copy / Paste / Select All (WKWebView shows
+    // none of these on its own once the native page menu is suppressed).
+    (function () {
+      var menu = null;
+      function close() { if (menu) { menu.remove(); menu = null; } }
+      document.addEventListener('click', close);
+      document.addEventListener('scroll', close, true);
+      document.addEventListener('contextmenu', function (e) {
+        close();
+        var editable = _isEditable(e.target);
+        // Read the selection from the event target too — a right-click doesn't
+        // always leave the field as document.activeElement.
+        var selText = _fieldSel(e.target) || _selectionText();
+        var items = [];
+        if (selText) items.push(['Copy', function () { _copyText(selText); }]);
+        if (editable) items.push(['Paste', function () { window.wkPaste(); }]);
+        items.push(['Select All', function () { window.wkSelectAll(); }]);
+        if (!items.length) return;
+        e.preventDefault();
+        menu = document.createElement('div');
+        menu.className = 'ctxmenu';
+        items.forEach(function (it) {
+          var b = document.createElement('button');
+          b.type = 'button'; b.textContent = it[0];
+          b.addEventListener('click', function (ev) {
+            ev.stopPropagation(); it[1](); close();
+          });
+          menu.appendChild(b);
+        });
+        menu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
+        menu.style.top = Math.min(e.clientY, window.innerHeight - 120) + 'px';
+        document.body.appendChild(menu);
+      });
+    })();
 
     // Reliable in-page anchor scrolling. The .content pane is the scroll
     // container (WebKit/pywebview don't scroll the window here), so scroll it.
@@ -118,6 +206,11 @@
       var el = id && document.getElementById(id);
       if (!el) return;
       e.preventDefault();
+      // If the target is (or is inside) a collapsed <details>, open it first so
+      // the jump lands on visible content — used by the Page options menu.
+      if (el.tagName === 'DETAILS') el.open = true;
+      var d = el.closest && el.closest('details');
+      if (d) d.open = true;
       var box = document.querySelector('.content');
       if (box) {
         var top = el.getBoundingClientRect().top - box.getBoundingClientRect().top

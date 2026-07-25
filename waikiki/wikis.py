@@ -266,6 +266,20 @@ def markdown_zip(slug: str) -> bytes:
         db.current_wiki.reset(token)
 
 
+def ensure_help_wiki() -> None:
+    """Register the built-in Help wiki if missing. Idempotent; safe from both the
+    web app and the (separate-process) MCP server."""
+    slug = config.HELP_WIKI
+    with _lock:
+        reg = _load()
+        if any(w["slug"] == slug for w in reg["wikis"]):
+            return
+        reg["wikis"].append({"slug": slug, "name": "Help"})
+        if not reg.get("default"):
+            reg["default"] = slug
+        _save(reg)
+
+
 def ensure_initialized() -> None:
     """First-run setup: migrate the legacy single DB into a 'main' wiki and
     seed the named wikis. Idempotent."""

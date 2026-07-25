@@ -10,6 +10,8 @@ import os
 import sys
 from pathlib import Path
 
+from . import __version__ as VERSION  # single source of truth for the release
+
 # Project root and data location -------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent
 if os.environ.get("WAIKIKI_DATA"):
@@ -27,6 +29,8 @@ DB_PATH = Path(os.environ.get("WAIKIKI_DB", DATA_DIR / "waikiki.db"))
 WIKIS_DIR = DATA_DIR / "wikis"
 # Wikis created automatically on first run (besides migrated "main").
 SEED_WIKIS = ["Beaconlight", "Crosslake", "StartupOS"]
+# Slug of the built-in Help wiki (seeded with help text + the AI system prompts).
+HELP_WIKI = "help"
 
 # Server -------------------------------------------------------------------------
 HOST = os.environ.get("WAIKIKI_HOST", "127.0.0.1")
@@ -56,6 +60,16 @@ DEFAULT_SETTINGS = {
     "retention_trash_days": "30",
     # Allow raw HTML in markdown (per wiki). Local/trusted use; off by default.
     "allow_html": "0",
+    # AI text generation (the editor's "Generate" button). Provider is
+    # {anthropic (cloud), ollama (local, e.g. phi3)}.
+    "gen_provider": "anthropic",
+    "gen_model": ANTHROPIC_MODEL,        # used when gen_provider == anthropic
+    "gen_model_local": "phi3",           # an Ollama model tag, when == ollama
+    "ollama_url": "http://localhost:11434",
+    # Chat-with-an-article, powered by a local CLI {claude, gemini}. An empty
+    # model means "use the CLI's own default".
+    "chat_provider": "claude",
+    "chat_model": "",
 }
 
 # Built-in page templates seeded into each wiki (editable/removable in the UI).

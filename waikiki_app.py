@@ -109,11 +109,45 @@ def main() -> None:
         print("Waikiki server failed to start", file=sys.stderr)
         sys.exit(1)
 
+    # Native menu bar: gives macOS an Edit menu (so Copy/Paste/Select All exist as
+    # real menu items — WKWebView has none by default) and a Help menu.
+    base = f"http://{host}:{port}"
+
+    def _js(code):
+        def handler():
+            try:
+                webview.windows[0].evaluate_js(code)
+            except Exception:
+                pass
+        return handler
+
+    def _go(path):
+        def handler():
+            try:
+                webview.windows[0].load_url(base + path)
+            except Exception:
+                pass
+        return handler
+
+    from webview.menu import Menu, MenuAction
+    menu = [
+        Menu("Edit", [
+            MenuAction("Copy", _js("window.wkCopy && window.wkCopy()")),
+            MenuAction("Paste", _js("window.wkPaste && window.wkPaste()")),
+            MenuAction("Select All", _js("window.wkSelectAll && window.wkSelectAll()")),
+        ]),
+        Menu("Help", [
+            MenuAction("Help Contents", _go("/help")),
+            MenuAction("About Waikiki", _go("/help/about")),
+            MenuAction("Connect Claude", _go("/connect")),
+        ]),
+    ]
+
     webview.create_window(
         "Waikiki", f"http://{host}:{port}/", width=1200, height=820,
         min_size=(800, 600), js_api=DesktopApi(), text_select=True,
     )
-    webview.start()  # blocks until the window is closed
+    webview.start(menu=menu)  # blocks until the window is closed
 
     server.should_exit = True  # ask uvicorn to stop; daemon thread exits with us
 

@@ -82,10 +82,23 @@ def reindex_page(page_id: int, markdown: str) -> None:
     conn.commit()
 
 
-def reindex_all() -> int:
-    """Re-chunk and re-embed every page (use after switching embedders)."""
+def remove_page(page_id: int) -> None:
+    """Drop a page's chunks + vectors from the index (used on soft-delete)."""
     conn = db.get_conn()
-    pages = conn.execute("SELECT id, markdown FROM pages").fetchall()
+    old_ids = [r["id"] for r in conn.execute(
+        "SELECT id FROM chunks WHERE page_id=?", (page_id,)).fetchall()]
+    if db.VEC_AVAILABLE and old_ids:
+        conn.executemany("DELETE FROM vec_chunks WHERE chunk_id=?",
+                         [(i,) for i in old_ids])
+    conn.execute("DELETE FROM chunks WHERE page_id=?", (page_id,))
+    conn.commit()
+
+
+def reindex_all() -> int:
+    """Re-chunk and re-embed every active page (use after switching embedders)."""
+    conn = db.get_conn()
+    pages = conn.execute(
+        "SELECT id, markdown FROM pages WHERE deleted_at IS NULL").fetchall()
     for p in pages:
         reindex_page(p["id"], p["markdown"])
     return len(pages)
@@ -147,7 +160,7 @@ def search_chunks(query: str, k: int = config.RAG_TOP_K) -> List[dict]:
     rows = db.get_conn().execute(
         f"SELECT c.id AS chunk_id, c.text, p.id AS page_id, p.slug, p.title "
         f"FROM chunks c JOIN pages p ON p.id = c.page_id "
-        f"WHERE c.id IN ({placeholders})",
+        f"WHERE c.id IN ({placeholders}) AND p.deleted_at IS NULL",
         top,
     ).fetchall()
     by_id = {r["chunk_id"]: r for r in rows}
@@ -170,7 +183,7 @@ def search_pages(query: str, limit: int = 20) -> List[dict]:
     rows = db.get_conn().execute(
         "SELECT p.slug, p.title, snippet(pages_fts, 1, '<mark>', '</mark>', ' … ', 12) AS snip "
         "FROM pages_fts JOIN pages p ON p.id = pages_fts.rowid "
-        "WHERE pages_fts MATCH ? ORDER BY bm25(pages_fts) LIMIT ?",
+        "WHERE pages_fts MATCH ? AND p.deleted_at IS NULL ORDER BY bm25(pages_fts) LIMIT ?",
         (_fts_query(query), limit),
     ).fetchall()
     return [dict(r) for r in rows]

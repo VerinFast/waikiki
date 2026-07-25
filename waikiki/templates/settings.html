@@ -13,8 +13,23 @@
           <option value="{{ t }}" {{ 'selected' if settings.theme == t }}>{{ t }}</option>
         {% endfor %}
       </select>
-      <button class="btn primary" type="submit">Save theme</button>
     </fieldset>
+
+    <fieldset>
+      <legend>Retention <span class="muted">(this wiki)</span></legend>
+      <label>Keep the last N versions per page
+        <input type="number" name="retention_versions" min="0"
+               value="{{ settings.retention_versions }}">
+        <span class="muted">0 = keep all</span>
+      </label>
+      <label>Empty trash after N days
+        <input type="number" name="retention_trash_days" min="0"
+               value="{{ settings.retention_trash_days }}">
+        <span class="muted">0 = never auto-empty</span>
+      </label>
+    </fieldset>
+
+    <button class="btn primary" type="submit">Save settings</button>
   </form>
 
   <section class="settings">

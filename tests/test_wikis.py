@@ -62,6 +62,27 @@ def test_wikilink_cannot_cross_wikis(wiki):
     assert store.get_page("shared") is None
 
 
+def test_wiki_stats(wiki):
+    db.current_wiki.set("main")
+    store.create_page("Home", "see [[Other Page]] and [[Missing Thing]]")
+    store.create_page("Other Page", "back to [[Home]]")
+    s = wikis.stats("main")
+    assert s["articles"] == 2
+    # Home -> other-page (resolved) + missing-thing (broken); Other -> home (resolved)
+    assert s["links_resolved"] == 2
+    assert s["links_broken"] == 1
+    assert s["bytes"] > 0
+
+
+def test_stats_excludes_trashed_articles(wiki):
+    db.current_wiki.set("main")
+    store.create_page("Keep", "a")
+    store.create_page("Toss", "b")
+    store.soft_delete("toss")
+    s = wikis.stats("main")
+    assert s["articles"] == 1 and s["trashed"] == 1
+
+
 def test_export_import_roundtrip(wiki, tmp_path):
     db.current_wiki.set("main")
     store.create_page("Portable", "content about turtles that should survive export")

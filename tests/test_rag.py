@@ -30,3 +30,13 @@ def test_hybrid_chunk_search_returns_source(wiki):
 def test_search_no_match_is_empty(wiki):
     store.create_page("Only", "single page about tomatoes")
     assert rag.search_pages("xyzzyqwerty") == []
+
+
+def test_soft_deleted_pages_excluded_from_search(wiki):
+    store.create_page("Ghost", "unique content about aardvarks")
+    assert rag.search_pages("aardvarks")            # found while active
+    store.soft_delete("ghost")
+    assert rag.search_pages("aardvarks") == []      # gone from search
+    assert rag.search_chunks("aardvarks") == []
+    store.restore("ghost")
+    assert rag.search_pages("aardvarks")            # back after restore

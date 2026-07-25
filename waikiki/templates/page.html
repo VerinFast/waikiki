@@ -2,24 +2,53 @@
 {% block title %}{{ page.title }} — Waikiki{% endblock %}
 {% block content %}
   <article class="article">
-    <div class="article-head">
-      <h1>{{ page.title }}</h1>
-      <div class="tools">
-        <a class="btn" href="/wiki/{{ page.slug }}/edit">Edit</a>
-        <form method="post" action="/wiki/{{ page.slug }}/delete"
-              onsubmit="return confirm('Delete this page?')">
-          <button class="btn danger" type="submit">Delete</button>
+    {% if trashed %}
+      <div class="banner err">
+        This page is in the Trash (deleted {{ page.deleted_at }}).
+        <form method="post" action="/wiki/{{ page.slug }}/restore" style="display:inline">
+          <button class="btn" type="submit">Restore</button>
+        </form>
+        <form method="post" action="/wiki/{{ page.slug }}/purge" style="display:inline"
+              onsubmit="return confirm('Permanently delete this page? This cannot be undone.')">
+          <button class="btn danger" type="submit">Delete forever</button>
         </form>
       </div>
+    {% endif %}
+
+    <div class="article-head">
+      <h1>{{ page.title }}</h1>
+      {% if not trashed %}
+        <div class="tools">
+          <a class="btn" href="/wiki/{{ page.slug }}/edit">Edit</a>
+          <form method="post" action="/wiki/{{ page.slug }}/delete"
+                onsubmit="return confirm('Move this page to the Trash?')">
+            <button class="btn danger" type="submit">Delete</button>
+          </form>
+        </div>
+      {% endif %}
     </div>
+
     <div class="rendered">{{ page.html | safe }}</div>
+
     {% if versions %}
       <details class="history">
         <summary>History ({{ versions | length }})</summary>
-        <ul>
+        <ul class="versionlist">
           {% for v in versions %}
-            <li><span class="badge {{ v.author }}">{{ v.author }}</span>
-              {{ v.title }} <span class="muted">{{ v.created_at }}</span></li>
+            <li>
+              <span class="badge {{ v.author }}">{{ v.author }}</span>
+              <a href="/wiki/{{ page.slug }}/history/{{ v.id }}">{{ v.created_at }}</a>
+              <span class="muted">{{ v.title }}</span>
+              {% if not loop.first %}
+                <form method="post" action="/wiki/{{ page.slug }}/history/{{ v.id }}/restore"
+                      style="display:inline"
+                      onsubmit="return confirm('Restore this version?')">
+                  <button class="btn small" type="submit">Restore</button>
+                </form>
+              {% else %}
+                <span class="muted">(current)</span>
+              {% endif %}
+            </li>
           {% endfor %}
         </ul>
       </details>

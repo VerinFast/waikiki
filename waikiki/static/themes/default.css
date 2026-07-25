@@ -55,6 +55,15 @@ form{display:inline}
 .rendered blockquote{border-left:4px solid var(--border);margin:1rem 0;padding:.2rem 1rem;color:var(--muted)}
 mark{background:var(--mark)}
 
+.btn.small{padding:.15rem .5rem;font-size:.78rem}
+.versionlist{list-style:none;padding:0}
+.versionlist li{display:flex;align-items:center;gap:.5rem;padding:.3rem 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.wikistats{font-size:.8rem;margin-top:.25rem}
+.wikistats .broken{color:var(--danger)}
+pre.diff{background:var(--code-bg);padding:1rem;border-radius:8px;overflow:auto;font-family:var(--mono);font-size:.85rem;line-height:1.5}
+pre.diff .add{color:#0a7d33;display:block}
+pre.diff .del{color:#b3261e;display:block}
+pre.diff .hunk{color:var(--muted);display:block}
 .history{margin-top:2rem}
 .badge{font-size:.72rem;padding:.1rem .4rem;border-radius:6px;background:var(--code-bg);text-transform:uppercase}
 .badge.ai{background:#ddf4ff}
@@ -102,5 +111,41 @@ mark{background:var(--mark)}
 .addmodel{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-top:.4rem}
 .addmodel input[type=text]{flex:1;min-width:240px;padding:.4rem .6rem;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)}
 .addmodel select,.settings select{padding:.4rem .6rem;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)}
+
+/* EasyMDE editor — theme-aware (its bundled CSS hardcodes light colors, which
+   makes the toolbar icons invisible in dark/sepia). Override with our vars. */
+.EasyMDEContainer .editor-toolbar{
+  background:var(--surface);
+  border-color:var(--border);
+  border-top-left-radius:8px;border-top-right-radius:8px;
+}
+.EasyMDEContainer .editor-toolbar button{
+  color:var(--text) !important;   /* the icon color */
+  border-color:transparent;
+}
+.EasyMDEContainer .editor-toolbar button:hover,
+.EasyMDEContainer .editor-toolbar button.active{
+  background:var(--code-bg);
+  border-color:var(--border);
+}
+.EasyMDEContainer .editor-toolbar i.separator{
+  border-left-color:var(--border);
+  border-right-color:transparent;
+}
+.EasyMDEContainer .CodeMirror{
+  background:var(--surface);
+  color:var(--text);
+  border-color:var(--border);
+}
+.EasyMDEContainer .CodeMirror-cursor{border-left-color:var(--text)}
+.EasyMDEContainer .CodeMirror-selected{background:var(--code-bg)}
+.EasyMDEContainer .editor-preview,
+.EasyMDEContainer .editor-preview-side{
+  background:var(--bg);
+  color:var(--text);
+}
+.EasyMDEContainer .editor-statusbar{color:var(--muted)}
+.EasyMDEContainer .editor-toolbar.fullscreen,
+.EasyMDEContainer .CodeMirror-fullscreen{background:var(--surface)}
 
 @media(max-width:720px){.layout{grid-template-columns:1fr}.sidebar{display:none}}

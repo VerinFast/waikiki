@@ -50,6 +50,10 @@ DEFAULT_SETTINGS = {
     "embedder_provider": "fastembed",
     "embedder_model": "BAAI/bge-small-en-v1.5",  # dim 384
     "model_library": '[{"provider": "fastembed", "model": "BAAI/bge-small-en-v1.5"}]',
+    # Retention (per wiki): keep last N versions per page; purge trashed pages
+    # after N days. 0 = unlimited / never.
+    "retention_versions": "50",
+    "retention_trash_days": "30",
 }
 
 # Retrieval / chunking -----------------------------------------------------------

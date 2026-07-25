@@ -53,6 +53,19 @@ a location you choose and **Open** an external wiki file back in — from the
 `.wiki` files are just SQLite, so they're easy to back up, move between machines,
 or share.
 
+### History, trash & retention
+
+- **Version history:** every save snapshots the page. Open a page → **History** to
+  view any version (with a diff vs current) and **Restore** it. Retention keeps
+  the last *N* versions per page (default 50; set per wiki in Settings, 0 = all).
+- **Trash (soft delete):** deleting a page moves it to the **Trash** (header link),
+  hidden from lists and search but restorable. **Restore** brings it back;
+  **Delete forever** removes it permanently. Trashed pages are auto-purged after
+  *N* days (default 30; per wiki in Settings, 0 = never). Claude's `delete_page`
+  is also soft; it has `list_trash` / `restore_page` tools.
+- **Wiki stats:** the **Wikis** page shows per-wiki article count, internal-link
+  count (with **broken** — red-link — count), size on disk, and trash count.
+
 ## How the collaboration works
 
 ```
@@ -176,8 +189,9 @@ beside you.
 
 MCP tools: `list_wikis`, `current_wiki`, `switch_wiki`, `create_wiki` (wiki
 selection — required first), then `list_pages`, `get_page`, `create_page`,
-`append_to_page` (live), `replace_page` (live), `delete_page`, `search` (hybrid
-RAG) — all scoped to the active wiki.
+`append_to_page` (live), `replace_page` (live), `delete_page` (to trash),
+`list_trash`, `restore_page`, `search` (hybrid RAG) — all scoped to the active
+wiki.
 
 ## REST API
 

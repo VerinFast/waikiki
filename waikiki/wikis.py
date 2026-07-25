@@ -16,7 +16,7 @@ import shutil
 import threading
 from pathlib import Path
 
-from . import config, db
+from . import config, db, render
 
 _lock = threading.Lock()
 
@@ -108,6 +108,48 @@ def delete_wiki(slug: str) -> bool:
         if f.exists():
             f.unlink()
     return True
+
+
+def disk_bytes(slug: str) -> int:
+    total = 0
+    for suffix in ("", "-wal", "-shm"):
+        f = Path(str(db_path(slug)) + suffix)
+        if f.exists():
+            total += f.stat().st_size
+    return total
+
+
+def stats(slug: str) -> dict:
+    """Summary for a wiki: articles, internal links (resolved vs broken),
+    trashed count, and size on disk."""
+    token = db.current_wiki.set(slug)
+    try:
+        conn = db.get_conn()
+        articles = conn.execute(
+            "SELECT COUNT(*) c FROM pages WHERE deleted_at IS NULL").fetchone()["c"]
+        trashed = conn.execute(
+            "SELECT COUNT(*) c FROM pages WHERE deleted_at IS NOT NULL").fetchone()["c"]
+        active = conn.execute(
+            "SELECT slug, markdown FROM pages WHERE deleted_at IS NULL").fetchall()
+        active_slugs = {r["slug"] for r in active}
+        resolved = broken = 0
+        for r in active:
+            for target in render.extract_wikilinks(r["markdown"]):
+                if target in active_slugs:
+                    resolved += 1
+                else:
+                    broken += 1
+    finally:
+        db.current_wiki.reset(token)
+    return {
+        "slug": slug,
+        "articles": articles,
+        "trashed": trashed,
+        "links": resolved + broken,
+        "links_resolved": resolved,
+        "links_broken": broken,
+        "bytes": disk_bytes(slug),
+    }
 
 
 def export_to(slug: str, dest_path: str) -> str:

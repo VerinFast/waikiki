@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}History — {{ page.title }} — Waikiki{% endblock %}
+{% block content %}
+  <div class="article-head">
+    <h1>{{ page.title }} <span class="muted">— version</span></h1>
+    <div class="tools">
+      <a class="btn" href="/wiki/{{ page.slug }}">Back to page</a>
+      <form method="post" action="/wiki/{{ page.slug }}/history/{{ version.id }}/restore"
+            onsubmit="return confirm('Restore this version as the current page?')">
+        <button class="btn primary" type="submit">Restore this version</button>
+      </form>
+    </div>
+  </div>
+  <p class="muted">
+    <span class="badge {{ version.author }}">{{ version.author }}</span>
+    saved {{ version.created_at }}
+  </p>
+
+  {% if diff %}
+    <details class="history" open>
+      <summary>Changes since this version</summary>
+      <pre class="diff">{% for line in diff.split('\n') %}<span class="{% if line.startswith('+') and not line.startswith('+++') %}add{% elif line.startswith('-') and not line.startswith('---') %}del{% elif line.startswith('@@') %}hunk{% endif %}">{{ line }}</span>
+{% endfor %}</pre>
+    </details>
+  {% else %}
+    <p class="muted">This version is identical to the current page.</p>
+  {% endif %}
+
+  <h3>Content at this version</h3>
+  <div class="rendered">{{ version_html | safe }}</div>
+{% endblock %}

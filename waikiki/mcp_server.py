@@ -177,9 +177,23 @@ def replace_page(slug: str, markdown: str) -> dict:
 
 @mcp.tool
 def delete_page(slug: str) -> dict:
-    """Delete a page from the active wiki."""
+    """Move a page to the trash in the active wiki (restorable, not permanent)."""
     wiki = _require_wiki()
-    return {"wiki": wiki, "deleted": store.delete_page(slug), "slug": slug}
+    return {"wiki": wiki, "trashed": store.soft_delete(slug), "slug": slug}
+
+
+@mcp.tool
+def list_trash() -> dict:
+    """List trashed (soft-deleted) pages in the active wiki."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "trash": store.list_trash()}
+
+
+@mcp.tool
+def restore_page(slug: str) -> dict:
+    """Restore a trashed page in the active wiki."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "restored": store.restore(slug), "slug": slug}
 
 
 @mcp.tool

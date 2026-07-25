@@ -48,6 +48,11 @@ def _expand_wikilinks(markdown: str) -> str:
     return _WIKILINK.sub(repl, markdown)
 
 
+def extract_wikilinks(markdown: str) -> list[str]:
+    """Return the target slugs of every [[wiki link]] in the markdown."""
+    return [_slugify(m.group(1).strip()) for m in _WIKILINK.finditer(markdown or "")]
+
+
 def render_markdown(markdown: str) -> str:
     """Return sanitized HTML. `html=False` means raw HTML in source is escaped."""
     return _md.render(_expand_wikilinks(markdown or ""))

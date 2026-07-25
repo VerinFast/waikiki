@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import sys
 import tempfile
@@ -33,14 +34,28 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             print(f"[waikiki] embedder warmup skipped: {exc}")
 
+    async def _retention():
+        # Enforce the trash retention policy across all wikis, hourly.
+        import anyio
+        while True:
+            for w in wikis.list_wikis():
+                db.current_wiki.set(w["slug"])
+                try:
+                    await anyio.to_thread.run_sync(store.sweep_trash)
+                except Exception as exc:
+                    print(f"[waikiki] trash sweep failed for {w['slug']}: {exc}")
+            await asyncio.sleep(3600)
+
     async with collab.server:                       # start the CRDT websocket server
         warm_task = asyncio.create_task(_warm())
         flush_task = asyncio.create_task(collab.flusher())
+        retention_task = asyncio.create_task(_retention())
         try:
             yield
         finally:
             warm_task.cancel()
             flush_task.cancel()
+            retention_task.cancel()
 
 
 app = FastAPI(title="Waikiki", version="0.1.0", lifespan=lifespan)
@@ -198,8 +213,9 @@ def help_page(request: Request):
 
 @app.get("/wikis", response_class=HTMLResponse)
 def wikis_manage(request: Request, error: str = ""):
+    stats = {w["slug"]: wikis.stats(w["slug"]) for w in wikis.list_wikis()}
     return templates.TemplateResponse(request,
-        "wikis.html", _ctx(request, error=error))
+        "wikis.html", _ctx(request, error=error, stats=stats))
 
 
 @app.post("/switch-wiki")
@@ -272,7 +288,8 @@ def view_page(request: Request, slug: str):
             status_code=404,
         )
     return templates.TemplateResponse(request,
-        "page.html", _ctx(request, page=page, versions=store.page_versions(slug))
+        "page.html", _ctx(request, page=page, versions=store.page_versions(slug),
+                          trashed=bool(page.get("deleted_at")))
     )
 
 
@@ -300,8 +317,48 @@ def save_page(slug: str = Form(""), title: str = Form(...), markdown: str = Form
 
 @app.post("/wiki/{slug}/delete")
 def delete_page_view(slug: str):
-    store.delete_page(slug)
+    store.soft_delete(slug)   # to the trash (restorable)
     return RedirectResponse("/", status_code=303)
+
+
+@app.post("/wiki/{slug}/restore")
+def restore_page_view(slug: str):
+    store.restore(slug)
+    return RedirectResponse(f"/wiki/{slug}", status_code=303)
+
+
+@app.post("/wiki/{slug}/purge")
+def purge_page_view(slug: str):
+    store.hard_delete(slug)   # permanent
+    return RedirectResponse("/trash", status_code=303)
+
+
+@app.get("/trash", response_class=HTMLResponse)
+def trash_view(request: Request):
+    store.sweep_trash()  # opportunistically enforce retention
+    days = db.get_setting("retention_trash_days", "30")
+    return templates.TemplateResponse(request,
+        "trash.html", _ctx(request, trash=store.list_trash(), retention_days=days))
+
+
+@app.get("/wiki/{slug}/history/{version_id}", response_class=HTMLResponse)
+def history_view(request: Request, slug: str, version_id: int):
+    page = store.get_page(slug)
+    version = store.get_version(version_id)
+    if not page or not version or version["page_id"] != page["id"]:
+        raise HTTPException(404, "Version not found")
+    diff = "\n".join(difflib.unified_diff(
+        version["markdown"].splitlines(), page["markdown"].splitlines(),
+        fromfile=f"version @ {version['created_at']}", tofile="current", lineterm=""))
+    return templates.TemplateResponse(request, "history.html", _ctx(
+        request, page=page, version=version,
+        version_html=render.render_markdown(version["markdown"]), diff=diff))
+
+
+@app.post("/wiki/{slug}/history/{version_id}/restore")
+def history_restore(slug: str, version_id: int):
+    store.restore_version(slug, version_id)
+    return RedirectResponse(f"/wiki/{slug}", status_code=303)
 
 
 @app.get("/search", response_class=HTMLResponse)
@@ -326,9 +383,13 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
 
 
 @app.post("/settings")
-def settings_save(theme: str = Form(...)):
+def settings_save(theme: str = Form(...),
+                  retention_versions: str = Form("50"),
+                  retention_trash_days: str = Form("30")):
     db.set_setting("theme", theme)
-    return RedirectResponse("/settings?msg=Theme+saved", status_code=303)
+    db.set_setting("retention_versions", str(max(0, int(retention_versions or 0))))
+    db.set_setting("retention_trash_days", str(max(0, int(retention_trash_days or 0))))
+    return RedirectResponse("/settings?msg=Saved", status_code=303)
 
 
 @app.post("/settings/models/add")
@@ -396,9 +457,9 @@ def api_update_page(slug: str, body: PageIn):
 
 @app.delete("/api/pages/{slug}")
 def api_delete_page(slug: str):
-    if not store.delete_page(slug):
-        raise HTTPException(404, "Page not found")
-    return {"deleted": slug}
+    if not store.soft_delete(slug):
+        raise HTTPException(404, "Page not found or already trashed")
+    return {"trashed": slug}
 
 
 @app.get("/api/search")

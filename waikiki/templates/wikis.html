@@ -25,6 +25,14 @@
       <tr>
         <td><strong>{{ w.name }}</strong> <span class="muted">/{{ w.slug }}</span>
           {% if w.slug == current_wiki %}<span class="badge human">active</span>{% endif %}
+          {% set s = stats[w.slug] %}
+          <div class="muted wikistats">
+            {{ s.articles }} article{{ '' if s.articles == 1 else 's' }} ·
+            {{ s.links }} link{{ '' if s.links == 1 else 's' }}
+            {% if s.links_broken %}(<span class="broken">{{ s.links_broken }} broken</span>){% endif %} ·
+            {{ (s.bytes / 1048576) | round(1) }} MB
+            {% if s.trashed %} · {{ s.trashed }} in trash{% endif %}
+          </div>
         </td>
         <td>
           <form method="post" action="/switch-wiki">

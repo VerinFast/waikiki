@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Trash — Waikiki{% endblock %}
+{% block content %}
+  <h1>Trash <span class="muted">— {{ current_wiki_name }}</span></h1>
+  <p class="muted">Deleted pages are kept here and auto-removed after
+    {{ retention_days }} day(s) (change in Settings). Restore or delete forever.</p>
+
+  {% if trash %}
+    <table class="modeltable">
+      <tbody>
+      {% for p in trash %}
+        <tr>
+          <td><a href="/wiki/{{ p.slug }}">{{ p.title }}</a>
+            <span class="muted">deleted {{ p.deleted_at }}</span></td>
+          <td>
+            <form method="post" action="/wiki/{{ p.slug }}/restore">
+              <button class="btn" type="submit">Restore</button>
+            </form>
+          </td>
+          <td>
+            <form method="post" action="/wiki/{{ p.slug }}/purge"
+                  onsubmit="return confirm('Permanently delete {{ p.title }}? This cannot be undone.')">
+              <button class="btn danger" type="submit">Delete forever</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">The trash is empty.</p>
+  {% endif %}
+{% endblock %}

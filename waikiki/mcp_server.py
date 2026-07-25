@@ -359,6 +359,16 @@ def list_templates() -> dict:
 
 
 @mcp.tool
+def create_template(name: str, markdown: str) -> dict:
+    """Create (or update) a page template in the active wiki. Put {{title}} where
+    the page title should go — new pages made from it fill that in. Frontmatter
+    is fine, e.g. a Character template with HitPoints / Class properties."""
+    wiki = _require_wiki()
+    store.template_save(name, markdown)
+    return {"wiki": wiki, "template": name}
+
+
+@mcp.tool
 def create_from_template(template_name: str, title: str) -> dict:
     """Create a new page from a named template ({{title}} is filled in)."""
     wiki = _require_wiki()

@@ -320,29 +320,29 @@ class TableCell(BaseModel):
 
 
 @app.get("/wiki/{slug}/section", response_class=HTMLResponse)
-def section_edit_view(request: Request, slug: str, heading: str = ""):
+def section_edit_view(request: Request, slug: str, anchor: str = ""):
     page = store.get_page(slug)
     if not page:
         raise HTTPException(404, "Page not found")
-    span = edits.section_span(page["markdown"], heading)
+    span = render.section_span_for_slug(page["markdown"], anchor)
     section_md = page["markdown"][span[0]:span[1]] if span else ""
     return templates.TemplateResponse(request, "section.html",
-        _ctx(request, page=page, heading=heading, section_md=section_md,
+        _ctx(request, page=page, anchor=anchor, section_md=section_md,
              found=span is not None))
 
 
 @app.post("/wiki/{slug}/section")
-def section_save(slug: str, heading: str = Form(...), markdown: str = Form(...)):
+def section_save(slug: str, anchor: str = Form(...), markdown: str = Form(...)):
     page = store.get_page(slug)
     if page:
-        try:
-            new_md = edits.apply_to_string(
-                page["markdown"],
-                lambda s: edits.plan_replace_section(s, heading, markdown))
-            store.update_page(slug, page["title"], new_md, author="human")
-        except ValueError:
-            pass
-    return RedirectResponse(f"/wiki/{slug}#{render.slugify(heading)}", status_code=303)
+        span = render.section_span_for_slug(page["markdown"], anchor)
+        if span:
+            md = page["markdown"]
+            tail = md[span[1]:]
+            body = markdown.rstrip("\n") + "\n" + ("\n" if tail.strip() else "")
+            store.update_page(slug, page["title"], md[:span[0]] + body + tail,
+                              author="human")
+    return RedirectResponse(f"/wiki/{slug}#{anchor}", status_code=303)
 
 
 @app.post("/wiki/{slug}/table-cell")

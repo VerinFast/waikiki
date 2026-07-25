@@ -111,7 +111,7 @@ def main() -> None:
 
     webview.create_window(
         "Waikiki", f"http://{host}:{port}/", width=1200, height=820,
-        min_size=(800, 600), js_api=DesktopApi(),
+        min_size=(800, 600), js_api=DesktopApi(), text_select=True,
     )
     webview.start()  # blocks until the window is closed
 

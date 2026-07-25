@@ -52,6 +52,26 @@ def test_extract_toc():
     assert [(h["level"], h["slug"]) for h in toc] == [(1, "top"), (2, "a"), (3, "b")]
 
 
+def test_toc_slug_matches_anchor_for_wikilinks_and_dupes():
+    md = "## [[Meru]]\nx\n\n## Notes\na\n\n## Notes\nb"
+    toc = render.extract_toc(md)
+    assert [(t["text"], t["slug"]) for t in toc] == [
+        ("Meru", "meru"), ("Notes", "notes"), ("Notes", "notes-1")]
+    # slugs must equal the ids the renderer assigns
+    html = render.render_markdown(md)
+    assert 'id="meru"' in html and 'id="notes"' in html and 'id="notes-1"' in html
+
+
+def test_section_span_for_slug():
+    md = "## [[Meru]]\nMeru body.\n\n## Bram\nBram body."
+    span = render.section_span_for_slug(md, "meru")
+    assert "Meru body" in md[span[0]:span[1]] and "Bram body" not in md[span[0]:span[1]]
+    md2 = "## Notes\nfirst\n\n## Notes\nsecond"
+    s = render.section_span_for_slug(md2, "notes-1")
+    assert "second" in md2[s[0]:s[1]] and "first" not in md2[s[0]:s[1]]
+    assert render.section_span_for_slug(md2, "nope") is None
+
+
 def test_extract_wikilinks_ignores_section_and_self():
     links = render.extract_wikilinks("[[Guide#Setup]] and [[#Local]] and [[Other]]")
     assert links == ["guide", "other"]   # section stripped, same-page skipped

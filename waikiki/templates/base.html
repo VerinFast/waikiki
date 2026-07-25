@@ -118,15 +118,11 @@
     if (window.WAIKIKI_PAGE) {
       document.querySelectorAll('.content .rendered h1, .content .rendered h2, .content .rendered h3')
         .forEach(function (h) {
-          var clone = h.cloneNode(true);
-          var a = clone.querySelector('.header-anchor');
-          if (a) a.remove();
-          var text = clone.textContent.trim();
-          if (!text) return;
+          if (!h.id) return;                 // match the section by its anchor id
           var link = document.createElement('a');
           link.className = 'section-edit';
           link.textContent = 'edit';
-          link.href = '/wiki/' + WAIKIKI_PAGE.slug + '/section?heading=' + encodeURIComponent(text);
+          link.href = '/wiki/' + WAIKIKI_PAGE.slug + '/section?anchor=' + encodeURIComponent(h.id);
           h.appendChild(link);
         });
     }

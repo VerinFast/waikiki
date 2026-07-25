@@ -143,22 +143,62 @@ def extract_wikilinks(markdown: str) -> list[str]:
 
 
 _HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*#*\s*$")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_EMPH = re.compile(r"[*_`~]")
 
 
-def extract_toc(markdown: str) -> list[dict]:
-    """Extract level-1..3 headings for an on-page table of contents."""
-    toc, in_fence = [], False
-    for line in (markdown or "").splitlines():
+def _heading_display(raw: str) -> str:
+    """The heading's rendered text: [[Page|Label]]->Label, [t](u)->t, no emphasis
+    — so its slug matches the id the anchor plugin assigns."""
+    t = _WIKILINK.sub(lambda m: (m.group(2) or m.group(1)).strip(), raw)
+    t = _MD_LINK.sub(r"\1", t)
+    t = _EMPH.sub("", t)
+    return t.strip()
+
+
+def _headings(markdown: str) -> list[tuple[int, int, str, str]]:
+    """(line_index, level, display, slug) for each h1-3, with the SAME slug the
+    anchor plugin uses (deduped: notes, notes-1, notes-2, …)."""
+    out, in_fence, seen = [], False, {}
+    for i, line in enumerate((markdown or "").split("\n")):
         if line.lstrip().startswith("```"):
             in_fence = not in_fence
             continue
         if in_fence:
             continue
         m = _HEADING.match(line)
-        if m:
-            text = m.group(2).strip()
-            toc.append({"level": len(m.group(1)), "text": text, "slug": _slugify(text)})
-    return toc
+        if not m:
+            continue
+        display = _heading_display(m.group(2).strip())
+        base = _slugify(display)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        out.append((i, len(m.group(1)), display, base if n == 0 else f"{base}-{n}"))
+    return out
+
+
+def extract_toc(markdown: str) -> list[dict]:
+    """Level-1..3 headings for the table of contents (slug matches the anchor id)."""
+    return [{"level": lvl, "text": disp, "slug": slug}
+            for (_i, lvl, disp, slug) in _headings(markdown)]
+
+
+def section_span_for_slug(markdown: str, slug: str) -> tuple[int, int] | None:
+    """Char range of the section whose heading anchor is `slug`."""
+    lines = (markdown or "").split("\n")
+    heads = _headings(markdown)
+    target = next((h for h in heads if h[3] == slug), None)
+    if not target:
+        return None
+    start_line, level = target[0], target[1]
+    end_line = len(lines)
+    for h in heads:
+        if h[0] > start_line and h[1] <= level:
+            end_line = h[0]
+            break
+    start = sum(len(lines[k]) + 1 for k in range(start_line))
+    end = min(sum(len(lines[k]) + 1 for k in range(end_line)), len(markdown))
+    return (start, end)
 
 
 def render_markdown(markdown: str, resolver=None, allow_html: bool = False) -> str:

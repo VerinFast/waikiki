@@ -81,6 +81,34 @@
     </main>
   </div>
   <script>
+    // Copy support: a pywebview window has no Edit menu, so ⌘C/Ctrl+C never
+    // reaches a native copy handler. Do it ourselves from the current selection.
+    function _copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(function () { _copyFallback(text); });
+      } else { _copyFallback(text); }
+    }
+    function _copyFallback(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+    document.addEventListener('keydown', function (e) {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'c') return;
+      var ae = document.activeElement, text = '';
+      if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')
+          && ae.selectionStart != null && ae.selectionEnd > ae.selectionStart) {
+        text = ae.value.substring(ae.selectionStart, ae.selectionEnd);
+      } else {
+        text = (window.getSelection && window.getSelection().toString()) || '';
+      }
+      if (!text) return;
+      e.preventDefault();
+      _copyText(text);
+    });
+
     // Reliable in-page anchor scrolling. The .content pane is the scroll
     // container (WebKit/pywebview don't scroll the window here), so scroll it.
     document.addEventListener('click', function (e) {

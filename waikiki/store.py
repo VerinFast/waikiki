@@ -10,13 +10,33 @@ from . import db, rag, render
 
 # --- Pages --------------------------------------------------------------------
 
-def list_pages(include_deleted: bool = False) -> List[dict]:
-    where = "" if include_deleted else "WHERE deleted_at IS NULL"
+_SORTS = {"updated": "updated_at DESC", "title": "title COLLATE NOCASE ASC"}
+
+
+def list_pages(include_deleted: bool = False, sort: str = "updated",
+               starred_only: bool = False) -> List[dict]:
+    clauses = [] if include_deleted else ["deleted_at IS NULL"]
+    if starred_only:
+        clauses.append("starred = 1")
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    order = _SORTS.get(sort, _SORTS["updated"])
     rows = db.get_conn().execute(
-        f"SELECT slug, title, updated_at, deleted_at FROM pages {where} "
-        "ORDER BY updated_at DESC"
+        f"SELECT slug, title, updated_at, deleted_at, starred FROM pages {where} "
+        f"ORDER BY {order}"
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def toggle_star(slug: str) -> Optional[bool]:
+    """Flip a page's starred state. Returns the new state, or None if missing."""
+    conn = db.get_conn()
+    page = get_page(slug)
+    if not page:
+        return None
+    new = 0 if page.get("starred") else 1
+    conn.execute("UPDATE pages SET starred=? WHERE slug=?", (new, slug))
+    conn.commit()
+    return bool(new)
 
 
 def list_trash() -> List[dict]:

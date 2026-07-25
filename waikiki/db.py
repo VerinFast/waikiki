@@ -167,7 +167,8 @@ CREATE TABLE IF NOT EXISTS pages (
     html       TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    deleted_at TEXT                       -- NULL = active; timestamp = in trash
+    deleted_at TEXT,                      -- NULL = active; timestamp = in trash
+    starred    INTEGER NOT NULL DEFAULT 0 -- 1 = starred (favorite)
 );
 
 -- Lightweight history: one row per save. Not CRDT, but gives undo/audit.
@@ -231,11 +232,15 @@ END;
 
 def _ensure_schema(conn) -> None:
     conn.executescript(SCHEMA)
-    # Migration: add soft-delete column to pre-existing wiki DBs.
-    try:
-        conn.execute("ALTER TABLE pages ADD COLUMN deleted_at TEXT")
-    except Exception:
-        pass  # already present
+    # Migrations: add columns to pre-existing wiki DBs (idempotent).
+    for stmt in (
+        "ALTER TABLE pages ADD COLUMN deleted_at TEXT",
+        "ALTER TABLE pages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
+    ):
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # already present
     for key, value in config.DEFAULT_SETTINGS.items():
         conn.execute(
             "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value)

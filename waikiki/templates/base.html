@@ -30,12 +30,31 @@
   </header>
   <div class="layout">
     <aside class="sidebar">
-      <h3>Pages</h3>
-      <ul>
+      <div class="nav-controls">
+        <div class="seg" role="group" aria-label="Filter">
+          <button type="button" data-nav-filter="all"
+                  class="{{ 'on' if nav_filter != 'starred' }}">All</button>
+          <button type="button" data-nav-filter="starred" title="Starred only"
+                  class="{{ 'on' if nav_filter == 'starred' }}">★</button>
+        </div>
+        <select class="nav-sort" data-nav-sort title="Sort">
+          <option value="updated" {{ 'selected' if nav_sort != 'title' }}>Recent</option>
+          <option value="title" {{ 'selected' if nav_sort == 'title' }}>Title</option>
+        </select>
+      </div>
+      <ul class="navlist">
         {% for p in nav_pages %}
-          <li><a href="/wiki/{{ p.slug }}">{{ p.title }}</a></li>
+          <li>
+            <form method="post" action="/wiki/{{ p.slug }}/star" class="star-form">
+              <input type="hidden" name="next" value="{{ current_path }}">
+              <button class="star {{ 'on' if p.starred }}" type="submit"
+                      title="{{ 'Unstar' if p.starred else 'Star' }}"
+                      aria-label="Toggle star">{{ '★' if p.starred else '☆' }}</button>
+            </form>
+            <a href="/wiki/{{ p.slug }}">{{ p.title }}</a>
+          </li>
         {% else %}
-          <li class="muted">No pages yet.</li>
+          <li class="muted">{{ 'No starred pages.' if nav_filter == 'starred' else 'No pages yet.' }}</li>
         {% endfor %}
       </ul>
       {% if not vec_available %}
@@ -46,6 +65,23 @@
       {% block content %}{% endblock %}
     </main>
   </div>
+  <script>
+    (function () {
+      function setPref(name, val) {
+        document.cookie = name + '=' + val + ';path=/;max-age=31536000;samesite=lax';
+        location.reload();
+      }
+      document.querySelectorAll('[data-nav-filter]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          setPref('waikiki_nav_filter', b.getAttribute('data-nav-filter'));
+        });
+      });
+      var sort = document.querySelector('[data-nav-sort]');
+      if (sort) sort.addEventListener('change', function () {
+        setPref('waikiki_nav_sort', sort.value);
+      });
+    })();
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

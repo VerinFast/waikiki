@@ -93,3 +93,23 @@ def test_list_pages_orders_by_recent(wiki):
     store.create_page("Second", "b")
     slugs = [p["slug"] for p in store.list_pages()]
     assert set(slugs) == {"first", "second"}
+
+
+def test_list_pages_sort_by_title(wiki):
+    store.create_page("Zebra", "a")
+    store.create_page("Apple", "b")
+    titles = [p["title"] for p in store.list_pages(sort="title")]
+    assert titles == ["Apple", "Zebra"]
+
+
+def test_star_toggle_and_filter(wiki):
+    store.create_page("Fav", "a")
+    store.create_page("Meh", "b")
+    assert store.toggle_star("fav") is True
+    assert store.get_page("fav")["starred"] == 1
+    starred = [p["slug"] for p in store.list_pages(starred_only=True)]
+    assert starred == ["fav"]
+    # toggling again unstars
+    assert store.toggle_star("fav") is False
+    assert store.list_pages(starred_only=True) == []
+    assert store.toggle_star("nope") is None

@@ -152,10 +152,16 @@ async def collab_ws(websocket: WebSocket, wiki: str, slug: str):
 def _ctx(request: Request, **extra) -> dict:
     """Common template context: active wiki, theme, nav pages, pygments styles."""
     wiki = db.active_wiki()
+    nav_filter = request.cookies.get("waikiki_nav_filter", "all")
+    nav_sort = request.cookies.get("waikiki_nav_sort", "updated")
     base = {
         "request": request,
         "theme": db.get_setting("theme", "default"),
-        "nav_pages": store.list_pages()[:50],
+        "nav_pages": store.list_pages(sort=nav_sort,
+                                      starred_only=(nav_filter == "starred"))[:500],
+        "nav_filter": nav_filter,
+        "nav_sort": nav_sort,
+        "current_path": request.url.path,
         "pygments_css": render.pygments_css(),
         "vec_available": db.VEC_AVAILABLE,
         "current_wiki": wiki,
@@ -319,6 +325,12 @@ def save_page(slug: str = Form(""), title: str = Form(...), markdown: str = Form
 def delete_page_view(slug: str):
     store.soft_delete(slug)   # to the trash (restorable)
     return RedirectResponse("/", status_code=303)
+
+
+@app.post("/wiki/{slug}/star")
+def star_page_view(slug: str, next: str = Form("/")):
+    store.toggle_star(slug)
+    return RedirectResponse(next or "/", status_code=303)
 
 
 @app.post("/wiki/{slug}/restore")

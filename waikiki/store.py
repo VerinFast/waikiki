@@ -417,6 +417,95 @@ def _rewrite_backlinks(exclude_slug: str, old_title: str, new_title: str) -> Non
             _set_body(p["slug"], page["title"], new_md, author="rename")
 
 
+# --- Comments & suggestions (review) ------------------------------------------
+
+def comment_add(slug: str, body: str, author: str = "human") -> Optional[dict]:
+    page = get_page(slug)
+    if not page or not body.strip():
+        return None
+    conn = db.get_conn()
+    cur = conn.execute(
+        "INSERT INTO comments(page_id, author, body) VALUES (?,?,?)",
+        (page["id"], author, body.strip()))
+    conn.commit()
+    return {"id": cur.lastrowid, "slug": slug}
+
+
+def comments_list(slug: str, include_resolved: bool = True) -> List[dict]:
+    page = get_page(slug)
+    if not page:
+        return []
+    where = "" if include_resolved else "AND resolved=0"
+    rows = db.get_conn().execute(
+        f"SELECT id, author, body, resolved, created_at FROM comments "
+        f"WHERE page_id=? {where} ORDER BY created_at", (page["id"],)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def comment_resolve(comment_id: int) -> bool:
+    conn = db.get_conn()
+    conn.execute("UPDATE comments SET resolved=1 WHERE id=?", (comment_id,))
+    conn.commit()
+    return True
+
+
+def suggestion_add(slug: str, markdown: str, note: str = "",
+                   author: str = "ai") -> Optional[dict]:
+    page = get_page(slug)
+    if not page:
+        return None
+    conn = db.get_conn()
+    cur = conn.execute(
+        "INSERT INTO suggestions(page_id, author, note, markdown) VALUES (?,?,?,?)",
+        (page["id"], author, note, markdown))
+    conn.commit()
+    return {"id": cur.lastrowid, "slug": slug}
+
+
+def suggestions_list(slug: Optional[str] = None, status: str = "pending") -> List[dict]:
+    conn = db.get_conn()
+    if slug:
+        page = get_page(slug)
+        if not page:
+            return []
+        rows = conn.execute(
+            "SELECT s.id, s.author, s.note, s.status, s.created_at, p.slug, p.title "
+            "FROM suggestions s JOIN pages p ON p.id=s.page_id "
+            "WHERE s.page_id=? AND s.status=? ORDER BY s.created_at DESC",
+            (page["id"], status)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT s.id, s.author, s.note, s.status, s.created_at, p.slug, p.title "
+            "FROM suggestions s JOIN pages p ON p.id=s.page_id "
+            "WHERE s.status=? AND p.deleted_at IS NULL ORDER BY s.created_at DESC",
+            (status,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def suggestion_get(sid: int) -> Optional[dict]:
+    r = db.get_conn().execute(
+        "SELECT s.*, p.slug, p.title FROM suggestions s JOIN pages p ON p.id=s.page_id "
+        "WHERE s.id=?", (sid,)).fetchone()
+    return dict(r) if r else None
+
+
+def suggestion_apply(sid: int) -> Optional[dict]:
+    s = suggestion_get(sid)
+    if not s or s["status"] != "pending":
+        return None
+    page = update_page(s["slug"], s["title"], s["markdown"], author="suggestion")
+    db.get_conn().execute("UPDATE suggestions SET status='applied' WHERE id=?", (sid,))
+    db.get_conn().commit()
+    return page
+
+
+def suggestion_reject(sid: int) -> bool:
+    conn = db.get_conn()
+    conn.execute("UPDATE suggestions SET status='rejected' WHERE id=?", (sid,))
+    conn.commit()
+    return True
+
+
 # --- Templates ----------------------------------------------------------------
 
 def templates_list() -> List[dict]:

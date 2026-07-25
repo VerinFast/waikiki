@@ -226,6 +226,46 @@ def import_from(src_path: str, name: str | None = None) -> str:
     return slug
 
 
+def export_markdown(slug: str, dest_dir: str) -> int:
+    """Write every page of a wiki to `dest_dir` as `<slug>.md` (round-trip to a
+    repo's docs/). Returns the number of files written."""
+    import os
+
+    from . import store
+
+    token = db.current_wiki.set(slug)
+    try:
+        os.makedirs(dest_dir, exist_ok=True)
+        n = 0
+        for p in store.list_pages(include_children=True):
+            page = store.get_page(p["slug"])
+            with open(os.path.join(dest_dir, f"{p['slug']}.md"), "w") as f:
+                f.write(page["markdown"])
+            n += 1
+    finally:
+        db.current_wiki.reset(token)
+    return n
+
+
+def markdown_zip(slug: str) -> bytes:
+    """All pages of a wiki as a zip of `<slug>.md` files (for download)."""
+    import io
+    import zipfile
+
+    from . import store
+
+    token = db.current_wiki.set(slug)
+    try:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for p in store.list_pages(include_children=True):
+                page = store.get_page(p["slug"])
+                z.writestr(f"{p['slug']}.md", page["markdown"])
+        return buf.getvalue()
+    finally:
+        db.current_wiki.reset(token)
+
+
 def ensure_initialized() -> None:
     """First-run setup: migrate the legacy single DB into a 'main' wiki and
     seed the named wikis. Idempotent."""

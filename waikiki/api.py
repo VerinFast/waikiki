@@ -335,14 +335,56 @@ def view_page(request: Request, slug: str):
             "SELECT slug, title FROM pages WHERE id=?", (page["parent_id"],)).fetchone()
         parent = dict(prow) if prow else None
     all_pages = [p for p in store.list_pages() if p["slug"] != slug]
+    suggestions = []
+    for s in store.suggestions_list(slug):
+        full = store.suggestion_get(s["id"])
+        s["diff"] = "\n".join(difflib.unified_diff(
+            page["markdown"].splitlines(), full["markdown"].splitlines(),
+            fromfile="current", tofile="proposed", lineterm=""))
+        suggestions.append(s)
     return templates.TemplateResponse(request,
         "page.html", _ctx(request, page=page, versions=store.page_versions(slug),
                           trashed=bool(page.get("deleted_at")),
                           toc=render.extract_toc(page["markdown"]),
                           backlinks=store.backlinks(slug),
                           children=store.children(slug), parent=parent,
-                          all_pages=all_pages, tags=store.tags_of(slug))
+                          all_pages=all_pages, tags=store.tags_of(slug),
+                          comments=store.comments_list(slug),
+                          suggestions=suggestions)
     )
+
+
+@app.post("/wiki/{slug}/comment")
+def add_comment_view(slug: str, body: str = Form(...)):
+    store.comment_add(slug, body, author="human")
+    return RedirectResponse(f"/wiki/{slug}#comments", status_code=303)
+
+
+@app.post("/wiki/{slug}/comment/{cid}/resolve")
+def resolve_comment_view(slug: str, cid: int):
+    store.comment_resolve(cid)
+    return RedirectResponse(f"/wiki/{slug}#comments", status_code=303)
+
+
+@app.post("/wiki/{slug}/suggestion/{sid}/apply")
+def apply_suggestion_view(slug: str, sid: int):
+    store.suggestion_apply(sid)
+    return RedirectResponse(f"/wiki/{slug}", status_code=303)
+
+
+@app.post("/wiki/{slug}/suggestion/{sid}/reject")
+def reject_suggestion_view(slug: str, sid: int):
+    store.suggestion_reject(sid)
+    return RedirectResponse(f"/wiki/{slug}", status_code=303)
+
+
+@app.get("/wikis/{slug}/export-md")
+def wikis_export_markdown(slug: str):
+    if not wikis.exists(slug):
+        raise HTTPException(404, "No such wiki")
+    data = wikis.markdown_zip(slug)
+    return Response(content=data, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{slug}-markdown.zip"'})
 
 
 @app.get("/tags", response_class=HTMLResponse)

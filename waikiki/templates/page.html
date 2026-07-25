@@ -115,5 +115,43 @@
         </ul>
       </details>
     {% endif %}
+    {% if suggestions %}
+      <section class="review">
+        <h3>Proposed edits ({{ suggestions | length }})</h3>
+        {% for s in suggestions %}
+          <details class="history" open>
+            <summary><span class="badge {{ s.author }}">{{ s.author }}</span>
+              {{ s.note or 'Proposed rewrite' }} <span class="muted">{{ s.created_at }}</span></summary>
+            <pre class="diff">{% for line in s.diff.split('\n') %}<span class="{% if line.startswith('+') and not line.startswith('+++') %}add{% elif line.startswith('-') and not line.startswith('---') %}del{% elif line.startswith('@@') %}hunk{% endif %}">{{ line }}</span>
+{% endfor %}</pre>
+            <form method="post" action="/wiki/{{ page.slug }}/suggestion/{{ s.id }}/apply" style="display:inline">
+              <button class="btn primary" type="submit">Apply</button>
+            </form>
+            <form method="post" action="/wiki/{{ page.slug }}/suggestion/{{ s.id }}/reject" style="display:inline">
+              <button class="btn danger" type="submit">Reject</button>
+            </form>
+          </details>
+        {% endfor %}
+      </section>
+    {% endif %}
+
+    <section id="comments" class="review">
+      <h3>Comments ({{ comments | length }})</h3>
+      {% for c in comments %}
+        <div class="comment {{ 'resolved' if c.resolved }}">
+          <span class="badge {{ c.author }}">{{ c.author }}</span>
+          {{ c.body }} <span class="muted">{{ c.created_at }}</span>
+          {% if not c.resolved %}
+            <form method="post" action="/wiki/{{ page.slug }}/comment/{{ c.id }}/resolve" style="display:inline">
+              <button class="btn small" type="submit">Resolve</button>
+            </form>
+          {% else %}<span class="muted">✓ resolved</span>{% endif %}
+        </div>
+      {% endfor %}
+      <form method="post" action="/wiki/{{ page.slug }}/comment" class="addmodel">
+        <input type="text" name="body" placeholder="Add a comment…" required>
+        <button class="btn" type="submit">Comment</button>
+      </form>
+    </section>
   </article>
 {% endblock %}

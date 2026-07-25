@@ -418,6 +418,56 @@ def upload_asset(filename: str = "", path: str = "", base64_data: str = "") -> d
 
 
 @mcp.tool
+def add_comment(slug: str, body: str) -> dict:
+    """Leave a comment/note on a page (e.g. 'expand this section')."""
+    wiki = _require_wiki()
+    r = store.comment_add(slug, body, author="ai")
+    return {"wiki": wiki, "comment": r} if r else {"wiki": wiki, "error": "no such page"}
+
+
+@mcp.tool
+def list_comments(slug: str) -> dict:
+    """List comments on a page."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "slug": slug, "comments": store.comments_list(slug)}
+
+
+@mcp.tool
+def resolve_comment(comment_id: int) -> dict:
+    """Mark a comment resolved."""
+    wiki = _require_wiki()
+    store.comment_resolve(comment_id)
+    return {"wiki": wiki, "resolved": comment_id}
+
+
+@mcp.tool
+def propose_edit(slug: str, markdown: str, note: str = "") -> dict:
+    """Propose a full-page rewrite for the human to review — it is NOT applied
+    until they accept it. Use this for big/risky changes instead of replace_page."""
+    wiki = _require_wiki()
+    r = store.suggestion_add(slug, markdown, note, author="ai")
+    return {"wiki": wiki, "suggestion": r} if r else {"wiki": wiki, "error": "no such page"}
+
+
+@mcp.tool
+def list_suggestions(slug: str = "") -> dict:
+    """List pending proposed edits (for a page, or the whole active wiki)."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "suggestions": store.suggestions_list(slug or None)}
+
+
+@mcp.tool
+def export_markdown(dest_dir: str) -> dict:
+    """Export every page of the active wiki to `dest_dir` as <slug>.md files
+    (round-trip to a repo's docs/)."""
+    import os
+
+    wiki = _require_wiki()
+    n = wikis.export_markdown(wiki, os.path.expanduser(dest_dir))
+    return {"wiki": wiki, "written": n, "dir": os.path.expanduser(dest_dir)}
+
+
+@mcp.tool
 def list_tags() -> dict:
     """List tags in the active wiki with page counts. Tag a page by adding a
     frontmatter block: ---\\ntags: character, spirit\\n---"""

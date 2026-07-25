@@ -42,6 +42,7 @@
         </td>
         <td>
           <button class="btn" type="button" data-save="{{ w.slug }}">Save to file…</button>
+          <a class="btn" href="/wikis/{{ w.slug }}/export-md">Export .md</a>
         </td>
         <td>
           <form method="post" action="/wikis/{{ w.slug }}/delete"

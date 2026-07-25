@@ -182,6 +182,26 @@ CREATE TABLE IF NOT EXISTS page_versions (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS comments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id    INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    author     TEXT NOT NULL DEFAULT 'human',
+    body       TEXT NOT NULL,
+    resolved   INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Proposed edits held for review (propose-vs-apply).
+CREATE TABLE IF NOT EXISTS suggestions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id    INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    author     TEXT NOT NULL DEFAULT 'ai',
+    note       TEXT NOT NULL DEFAULT '',
+    markdown   TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'pending',   -- pending | applied | rejected
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS page_tags (
     page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
     tag     TEXT NOT NULL,

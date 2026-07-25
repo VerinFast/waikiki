@@ -37,10 +37,15 @@ find/replace (`edit_page`); broken-link counts in wiki stats.
 - [ ] Follow-up: query pages by arbitrary property value (heatmap/grid views) —
       infobox + tag-index cover display + one query axis for now
 
-## Sprint D — Review & interop
-- [ ] Comments / suggestion mode; propose-vs-apply for big rewrites
-- [ ] Markdown/git export to `docs/` (round-trip)
-- [ ] Universal2 + signed/notarized macOS build
+## Sprint D — Review & interop  ✅ shipped (v0.0.7)
+- [x] Comments on pages (add / resolve; MCP `add_comment` / `list_comments` /
+      `resolve_comment`)
+- [x] Propose-vs-apply — MCP `propose_edit` stores a pending rewrite the human
+      reviews with a diff and Apply/Reject (nothing lands unreviewed)
+- [x] Markdown export — per-wiki `Export .md` (zip) + MCP `export_markdown` to a
+      docs/ directory
+- [x] Ad-hoc code-signing in the build (real notarization/universal2 needs an
+      Apple Developer cert + Intel build env — BLOCKED without that infra)
 
 ## Sprint E — Polish & structure  ✅ shipped (v0.0.4)
 - [x] Clone an article (UI + MCP `clone_page`)

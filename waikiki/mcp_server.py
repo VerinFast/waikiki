@@ -27,7 +27,7 @@ WEB = config.WEB_URL
 _ACTIVE_FILE = config.DATA_DIR / "mcp_active_wiki"
 
 mcp = FastMCP(
-    "waikiki",
+    "🌺 Waikiki",
     instructions=(
         "Waikiki has multiple isolated wikis. You MUST call switch_wiki(slug) "
         "before reading or writing pages; content tools error otherwise. Wikis "

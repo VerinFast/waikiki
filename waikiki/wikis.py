@@ -129,13 +129,14 @@ def stats(slug: str) -> dict:
             "SELECT COUNT(*) c FROM pages WHERE deleted_at IS NULL").fetchone()["c"]
         trashed = conn.execute(
             "SELECT COUNT(*) c FROM pages WHERE deleted_at IS NOT NULL").fetchone()["c"]
+        from . import store  # lazy: avoid import cycle at module load
+        idx = store.link_index()  # resolves [[Title]] and [[slug]] alike
         active = conn.execute(
-            "SELECT slug, markdown FROM pages WHERE deleted_at IS NULL").fetchall()
-        active_slugs = {r["slug"] for r in active}
+            "SELECT markdown FROM pages WHERE deleted_at IS NULL").fetchall()
         resolved = broken = 0
         for r in active:
-            for target in render.extract_wikilinks(r["markdown"]):
-                if target in active_slugs:
+            for key in render.extract_wikilinks(r["markdown"]):
+                if key in idx:
                     resolved += 1
                 else:
                     broken += 1

@@ -41,6 +41,17 @@
 
     <div class="rendered">{{ page.html | safe }}</div>
 
+    {% if backlinks %}
+      <details class="history">
+        <summary>What links here ({{ backlinks | length }})</summary>
+        <ul>
+          {% for b in backlinks %}
+            <li><a href="/wiki/{{ b.slug }}">{{ b.title }}</a></li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+
     {% if versions %}
       <details class="history">
         <summary>History ({{ versions | length }})</summary>

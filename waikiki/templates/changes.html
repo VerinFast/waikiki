@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Recent changes — Waikiki{% endblock %}
+{% block content %}
+  <h1>Recent changes <span class="muted">— {{ current_wiki_name }}</span></h1>
+  {% if changes %}
+    <ul class="results">
+      {% for c in changes %}
+        <li>
+          <span class="badge {{ c.author }}">{{ c.author }}</span>
+          <a href="/wiki/{{ c.slug }}">{{ c.title }}</a>
+          <span class="muted">{{ c.created_at }}</span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">No changes yet.</p>
+  {% endif %}
+{% endblock %}

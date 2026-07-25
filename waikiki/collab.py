@@ -91,22 +91,21 @@ async def replace_text(wiki: str, slug: str, markdown: str) -> str:
     return str(txt)
 
 
-async def edit_text(wiki: str, slug: str, old: str, new: str) -> dict:
-    """Targeted edit: replace an exact snippet with new text as a *surgical* CRDT
-    change (only the changed range moves), so it merges with concurrent human
-    edits. `old` must occur exactly once."""
+async def apply_edit(wiki: str, slug: str, planner) -> dict:
+    """Apply a pure edit planner (from waikiki.edits) as a *surgical* CRDT change:
+    only the planned [start:end] range is replaced, so it merges with concurrent
+    human edits. `planner(current_text) -> (start, end, insert)` or raises."""
     room = await ensure_room(wiki, slug)
     txt = _ytext(room)
-    s = str(txt)
-    idx = s.find(old)
-    if idx == -1:
-        return {"ok": False, "error": "old_text was not found in the page"}
-    if s.find(old, idx + len(old)) != -1:
-        return {"ok": False,
-                "error": "old_text is not unique — include more surrounding context"}
+    try:
+        start, end, insert = planner(str(txt))
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
     with room.ydoc.transaction():
-        del txt[idx:idx + len(old)]
-        txt.insert(idx, new)
+        if end > start:
+            del txt[start:end]
+        if insert:
+            txt.insert(start, insert)
     _claude_present(room_key(wiki, slug), room)
     return {"ok": True, "length": len(str(txt))}
 

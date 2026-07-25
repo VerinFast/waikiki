@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import ai, collab, config, db, embeddings, rag, render, store, wikis
+from . import ai, collab, config, db, edits, embeddings, rag, render, store, wikis
 
 
 @asynccontextmanager
@@ -296,8 +296,21 @@ def view_page(request: Request, slug: str):
     return templates.TemplateResponse(request,
         "page.html", _ctx(request, page=page, versions=store.page_versions(slug),
                           trashed=bool(page.get("deleted_at")),
-                          toc=render.extract_toc(page["markdown"]))
+                          toc=render.extract_toc(page["markdown"]),
+                          backlinks=store.backlinks(slug))
     )
+
+
+@app.get("/changes", response_class=HTMLResponse)
+def changes_view(request: Request):
+    return templates.TemplateResponse(request,
+        "changes.html", _ctx(request, changes=store.recent_changes(limit=100)))
+
+
+@app.get("/broken-links", response_class=HTMLResponse)
+def broken_links_view(request: Request):
+    return templates.TemplateResponse(request,
+        "broken.html", _ctx(request, broken=store.broken_links()))
 
 
 @app.get("/wiki/{slug}/edit", response_class=HTMLResponse)
@@ -535,7 +548,27 @@ async def api_collab_edit(slug: str, body: CollabEdit):
     wiki = db.active_wiki()
     if not store.get_page(slug):
         raise HTTPException(404, "Page not found")
-    result = await collab.edit_text(wiki, slug, body.old, body.new)
+    result = await collab.apply_edit(
+        wiki, slug, lambda s: edits.plan_edit(s, body.old, body.new))
+    return {"wiki": wiki, "slug": slug, **result}
+
+
+@app.post("/api/collab/{slug}/op")
+async def api_collab_op(slug: str, body: dict):
+    """Apply a structured text op (edit/remove/prepend/insert/replace_section)
+    as a live surgical edit. Used by the MCP text tools."""
+    wiki = db.active_wiki()
+    if not store.get_page(slug):
+        raise HTTPException(404, "Page not found")
+    planner = edits.make_planner(body)
+    if planner is None:
+        return {"wiki": wiki, "slug": slug, "ok": False,
+                "error": f"unknown op '{body.get('op')}'"}
+    try:
+        result = await collab.apply_edit(wiki, slug, planner)
+    except KeyError as exc:
+        return {"wiki": wiki, "slug": slug, "ok": False,
+                "error": f"missing argument {exc}"}
     return {"wiki": wiki, "slug": slug, **result}
 
 

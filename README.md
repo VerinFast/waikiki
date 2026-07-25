@@ -188,11 +188,13 @@ mixing. Open a page's editor and ask Claude to add a section; watch it type in
 beside you.
 
 MCP tools: `list_wikis`, `current_wiki`, `switch_wiki`, `create_wiki` (wiki
-selection — required first), then `list_pages`, `get_page`, `create_page`,
-`edit_page` (targeted, merge-safe — the preferred way to change a page),
-`append_to_page` (live), `replace_page` (full rewrite), `delete_page` (to trash),
-`list_trash`, `restore_page`, `search` (hybrid RAG) — all scoped to the active
-wiki.
+selection — required first), then `list_pages`, `get_page` (returns a heading
+outline), `create_page`, and a family of **merge-safe live edit** tools:
+`edit_page` (find/replace — preferred), `replace_section`, `insert_after` /
+`insert_before`, `prepend_to_page`, `remove_from_page`, `append_to_page`, and
+`replace_page` (full rewrite, last resort). Plus `changes_since` (change feed),
+`backlinks`, `broken_links`, `delete_page` (to trash), `list_trash`,
+`restore_page`, and `search` (hybrid RAG) — all scoped to the active wiki.
 
 ## REST API
 

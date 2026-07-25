@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Broken links — Waikiki{% endblock %}
+{% block content %}
+  <h1>Broken links <span class="muted">— {{ current_wiki_name }}</span></h1>
+  <p class="muted">Wikilinks pointing at pages that don't exist. Create the page,
+    fix the link, or leave it as a placeholder.</p>
+  {% if broken %}
+    <table class="modeltable">
+      <tbody>
+      {% for b in broken %}
+        <tr>
+          <td><a href="/wiki/{{ b.from_slug }}">{{ b.from_title }}</a></td>
+          <td class="muted">→</td>
+          <td><a href="/wiki/{{ b.target }}"><code>[[{{ b.target }}]]</code></a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="muted">No broken links. 🎉</p>
+  {% endif %}
+{% endblock %}

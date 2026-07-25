@@ -29,7 +29,7 @@
           <div class="muted wikistats">
             {{ s.articles }} article{{ '' if s.articles == 1 else 's' }} ·
             {{ s.links }} link{{ '' if s.links == 1 else 's' }}
-            {% if s.links_broken %}(<span class="broken">{{ s.links_broken }} broken</span>){% endif %} ·
+            {% if s.links_broken %}(<a class="broken" href="/broken-links">{{ s.links_broken }} broken</a>){% endif %} ·
             {{ (s.bytes / 1048576) | round(1) }} MB
             {% if s.trashed %} · {{ s.trashed }} in trash{% endif %}
           </div>

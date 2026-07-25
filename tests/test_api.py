@@ -51,6 +51,21 @@ def test_rest_and_collab_flow(wiki):
         assert c.post("/api/collab/reef/edit",
                       json={"old": "nope", "new": "x"}).json()["ok"] is False
 
+        # --- structured text ops via /op ---
+        c.post("/api/collab/reef/replace", json={"markdown": "## A\nalpha\n\n## B\nbeta"})
+        assert c.post("/api/collab/reef/op",
+                      json={"op": "replace_section", "heading": "A",
+                            "markdown": "## A\nNEW"}).json()["ok"] is True
+        live = c.get("/api/collab/reef/live").json()["markdown"]
+        assert "## A\nNEW" in live and "## B\nbeta" in live and "alpha" not in live
+        assert c.post("/api/collab/reef/op",
+                      json={"op": "prepend", "text": "TOP"}).json()["ok"] is True
+        assert c.get("/api/collab/reef/live").json()["markdown"].startswith("TOP")
+
+        # --- change feed + broken-links pages render ---
+        assert c.get("/changes").status_code == 200
+        assert c.get("/broken-links").status_code == 200
+
         # --- HTML views render ---
         assert c.get("/").status_code == 200
         assert c.get("/settings").status_code == 200

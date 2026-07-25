@@ -23,7 +23,7 @@ import httpx
 from fastmcp import FastMCP
 from mcp.types import Icon
 
-from . import config, db, rag, store, wikis
+from . import config, db, edits, rag, render, store, wikis
 
 WEB = config.WEB_URL
 _ACTIVE_FILE = config.DATA_DIR / "mcp_active_wiki"
@@ -150,7 +150,8 @@ def get_page(slug: str) -> dict:
         markdown = r.json()["markdown"] if r.status_code == 200 else page["markdown"]
     except Exception:
         markdown = page["markdown"]
-    return {"wiki": wiki, "slug": page["slug"], "title": page["title"], "markdown": markdown}
+    return {"wiki": wiki, "slug": page["slug"], "title": page["title"],
+            "markdown": markdown, "outline": render.extract_toc(markdown)}
 
 
 @mcp.tool
@@ -217,6 +218,66 @@ def edit_page(slug: str, old_text: str, new_text: str) -> dict:
     return {"wiki": wiki, "slug": slug, "edited": True, "live": False}
 
 
+def _text_op(slug: str, payload: dict) -> dict:
+    """Apply a structured text op live (with a headless DB fallback)."""
+    wiki = _require_wiki()
+    try:
+        r = httpx.post(f"{WEB}/api/collab/{slug}/op", json=payload,
+                       headers=_headers(), timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            if not data.get("ok", True):
+                return {"wiki": wiki, "slug": slug, "error": data.get("error")}
+            return {"wiki": wiki, "slug": slug, "edited": True, "live": True,
+                    "length": data.get("length")}
+    except Exception:
+        pass
+    page = store.get_page(slug)
+    if not page:
+        return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
+    try:
+        new_md = edits.apply_to_string(page["markdown"], edits.make_planner(payload))
+    except ValueError as exc:
+        return {"wiki": wiki, "slug": slug, "error": str(exc)}
+    store.update_page(slug, page["title"], new_md, author="ai")
+    return {"wiki": wiki, "slug": slug, "edited": True, "live": False}
+
+
+@mcp.tool
+def replace_section(slug: str, heading: str, markdown: str) -> dict:
+    """Replace one section — a heading and its content up to the next same-or-
+    higher heading — with new markdown (include the heading line in `markdown`).
+    `heading` is the exact heading text without the leading #s. This is the
+    preferred way to rewrite a single section. Merge-safe live edit."""
+    return _text_op(slug, {"op": "replace_section", "heading": heading,
+                           "markdown": markdown})
+
+
+@mcp.tool
+def insert_after(slug: str, anchor: str, text: str) -> dict:
+    """Insert `text` immediately after the unique snippet `anchor` (e.g. a heading
+    line or a sentence). Merge-safe live edit."""
+    return _text_op(slug, {"op": "insert", "after": anchor, "text": text})
+
+
+@mcp.tool
+def insert_before(slug: str, anchor: str, text: str) -> dict:
+    """Insert `text` immediately before the unique snippet `anchor`."""
+    return _text_op(slug, {"op": "insert", "before": anchor, "text": text})
+
+
+@mcp.tool
+def prepend_to_page(slug: str, text: str) -> dict:
+    """Insert `text` at the very top of the page."""
+    return _text_op(slug, {"op": "prepend", "text": text})
+
+
+@mcp.tool
+def remove_from_page(slug: str, text: str) -> dict:
+    """Delete the unique snippet `text` from the page (surgical, merge-safe)."""
+    return _text_op(slug, {"op": "remove", "text": text})
+
+
 @mcp.tool
 def replace_page(slug: str, markdown: str) -> dict:
     """Overwrite a page's ENTIRE body — use only to rewrite a page from scratch.
@@ -263,6 +324,31 @@ def search(query: str, k: int = 6) -> dict:
     """Hybrid BM25 + vector search over the active wiki only (RAG)."""
     wiki = _require_wiki()
     return {"wiki": wiki, "results": rag.search_chunks(query, k)}
+
+
+@mcp.tool
+def changes_since(since: str = "") -> dict:
+    """Change feed for the active wiki: page edits newest-first, each with author
+    and timestamp. Pass an ISO datetime ('YYYY-MM-DD HH:MM:SS') to get only
+    changes after it — so you can catch up on the human's edits without re-reading
+    everything. Omit `since` for the most recent changes."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "since": since or None,
+            "changes": store.recent_changes(since or None)}
+
+
+@mcp.tool
+def backlinks(slug: str) -> dict:
+    """List pages in the active wiki that link to `slug` ('what links here')."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "slug": slug, "backlinks": store.backlinks(slug)}
+
+
+@mcp.tool
+def broken_links() -> dict:
+    """List wikilinks in the active wiki that point to non-existent pages."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "broken": store.broken_links()}
 
 
 def main() -> None:

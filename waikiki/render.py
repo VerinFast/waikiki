@@ -43,22 +43,28 @@ _md.use(anchors_plugin, min_level=1, max_level=3, slug_func=_slugify,
 _WIKILINK = re.compile(r"\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]")
 
 
-def _wikilink_href(target: str) -> str:
-    """Resolve a wikilink target (optionally 'Page#Section' or '#Section')."""
+def _wikilink_href(target: str, resolver=None) -> str:
+    """Resolve a wikilink target (optionally 'Page#Section' or '#Section').
+
+    `resolver(slugified_page)` -> canonical slug maps a page *title or slug* to the
+    real page slug (link-by-title), so links survive renames. Falls back to the
+    slugified target (a red link) when unresolved."""
     page_part, _, section = target.partition("#")
     if page_part.strip():
-        href = "/wiki/" + _slugify(page_part)
+        key = _slugify(page_part)
+        slug = (resolver(key) if resolver else None) or key
+        href = "/wiki/" + slug
         if section.strip():
             href += "#" + _slugify(section)
         return href
     return "#" + _slugify(section)  # same-page section link
 
 
-def _expand_wikilinks(markdown: str) -> str:
+def _expand_wikilinks(markdown: str, resolver=None) -> str:
     def repl(m: re.Match) -> str:
         target, label = m.group(1).strip(), m.group(2)
         label = (label or target).strip()
-        return f"[{label}]({_wikilink_href(target)})"
+        return f"[{label}]({_wikilink_href(target, resolver)})"
 
     return _WIKILINK.sub(repl, markdown)
 
@@ -93,9 +99,9 @@ def extract_toc(markdown: str) -> list[dict]:
     return toc
 
 
-def render_markdown(markdown: str) -> str:
+def render_markdown(markdown: str, resolver=None) -> str:
     """Return sanitized HTML. `html=False` means raw HTML in source is escaped."""
-    return _md.render(_expand_wikilinks(markdown or ""))
+    return _md.render(_expand_wikilinks(markdown or "", resolver))
 
 
 def pygments_css() -> str:

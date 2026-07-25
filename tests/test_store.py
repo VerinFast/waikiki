@@ -81,6 +81,41 @@ def test_sweep_trash_respects_days(wiki):
     assert store.get_page("old") is None
 
 
+def test_backlinks_and_broken(wiki):
+    store.create_page("Home", "see [[Guide]] and [[Ghost Town]]")
+    store.create_page("Guide", "back to [[Home]]")
+    assert [b["slug"] for b in store.backlinks("guide")] == ["home"]
+    assert [b["slug"] for b in store.backlinks("home")] == ["guide"]
+    broken = store.broken_links()
+    assert any(b["target"] == "ghost-town" for b in broken)
+    assert not any(b["target"] == "guide" for b in broken)
+
+
+def test_link_by_title_resolves_in_html(wiki):
+    store.create_page("Setup Guide", "content")           # slug: setup-guide
+    home = store.create_page("Home", "see [[Setup Guide]]")
+    assert '/wiki/setup-guide' in home["html"]
+
+
+def test_rename_rewrites_backlinks(wiki):
+    store.create_page("Guide", "hello")
+    store.create_page("Home", "read the [[Guide]] please")
+    # rename Guide -> Manual (slug stays 'guide')
+    store.update_page("guide", "Manual", "hello")
+    assert "[[Manual]]" in store.get_page("home")["markdown"]
+    # link still resolves to the same stable slug
+    assert '/wiki/guide' in store.get_page("home")["html"]
+
+
+def test_recent_changes_feed(wiki):
+    store.create_page("A", "1")
+    store.update_page("a", "A", "2", author="ai")
+    feed = store.recent_changes(limit=10)
+    assert feed[0]["slug"] == "a" and feed[0]["author"] == "ai"
+    # since-filter: nothing after a far-future timestamp
+    assert store.recent_changes(since="2999-01-01 00:00:00") == []
+
+
 def test_images_roundtrip(wiki):
     img_id = store.save_image("d.png", "image/png", b"\x89PNG\r\n")
     got = store.get_image(img_id)

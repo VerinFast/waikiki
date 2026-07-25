@@ -82,7 +82,7 @@ def create_page(title: str, markdown: str = "", author: str = "human") -> dict:
     slug, n = base, 2
     while conn.execute("SELECT 1 FROM pages WHERE slug=?", (slug,)).fetchone():
         slug, n = f"{base}-{n}", n + 1
-    html = render.render_markdown(markdown)
+    html = render.render_markdown(markdown, link_index().get)
     cur = conn.execute(
         "INSERT INTO pages(slug, title, markdown, html) VALUES (?,?,?,?)",
         (slug, title, markdown, html),
@@ -94,12 +94,11 @@ def create_page(title: str, markdown: str = "", author: str = "human") -> dict:
     return get_page(slug)
 
 
-def update_page(slug: str, title: str, markdown: str, author: str = "human") -> Optional[dict]:
+def _set_body(slug: str, title: str, markdown: str, author: str) -> None:
+    """Core page write: render (link-by-title), save, snapshot, reindex."""
     conn = db.get_conn()
     page = get_page(slug)
-    if not page:
-        return None
-    html = render.render_markdown(markdown)
+    html = render.render_markdown(markdown, link_index().get)
     conn.execute(
         "UPDATE pages SET title=?, markdown=?, html=?, updated_at=datetime('now'), "
         "deleted_at=NULL WHERE slug=?",
@@ -108,6 +107,17 @@ def update_page(slug: str, title: str, markdown: str, author: str = "human") -> 
     _snapshot(page["id"], title, markdown, author)
     conn.commit()
     rag.reindex_page(page["id"], markdown)
+
+
+def update_page(slug: str, title: str, markdown: str, author: str = "human") -> Optional[dict]:
+    page = get_page(slug)
+    if not page:
+        return None
+    _set_body(slug, title, markdown, author)
+    # If the title changed, rewrite [[old title]] links elsewhere so they follow
+    # the rename (slugs stay stable, so existing links keep working regardless).
+    if title.strip() and title.strip() != page["title"].strip():
+        _rewrite_backlinks(slug, page["title"], title)
     return get_page(slug)
 
 
@@ -210,6 +220,81 @@ def restore_version(slug: str, version_id: int) -> Optional[dict]:
     if not page or not v or v["page_id"] != page["id"]:
         return None
     return update_page(slug, v["title"], v["markdown"], author="restore")
+
+
+# --- Links & change feed ------------------------------------------------------
+
+def link_index() -> dict:
+    """Map every active page's slug AND slugified-title to its canonical slug,
+    so [[Title]] and [[slug]] both resolve (link-by-title)."""
+    idx = {}
+    for r in db.get_conn().execute(
+            "SELECT slug, title FROM pages WHERE deleted_at IS NULL").fetchall():
+        idx[r["slug"]] = r["slug"]
+        idx[render.slugify(r["title"])] = r["slug"]
+    return idx
+
+
+def backlinks(slug: str) -> List[dict]:
+    """Pages that link to `slug` ('what links here')."""
+    idx = link_index()
+    out = []
+    for p in list_pages():
+        if p["slug"] == slug:
+            continue
+        page = get_page(p["slug"])
+        targets = {idx.get(k, k) for k in render.extract_wikilinks(page["markdown"])}
+        if slug in targets:
+            out.append({"slug": p["slug"], "title": p["title"]})
+    return out
+
+
+def broken_links() -> List[dict]:
+    """Every wikilink whose target page doesn't exist (red links)."""
+    idx = link_index()
+    out = []
+    for p in list_pages():
+        page = get_page(p["slug"])
+        for key in render.extract_wikilinks(page["markdown"]):
+            if key not in idx:
+                out.append({"from_slug": p["slug"], "from_title": p["title"],
+                            "target": key})
+    return out
+
+
+def recent_changes(since: Optional[str] = None, limit: int = 50) -> List[dict]:
+    """Version events across active pages, newest first — the change feed.
+    `since` is an ISO datetime string ('YYYY-MM-DD HH:MM:SS')."""
+    sql = ("SELECT p.slug, v.title, v.author, v.created_at "
+           "FROM page_versions v JOIN pages p ON p.id = v.page_id "
+           "WHERE p.deleted_at IS NULL ")
+    args: list = []
+    if since:
+        sql += "AND v.created_at > ? "
+        args.append(since)
+    sql += "ORDER BY v.created_at DESC, v.id DESC LIMIT ?"
+    args.append(limit)
+    return [dict(r) for r in db.get_conn().execute(sql, args).fetchall()]
+
+
+def _rewrite_backlinks(exclude_slug: str, old_title: str, new_title: str) -> None:
+    old_key = render.slugify(old_title)
+
+    def repl(m):
+        target, label = m.group(1).strip(), m.group(2)
+        page_part, sep, section = target.partition("#")
+        if render.slugify(page_part) != old_key:
+            return m.group(0)
+        new_target = new_title + (("#" + section) if sep else "")
+        return f"[[{new_target}{('|' + label) if label else ''}]]"
+
+    for p in list_pages():
+        if p["slug"] == exclude_slug:
+            continue
+        page = get_page(p["slug"])
+        new_md = render._WIKILINK.sub(repl, page["markdown"])
+        if new_md != page["markdown"]:
+            _set_body(p["slug"], page["title"], new_md, author="rename")
 
 
 # --- Images -------------------------------------------------------------------

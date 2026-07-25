@@ -28,6 +28,17 @@
       {% endif %}
     </div>
 
+    {% if toc and toc | length >= 2 %}
+      <details class="toc" open>
+        <summary>Contents</summary>
+        <ul>
+          {% for h in toc %}
+            <li class="lvl{{ h.level }}"><a href="#{{ h.slug }}">{{ h.text }}</a></li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+
     <div class="rendered">{{ page.html | safe }}</div>
 
     {% if versions %}

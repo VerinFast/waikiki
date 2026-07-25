@@ -6,6 +6,7 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 *{box-sizing:border-box}
+html{scroll-behavior:smooth}
 body{margin:0;font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.6}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
@@ -56,6 +57,16 @@ form{display:inline}
 
 .article-head{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem}
 .article-head .tools{display:flex;gap:.5rem}
+.rendered :is(h1,h2,h3,h4,h5,h6){scroll-margin-top:70px}
+.rendered .header-anchor{opacity:0;margin-left:.35em;color:var(--muted);text-decoration:none;font-weight:400}
+.rendered :is(h1,h2,h3,h4,h5,h6):hover .header-anchor{opacity:.6}
+.rendered .header-anchor:hover{opacity:1;color:var(--accent)}
+.toc{margin:0 0 1.2rem;padding:.5rem .9rem;border:1px solid var(--border);border-radius:8px;background:var(--surface);display:inline-block;min-width:220px}
+.toc summary{cursor:pointer;font-weight:600;color:var(--muted)}
+.toc ul{list-style:none;margin:.5rem 0 0;padding:0}
+.toc li{margin:.15rem 0}
+.toc li.lvl2{padding-left:1rem}
+.toc li.lvl3{padding-left:2rem}
 .rendered img{max-width:100%;height:auto}
 .rendered table{border-collapse:collapse;width:100%;margin:1rem 0}
 .rendered th,.rendered td{border:1px solid var(--border);padding:.5rem .7rem;text-align:left}

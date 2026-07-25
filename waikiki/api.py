@@ -295,7 +295,8 @@ def view_page(request: Request, slug: str):
         )
     return templates.TemplateResponse(request,
         "page.html", _ctx(request, page=page, versions=store.page_versions(slug),
-                          trashed=bool(page.get("deleted_at")))
+                          trashed=bool(page.get("deleted_at")),
+                          toc=render.extract_toc(page["markdown"]))
     )
 
 

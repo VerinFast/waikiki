@@ -29,3 +29,29 @@ def test_fenced_code_renders():
 
 def test_slugify():
     assert render.slugify("Hello, World!") == "hello-world"
+
+
+def test_heading_anchors():
+    html = render.render_markdown("## My Section\n\ntext")
+    assert 'id="my-section"' in html
+    assert 'class="header-anchor" href="#my-section"' in html
+
+
+def test_wikilink_to_section():
+    html = render.render_markdown("jump to [[Guide#Setup Steps]]")
+    assert 'href="/wiki/guide#setup-steps"' in html
+
+
+def test_same_page_section_link():
+    html = render.render_markdown("[[#Overview]]")
+    assert 'href="#overview"' in html
+
+
+def test_extract_toc():
+    toc = render.extract_toc("# Top\n\n## A\n\n```\n## not-a-heading\n```\n\n### B")
+    assert [(h["level"], h["slug"]) for h in toc] == [(1, "top"), (2, "a"), (3, "b")]
+
+
+def test_extract_wikilinks_ignores_section_and_self():
+    links = render.extract_wikilinks("[[Guide#Setup]] and [[#Local]] and [[Other]]")
+    assert links == ["guide", "other"]   # section stripped, same-page skipped

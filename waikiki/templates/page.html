@@ -20,6 +20,8 @@
       {% if not trashed %}
         <div class="tools">
           <a class="btn" href="/wiki/{{ page.slug }}/edit">Edit</a>
+          <a class="btn" href="/wiki/{{ page.slug }}/pdf" target="_blank">PDF</a>
+          <button class="btn" type="button" onclick="window.print()">Print</button>
           <form method="post" action="/wiki/{{ page.slug }}/clone">
             <button class="btn" type="submit">Clone</button>
           </form>

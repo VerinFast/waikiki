@@ -154,19 +154,63 @@ def stats(slug: str) -> dict:
 
 
 def export_to(slug: str, dest_path: str) -> str:
-    """Save a wiki out to a file the user chose (a consistent SQLite snapshot)."""
+    """Save a wiki to a .wiki file — a zip bundle of the SQLite DB, its media as
+    files, and a manifest."""
+    import json
+    import tempfile
+    import zipfile
+
     if not exists(slug):
         raise ValueError(f"no wiki '{slug}'")
-    db.backup_db(str(db_path(slug)), dest_path)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+    tmp.close()
+    db.backup_db(str(db_path(slug)), tmp.name)  # consistent snapshot
+
+    token = db.current_wiki.set(slug)
+    try:
+        media = db.get_conn().execute(
+            "SELECT id, filename, data FROM images").fetchall()
+    finally:
+        db.current_wiki.reset(token)
+
+    with zipfile.ZipFile(dest_path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(tmp.name, "wiki.db")
+        for row in media:
+            z.writestr(f"media/{row['id']}-{row['filename']}", row["data"])
+        z.writestr("manifest.json", json.dumps(
+            {"format": "waikiki-zip-1", "name": name_of(slug), "slug": slug,
+             "media": len(media)}, indent=2))
+    Path(tmp.name).unlink(missing_ok=True)
     return dest_path
 
 
+def _extract_db(src_path: str) -> str:
+    """Return a path to the wiki.db — from a zip bundle or a raw .db file."""
+    with open(src_path, "rb") as f:
+        head = f.read(2)
+    if head == b"PK":  # zip bundle
+        import tempfile
+        import zipfile
+
+        with zipfile.ZipFile(src_path) as z:
+            name = "wiki.db" if "wiki.db" in z.namelist() else next(
+                (n for n in z.namelist() if n.endswith(".db")), None)
+            if not name:
+                raise ValueError("Zip bundle has no wiki.db")
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".db")
+            tmp.write(z.read(name))
+            tmp.close()
+            return tmp.name
+    return src_path  # assume raw SQLite
+
+
 def import_from(src_path: str, name: str | None = None) -> str:
-    """Open an external wiki file: validate it, copy it into the managed wikis
-    dir under a fresh slug, and register it. Returns the new slug."""
+    """Open an external wiki file (zip bundle or raw .db): validate it, copy it
+    into the managed wikis dir under a fresh slug, and register it."""
+    display = (name or Path(src_path).stem or "Imported").strip()
+    src_path = _extract_db(src_path)  # zip bundle -> temp wiki.db, or raw .db
     if not db.is_wiki_db(src_path):
         raise ValueError("Not a Waikiki wiki file (missing pages/settings tables)")
-    display = (name or Path(src_path).stem or "Imported").strip()
     base = slugify(display)
     with _lock:
         reg = _load()

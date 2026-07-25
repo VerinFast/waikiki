@@ -89,7 +89,8 @@ def test_export_import_roundtrip(wiki, tmp_path):
 
     dest = tmp_path / "backup.wiki"
     wikis.export_to("main", str(dest))
-    assert dest.exists() and db.is_wiki_db(str(dest))
+    import zipfile
+    assert dest.exists() and zipfile.is_zipfile(str(dest))  # now a zip bundle
 
     slug = wikis.import_from(str(dest), name="Imported")
     assert slug == "imported" and wikis.exists("imported")

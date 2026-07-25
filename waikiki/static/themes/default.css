@@ -170,4 +170,16 @@ pre.diff .hunk{color:var(--muted);display:block}
 .EasyMDEContainer .editor-toolbar.fullscreen,
 .EasyMDEContainer .CodeMirror-fullscreen{background:var(--surface)}
 
+.rendered a.ext::after{content:"\2197";font-size:.75em;opacity:.55;margin-left:1px}
+.rendered video,.rendered audio{max-width:100%;margin:.5rem 0;border-radius:8px}
+
+@media print{
+  .topbar,.sidebar,.tools,.ai-bar,.editor-actions,.history,.toc,.presence-bar,.article-head .tools{display:none !important}
+  .layout{grid-template-columns:1fr;min-height:0}
+  .content{max-width:100%;padding:0}
+  body{background:#fff;color:#000}
+  a{color:#000}
+  .header-anchor{display:none}
+}
+
 @media(max-width:720px){.layout{grid-template-columns:1fr}.sidebar{display:none}}

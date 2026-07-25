@@ -16,6 +16,18 @@
     </fieldset>
 
     <fieldset>
+      <legend>Content <span class="muted">(this wiki)</span></legend>
+      <label class="rag-toggle">
+        <input type="checkbox" name="allow_html" value="1"
+               {{ 'checked' if settings.allow_html == '1' }}>
+        Allow raw HTML in pages
+      </label>
+      <p class="muted note">Lets you paste custom HTML/CSS snippets and embed
+        <code>&lt;video&gt;</code>/<code>&lt;iframe&gt;</code>. Enable only for
+        trusted local content.</p>
+    </fieldset>
+
+    <fieldset>
       <legend>Retention <span class="muted">(this wiki)</span></legend>
       <label>Keep the last N versions per page
         <input type="number" name="retention_versions" min="0"

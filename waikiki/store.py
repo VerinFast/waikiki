@@ -123,7 +123,7 @@ def create_page(title: str, markdown: str = "", author: str = "human") -> dict:
     slug, n = base, 2
     while conn.execute("SELECT 1 FROM pages WHERE slug=?", (slug,)).fetchone():
         slug, n = f"{base}-{n}", n + 1
-    html = render.render_markdown(markdown, link_index().get)
+    html = render_html(markdown)
     cur = conn.execute(
         "INSERT INTO pages(slug, title, markdown, html) VALUES (?,?,?,?)",
         (slug, title, markdown, html),
@@ -139,7 +139,7 @@ def _set_body(slug: str, title: str, markdown: str, author: str) -> None:
     """Core page write: render (link-by-title), save, snapshot, reindex."""
     conn = db.get_conn()
     page = get_page(slug)
-    html = render.render_markdown(markdown, link_index().get)
+    html = render_html(markdown)
     conn.execute(
         "UPDATE pages SET title=?, markdown=?, html=?, updated_at=datetime('now'), "
         "deleted_at=NULL WHERE slug=?",
@@ -265,6 +265,23 @@ def restore_version(slug: str, version_id: int) -> Optional[dict]:
 
 # --- Links & change feed ------------------------------------------------------
 
+def render_html(markdown: str) -> str:
+    """Render markdown for the active wiki (link-by-title + per-wiki HTML setting)."""
+    allow_html = db.get_setting("allow_html", "0") == "1"
+    return render.render_markdown(markdown, link_index().get, allow_html=allow_html)
+
+
+def rerender_all() -> int:
+    """Re-render every page's HTML (after toggling allow_html). No new versions."""
+    conn = db.get_conn()
+    rows = conn.execute("SELECT slug, markdown FROM pages").fetchall()
+    for r in rows:
+        conn.execute("UPDATE pages SET html=? WHERE slug=?",
+                     (render_html(r["markdown"]), r["slug"]))
+    conn.commit()
+    return len(rows)
+
+
 def link_index() -> dict:
     """Map every active page's slug AND slugified-title to its canonical slug,
     so [[Title]] and [[slug]] both resolve (link-by-title)."""
@@ -336,6 +353,53 @@ def _rewrite_backlinks(exclude_slug: str, old_title: str, new_title: str) -> Non
         new_md = render._WIKILINK.sub(repl, page["markdown"])
         if new_md != page["markdown"]:
             _set_body(p["slug"], page["title"], new_md, author="rename")
+
+
+# --- Templates ----------------------------------------------------------------
+
+def templates_list() -> List[dict]:
+    return [dict(r) for r in db.get_conn().execute(
+        "SELECT id, name, markdown FROM templates ORDER BY name COLLATE NOCASE").fetchall()]
+
+
+def template_get(tid: int) -> Optional[dict]:
+    r = db.get_conn().execute(
+        "SELECT id, name, markdown FROM templates WHERE id=?", (tid,)).fetchone()
+    return dict(r) if r else None
+
+
+def template_by_name(name: str) -> Optional[dict]:
+    r = db.get_conn().execute(
+        "SELECT id, name, markdown FROM templates WHERE name=? COLLATE NOCASE",
+        (name,)).fetchone()
+    return dict(r) if r else None
+
+
+def template_save(name: str, markdown: str, tid: Optional[int] = None) -> None:
+    conn = db.get_conn()
+    if tid:
+        conn.execute("UPDATE templates SET name=?, markdown=? WHERE id=?",
+                     (name, markdown, tid))
+    else:
+        conn.execute(
+            "INSERT INTO templates(name, markdown) VALUES (?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET markdown=excluded.markdown",
+            (name, markdown))
+    conn.commit()
+
+
+def template_delete(tid: int) -> None:
+    conn = db.get_conn()
+    conn.execute("DELETE FROM templates WHERE id=?", (tid,))
+    conn.commit()
+
+
+def create_from_template(template_name: str, title: str) -> Optional[dict]:
+    tpl = template_by_name(template_name)
+    if not tpl:
+        return None
+    md = tpl["markdown"].replace("{{title}}", title)
+    return create_page(title, md, author="ai")
 
 
 # --- Images -------------------------------------------------------------------

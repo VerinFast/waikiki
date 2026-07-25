@@ -54,7 +54,22 @@ DEFAULT_SETTINGS = {
     # after N days. 0 = unlimited / never.
     "retention_versions": "50",
     "retention_trash_days": "30",
+    # Allow raw HTML in markdown (per wiki). Local/trusted use; off by default.
+    "allow_html": "0",
 }
+
+# Built-in page templates seeded into each wiki (editable/removable in the UI).
+DEFAULT_TEMPLATES = [
+    ("Meeting notes",
+     "# {{title}}\n\n**Date:** \n**Attendees:** \n\n## Agenda\n- \n\n"
+     "## Notes\n\n## Action items\n- [ ] \n"),
+    ("How-to",
+     "# {{title}}\n\n> One-line summary.\n\n## Prerequisites\n- \n\n"
+     "## Steps\n1. \n2. \n\n## See also\n- [[ ]]\n"),
+    ("Person",
+     "# {{title}}\n\n| | |\n|---|---|\n| Role | |\n| Team | |\n| Contact | |\n\n"
+     "## About\n\n## Notes\n"),
+]
 
 # Retrieval / chunking -----------------------------------------------------------
 CHUNK_CHARS = 1000

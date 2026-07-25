@@ -33,11 +33,41 @@ def _slugify(text: str) -> str:
     return re.sub(r"[\s_-]+", "-", s).strip("-")
 
 
-# "gfm-like" enables tables, strikethrough, and linkify; anchors_plugin adds
-# `id`s + clickable "#" permalinks to headings so sections are deep-linkable.
-_md = MarkdownIt("gfm-like", {"highlight": _highlight, "linkify": True, "html": False})
-_md.use(anchors_plugin, min_level=1, max_level=3, slug_func=_slugify,
-        permalink=True, permalinkSymbol="#")
+def _valid_link(url: str) -> bool:
+    u = (url or "").strip().lower()
+    return not (u.startswith("javascript:") or u.startswith("vbscript:"))
+
+
+def _make_md(allow_html: bool) -> "MarkdownIt":
+    md = MarkdownIt("gfm-like",
+                    {"highlight": _highlight, "linkify": True, "html": allow_html})
+    md.use(anchors_plugin, min_level=1, max_level=3, slug_func=_slugify,
+           permalink=True, permalinkSymbol="#")
+    md.validateLink = _valid_link  # allow file:/mailto:/data: (block js:) on a local wiki
+    return md
+
+
+_md = _make_md(False)          # default: raw HTML escaped
+_md_html = _make_md(True)      # opt-in per wiki: raw HTML passes through
+
+# Post-render tweaks (simpler + more robust than renderer-rule overrides):
+_VIDEO = ("mp4", "webm", "mov", "ogv")
+_AUDIO = ("mp3", "wav", "ogg", "m4a")
+_IMG_MEDIA = re.compile(
+    r'<img\b[^>]*\bsrc="([^"]+\.(?:mp4|webm|mov|ogv|mp3|wav|ogg|m4a))"[^>]*>', re.I)
+_EXT_LINK = re.compile(r'<a href="(https?://[^"]+)"')
+
+
+def _post_process(html: str) -> str:
+    def media(m: re.Match) -> str:
+        src = m.group(1)
+        kind = "video" if src.rsplit(".", 1)[-1].lower() in _VIDEO else "audio"
+        return f'<{kind} src="{src}" controls style="max-width:100%"></{kind}>'
+
+    html = _IMG_MEDIA.sub(media, html)
+    html = _EXT_LINK.sub(
+        r'<a class="ext" target="_blank" rel="noopener noreferrer" href="\1"', html)
+    return html
 
 # [[Wiki Link]], [[slug|Label]], [[Page#Section]], [[#Section]] -> internal links.
 _WIKILINK = re.compile(r"\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]")
@@ -99,9 +129,11 @@ def extract_toc(markdown: str) -> list[dict]:
     return toc
 
 
-def render_markdown(markdown: str, resolver=None) -> str:
-    """Return sanitized HTML. `html=False` means raw HTML in source is escaped."""
-    return _md.render(_expand_wikilinks(markdown or "", resolver))
+def render_markdown(markdown: str, resolver=None, allow_html: bool = False) -> str:
+    """Render markdown to HTML. `allow_html` (per-wiki opt-in) passes raw HTML
+    through; otherwise raw HTML is escaped."""
+    md = _md_html if allow_html else _md
+    return _post_process(md.render(_expand_wikilinks(markdown or "", resolver)))
 
 
 def pygments_css() -> str:

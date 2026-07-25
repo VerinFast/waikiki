@@ -24,6 +24,7 @@ for pkg in [
     "fastembed", "onnxruntime", "tokenizers", "huggingface_hub", "sqlite_vec",
     "pycrdt", "fastmcp", "anthropic", "markdown_it", "mdit_py_plugins",
     "linkify_it", "uvicorn", "anyio", "pydantic", "webview",
+    "xhtml2pdf", "reportlab",
 ]:
     d, b, h = collect_all(pkg)
     datas += d

@@ -352,6 +352,72 @@ def broken_links() -> dict:
 
 
 @mcp.tool
+def list_templates() -> dict:
+    """List page templates in the active wiki."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "templates": [t["name"] for t in store.templates_list()]}
+
+
+@mcp.tool
+def create_from_template(template_name: str, title: str) -> dict:
+    """Create a new page from a named template ({{title}} is filled in)."""
+    wiki = _require_wiki()
+    page = store.create_from_template(template_name, title)
+    if not page:
+        return {"wiki": wiki, "error": f"no template '{template_name}'"}
+    return {"wiki": wiki, "slug": page["slug"], "title": page["title"]}
+
+
+@mcp.tool
+def export_pdf(slug: str, dest_path: str) -> dict:
+    """Render a page to a PDF file at `dest_path`."""
+    import os
+
+    from . import pdfgen
+
+    wiki = _require_wiki()
+    page = store.get_page(slug)
+    if not page:
+        return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
+    data = pdfgen.page_pdf(page["title"], page["html"])
+    out = os.path.expanduser(dest_path)
+    with open(out, "wb") as f:
+        f.write(data)
+    return {"wiki": wiki, "slug": slug, "path": out, "bytes": len(data)}
+
+
+@mcp.tool
+def upload_asset(filename: str = "", path: str = "", base64_data: str = "") -> dict:
+    """Upload an image / video / audio / file into the active wiki (stored in its
+    SQLite DB). Provide either a local `path` (read from disk) or `base64_data`.
+    Returns markdown to embed it — images render inline, video/audio get players."""
+    import base64 as _b64
+    import mimetypes
+    import os
+
+    wiki = _require_wiki()
+    if path:
+        try:
+            with open(os.path.expanduser(path), "rb") as f:
+                data = f.read()
+        except OSError as exc:
+            return {"wiki": wiki, "error": str(exc)}
+        filename = filename or os.path.basename(path)
+    elif base64_data:
+        try:
+            data = _b64.b64decode(base64_data)
+        except Exception as exc:
+            return {"wiki": wiki, "error": f"bad base64: {exc}"}
+        filename = filename or "asset"
+    else:
+        return {"wiki": wiki, "error": "provide either path or base64_data"}
+    mime = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    asset_id = store.save_image(filename, mime, data)
+    url = f"/image/{asset_id}/{filename}"
+    return {"wiki": wiki, "id": asset_id, "url": url, "markdown": f"![{filename}]({url})"}
+
+
+@mcp.tool
 def clone_page(slug: str) -> dict:
     """Duplicate a page as a new top-level page ('<Title> (copy)')."""
     wiki = _require_wiki()

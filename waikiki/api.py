@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import ai, collab, config, db, edits, embeddings, rag, render, store, wikis
+from . import ai, collab, config, db, edits, embeddings, pdfgen, rag, render, store, wikis
 
 
 @asynccontextmanager
@@ -275,11 +275,47 @@ async def wikis_import(file: UploadFile):
 
 
 @app.get("/new", response_class=HTMLResponse)
-def new_page(request: Request):
+def new_page(request: Request, template: str = ""):
+    markdown = ""
+    if template:
+        tpl = (store.template_get(int(template)) if template.isdigit()
+               else store.template_by_name(template))
+        if tpl:
+            markdown = tpl["markdown"]
     return templates.TemplateResponse(request,
         "edit.html",
-        _ctx(request, page={"slug": "", "title": "", "markdown": ""}, is_new=True),
+        _ctx(request, page={"slug": "", "title": "", "markdown": markdown}, is_new=True),
     )
+
+
+@app.get("/templates", response_class=HTMLResponse)
+def templates_manage(request: Request):
+    return templates.TemplateResponse(request,
+        "templates.html", _ctx(request, templates_list=store.templates_list()))
+
+
+@app.post("/templates/save")
+def templates_save(name: str = Form(...), markdown: str = Form(""),
+                   tid: str = Form("")):
+    if name.strip():
+        store.template_save(name.strip(), markdown, int(tid) if tid else None)
+    return RedirectResponse("/templates", status_code=303)
+
+
+@app.post("/templates/{tid}/delete")
+def templates_delete(tid: int):
+    store.template_delete(tid)
+    return RedirectResponse("/templates", status_code=303)
+
+
+@app.get("/wiki/{slug}/pdf")
+def page_pdf_view(slug: str):
+    page = store.get_page(slug)
+    if not page:
+        raise HTTPException(404, "Page not found")
+    pdf = pdfgen.page_pdf(page["title"], page["html"])
+    return Response(content=pdf, media_type="application/pdf", headers={
+        "Content-Disposition": f'inline; filename="{slug}.pdf"'})
 
 
 @app.get("/wiki/{slug}", response_class=HTMLResponse)
@@ -431,10 +467,15 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
 @app.post("/settings")
 def settings_save(theme: str = Form(...),
                   retention_versions: str = Form("50"),
-                  retention_trash_days: str = Form("30")):
+                  retention_trash_days: str = Form("30"),
+                  allow_html: str = Form("")):
     db.set_setting("theme", theme)
     db.set_setting("retention_versions", str(max(0, int(retention_versions or 0))))
     db.set_setting("retention_trash_days", str(max(0, int(retention_trash_days or 0))))
+    new_html = "1" if allow_html else "0"
+    if new_html != db.get_setting("allow_html", "0"):
+        db.set_setting("allow_html", new_html)
+        store.rerender_all()  # re-render every page under the new HTML policy
     return RedirectResponse("/settings?msg=Saved", status_code=303)
 
 
@@ -459,7 +500,10 @@ def settings_activate_model(provider: str = Form(...), model: str = Form(...)):
 
 
 @app.get("/image/{image_id}")
-def serve_image(image_id: int):
+@app.get("/image/{image_id}/{filename}")
+def serve_image(image_id: int, filename: str = ""):
+    # `filename` is only for the URL to carry an extension (media detection); the
+    # blob is looked up by id.
     img = store.get_image(image_id)
     if not img:
         raise HTTPException(404, "Image not found")
@@ -517,11 +561,10 @@ def api_search(q: str, k: int = config.RAG_TOP_K):
 @app.post("/api/images")
 async def api_upload_image(file: UploadFile):
     data = await file.read()
-    image_id = store.save_image(file.filename or "image",
-                                file.content_type or "application/octet-stream", data)
-    url = f"/image/{image_id}"
-    return {"id": image_id, "url": url,
-            "markdown": f"![{file.filename or 'image'}]({url})"}
+    name = file.filename or "image"
+    image_id = store.save_image(name, file.content_type or "application/octet-stream", data)
+    url = f"/image/{image_id}/{name}"   # filename gives the URL an extension
+    return {"id": image_id, "url": url, "markdown": f"![{name}]({url})"}
 
 
 class AIRequest(BaseModel):

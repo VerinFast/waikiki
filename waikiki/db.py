@@ -182,6 +182,12 @@ CREATE TABLE IF NOT EXISTS page_versions (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS templates (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    name     TEXT UNIQUE NOT NULL,
+    markdown TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS images (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     filename   TEXT NOT NULL,
@@ -246,6 +252,11 @@ def _ensure_schema(conn) -> None:
     for key, value in config.DEFAULT_SETTINGS.items():
         conn.execute(
             "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value)
+        )
+    for name, markdown in config.DEFAULT_TEMPLATES:
+        conn.execute(
+            "INSERT OR IGNORE INTO templates(name, markdown) VALUES (?, ?)",
+            (name, markdown),
         )
     conn.commit()
 

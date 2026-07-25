@@ -14,16 +14,19 @@ sprints. Shipped items move to CHANGELOG via git history.
 Already done in earlier work: per-page history + diffs + revert; within-page
 find/replace (`edit_page`); broken-link counts in wiki stats.
 
-## Sprint B — Authoring & media
-- [ ] Arbitrary HTML snippets (per-wiki toggle)
-- [ ] Templates (new pages start from content)
-- [ ] Image / video / audio embedding + MCP asset upload (path or base64)
-- [ ] Print to PDF (single page; UI + MCP)
-- [ ] Zip save bundle (db + media + extras) — replaces the single-.wiki export
-- [ ] External links — `[text](https://…)` styling + open-in-new-tab (bare-URL
-      autolinking already works via linkify)
-- [ ] Links to local files (`file://` / asset references) — pairs with media
-- [ ] Table cell editing — richer in-editor table UI (edit a single cell)
+## Sprint B — Authoring & media  ✅ shipped (v0.0.5)
+- [x] Arbitrary HTML snippets (per-wiki toggle in Settings)
+- [x] Templates (built-ins + editable; New-from-template; MCP `create_from_template`)
+- [x] Image / video / audio embedding (mp4/mp3/… render as players) + MCP
+      `upload_asset` (path or base64)
+- [x] Print to PDF (page → PDF via xhtml2pdf: `/wiki/{slug}/pdf`, Print button,
+      MCP `export_pdf`)
+- [x] Zip save bundle (`.wiki` is now a zip of db + media/ + manifest; import
+      auto-detects zip vs raw db)
+- [x] External links — open-in-new-tab + ↗ marker
+- [x] Links to local files (`file://` allowed; `javascript:` blocked)
+- [ ] Table cell editing — deferred (a WYSIWYG table widget; doesn't fit the
+      markdown editor well — revisit)
 
 ## Sprint C — Structure & reuse
 - [ ] Structured data / property tables (typed fields → queryable grid/heatmap views)

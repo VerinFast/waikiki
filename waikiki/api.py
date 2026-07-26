@@ -18,8 +18,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import (ai, chat, collab, config, db, edits, embeddings, help_content,
-               imagegen, pdfgen, rag, render, store, wikis)
+from . import (ai, chat, collab, config, db, debuglog, edits, embeddings,
+               help_content, imagegen, pdfgen, rag, render, store, wikis)
 
 
 @asynccontextmanager
@@ -240,6 +240,19 @@ def help_home():
 @app.get("/help/{slug}")
 def help_slug(slug: str):
     return _help_cookie(RedirectResponse(f"/wiki/{slug}", status_code=303))
+
+
+@app.get("/debug", response_class=HTMLResponse)
+def debug_view(request: Request):
+    """Show recent local-CLI invocations (claude/agy/gemini) with full output."""
+    return templates.TemplateResponse(request, "debug.html",
+        _ctx(request, entries=debuglog.tail(100)))
+
+
+@app.post("/debug/clear")
+def debug_clear():
+    debuglog.clear()
+    return RedirectResponse("/debug", status_code=303)
 
 
 @app.get("/connect", response_class=HTMLResponse)
@@ -669,7 +682,8 @@ def settings_save(theme: str = Form(...),
                   chat_provider: str = Form("claude"),
                   chat_model: str = Form(""),
                   image_cli: str = Form("agy"),
-                  image_model: str = Form("")):
+                  image_model: str = Form(""),
+                  image_style_prompt: str = Form("")):
     db.set_setting("theme", theme)
     db.set_setting("retention_versions", str(max(0, int(retention_versions or 0))))
     db.set_setting("retention_trash_days", str(max(0, int(retention_trash_days or 0))))
@@ -683,6 +697,7 @@ def settings_save(theme: str = Form(...),
     db.set_setting("chat_model", chat_model.strip())
     db.set_setting("image_cli", image_cli.strip() or "agy")
     db.set_setting("image_model", image_model.strip())
+    db.set_setting("image_style_prompt", image_style_prompt.strip())
     new_html = "1" if allow_html else "0"
     if new_html != db.get_setting("allow_html", "0"):
         db.set_setting("allow_html", new_html)

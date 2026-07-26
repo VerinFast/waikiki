@@ -74,6 +74,9 @@ DEFAULT_SETTINGS = {
     # renders the PNG into the article's own folder. Empty model = CLI default.
     "image_cli": "agy",
     "image_model": "",
+    # A per-wiki house style applied to every generated image (e.g. "clockwork
+    # punk pixel art RPG in the style of Dragon Warrior 7").
+    "image_style_prompt": "",
 }
 
 # Built-in page templates seeded into each wiki (editable/removable in the UI).

@@ -19,7 +19,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from . import config, db, render, shellenv, store
+from . import clirun, config, db, render, shellenv, store
 
 
 def article_image_dir(wiki: str, slug: str) -> Path:
@@ -36,16 +36,19 @@ def _next_filename(folder: Path, description: str) -> str:
 
 
 def write_image_prompt(title: str, article_md: str, description: str,
-                       model: str = "") -> str:
+                       style: str = "", model: str = "") -> str:
     """Ask Claude to craft a vivid image prompt. Falls back to the raw
     description if the claude CLI isn't available or errors."""
     claude = shellenv.which("claude")
     if not claude:
         return description
     excerpt = (article_md or "")[:1500]
+    style_line = (f"Overall visual style for this wiki (apply it faithfully): "
+                  f"{style}\n\n" if style.strip() else "")
     ask = (
         "You write a single vivid prompt for an AI image generator. Output ONLY "
         "the prompt text — no preamble, no quotes, no markdown.\n\n"
+        f"{style_line}"
         f"Wiki article: {title}\n\n{excerpt}\n\n"
         f"The user wants an illustration described as: {description}\n\n"
         "Write one detailed image-generation prompt (subject, composition, style, "
@@ -53,8 +56,7 @@ def write_image_prompt(title: str, article_md: str, description: str,
     )
     argv = [claude, "-p", ask] + (["--model", model] if model else [])
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=120,
-                              env=shellenv.env())
+        proc = clirun.run("claude:image-prompt", argv, 120)
     except Exception:
         return description
     out = re.sub(r"\x1b\[[0-9;]*m", "", (proc.stdout or "").strip())
@@ -80,11 +82,13 @@ def generate(slug: str, description: str, image_cli: str = "agy",
 
     wiki = db.active_wiki()
     folder = article_image_dir(wiki, slug)
-    img_prompt = write_image_prompt(page["title"], page["markdown"], description)
+    style = db.get_setting("image_style_prompt", "")
+    img_prompt = write_image_prompt(page["title"], page["markdown"], description, style)
 
     save_path = folder / _next_filename(folder, description)
+    style_line = f"Overall visual style: {style}\n\n" if style.strip() else ""
     instruction = (
-        f"{img_prompt}\n\n"
+        f"{img_prompt}\n\n{style_line}"
         f"Render at 1024x1024 px. Use your built-in image generation tool and save "
         f"the result as a PNG to {save_path}. If {folder} already contains images, "
         f"keep the visual style consistent with them."
@@ -97,8 +101,7 @@ def generate(slug: str, description: str, image_cli: str = "agy",
 
     before = set(folder.glob("*.png"))
     try:
-        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
-                              env=shellenv.env())
+        proc = clirun.run(f"{image_cli}:image", argv, timeout)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"Image generation timed out after {timeout}s."}
     except Exception as exc:

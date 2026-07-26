@@ -92,6 +92,10 @@
       <label>Model <span class="muted">(blank = CLI default)</span>
         <input type="text" name="image_model" value="{{ settings.image_model }}">
       </label>
+      <label>House style for this wiki <span class="muted">(applied to every image)</span>
+        <textarea name="image_style_prompt" rows="2"
+                  placeholder="e.g. clockwork punk pixel art RPG in the style of Dragon Warrior 7">{{ settings.image_style_prompt }}</textarea>
+      </label>
       <p class="muted note"><code>claude</code> writes the prompt, then this CLI
         (e.g. <code>agy</code> or <code>gemini</code>) renders a PNG into the
         article's own folder — images for one article share a folder so the CLI

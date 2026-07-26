@@ -1,4 +1,4 @@
-from waikiki import imagegen, shellenv, store
+from waikiki import clirun, db, imagegen, shellenv, store
 
 
 def test_article_image_dir_created(wiki):
@@ -29,3 +29,30 @@ def test_generate_missing_cli(wiki, monkeypatch):
     store.create_page("Reef", "# Reef")
     out = imagegen.generate("reef", "a wave", image_cli="agy")
     assert out["ok"] is False and "agy" in out["error"]
+
+
+def test_house_style_reaches_the_render_call(wiki, monkeypatch):
+    """The per-wiki house style must be woven into the image CLI instruction."""
+    store.create_page("Reef", "# Reef\nbody")
+    db.set_setting("image_style_prompt", "clockwork punk pixel art")
+    monkeypatch.setattr(shellenv, "which", lambda name: "/usr/bin/" + name)
+
+    calls = {}
+
+    def fake_run(label, argv, timeout):
+        calls[label] = argv
+        if label.endswith(":image"):        # simulate the CLI writing a PNG
+            folder = imagegen.article_image_dir("main", "reef")
+            (folder / "styled-1.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        class P:
+            stdout = ""
+            stderr = ""
+            returncode = 0
+        return P()
+
+    monkeypatch.setattr(clirun, "run", fake_run)
+    out = imagegen.generate("reef", "a gear golem", image_cli="agy")
+    assert out["ok"] is True
+    render_argv = " ".join(map(str, calls["agy:image"]))
+    assert "clockwork punk pixel art" in render_argv

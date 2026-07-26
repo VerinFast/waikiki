@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 import subprocess
 
-from . import config, rag, shellenv, store
+from . import clirun, config, rag, shellenv, store
 
 DEFAULT_CHAT_SYSTEM = (
     "You are a helpful assistant answering questions about a single wiki article. "
@@ -103,9 +103,8 @@ def answer(slug: str, question: str, provider: str = "claude",
         page["title"], page["markdown"], _excerpts(question, slug),
         history or [], question, chat_system_prompt())
     try:
-        proc = subprocess.run(
-            _cli_args(provider, cli, model, prompt),
-            capture_output=True, text=True, timeout=timeout, env=shellenv.env())
+        proc = clirun.run(f"{binary}:chat", _cli_args(provider, cli, model, prompt),
+                          timeout)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"The {binary} CLI timed out after {timeout}s."}
     except Exception as exc:

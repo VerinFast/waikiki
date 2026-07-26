@@ -23,7 +23,7 @@ import httpx
 from fastmcp import FastMCP
 from mcp.types import Icon
 
-from . import config, db, edits, rag, render, store, wikis
+from . import config, db, edits, imagegen, rag, render, store, wikis
 
 WEB = config.WEB_URL
 _ACTIVE_FILE = config.DATA_DIR / "mcp_active_wiki"
@@ -558,6 +558,24 @@ def search_subpages(parent_slug: str, query: str, k: int = 6) -> dict:
 def version() -> dict:
     """Return the running Waikiki release version. No wiki selection required."""
     return {"waikiki_version": config.VERSION}
+
+
+@mcp.tool
+def generate_image(slug: str, description: str) -> dict:
+    """Generate an illustration for a page and return markdown to embed it.
+
+    Two steps run locally: `claude` turns the article + your `description` into a
+    vivid image prompt (applying the wiki's house style from Settings), then the
+    configured image CLI (agy/gemini) renders a 1024x1024 PNG into the article's
+    own folder — shared per article so repeated images stay visually consistent.
+    The PNG is stored as a normal wiki image; returns {url, markdown, prompt}.
+    Place the markdown yourself with edit_page/append_to_page. Requires the image
+    CLI to be installed locally (see the Help → CLI debug view if it fails)."""
+    wiki = _require_wiki()
+    cli = db.get_setting("image_cli", "agy")
+    model = db.get_setting("image_model", "")
+    result = imagegen.generate(slug, description, cli, model)
+    return {"wiki": wiki, **result}
 
 
 def main() -> None:

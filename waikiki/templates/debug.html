@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}CLI debug — Waikiki{% endblock %}
+{% block content %}
+  <div class="article-head">
+    <h1>CLI debug</h1>
+    <form method="post" action="/debug/clear"
+          onsubmit="return confirm('Clear the CLI debug log?')">
+      <button class="btn danger" type="submit">Clear log</button>
+    </form>
+  </div>
+  <p class="muted">Every local-CLI call Waikiki makes — <code>claude</code> (chat +
+    image prompts), <code>agy</code>/<code>gemini</code> (image render, chat) —
+    with its exit code, timing, and full output. Newest first. Captures both the
+    app and the MCP server.</p>
+
+  {% if not entries %}
+    <p class="muted">No CLI calls logged yet. Try the ✨ image button or the Chat
+      panel, then reload this page.</p>
+  {% endif %}
+
+  {% for e in entries %}
+    <details class="history {{ 'err' if e.returncode not in (0, None) else '' }}">
+      <summary>
+        <span class="badge {{ 'ai' if e.returncode == 0 else 'human' }}">{{ e.label }}</span>
+        <span class="muted">{{ e.ts }}</span>
+        · wiki: {{ e.wiki or '—' }}
+        · rc={{ e.returncode if e.returncode is not none else 'timeout' }}
+        · {{ e.duration }}s
+      </summary>
+      <h4>Command</h4>
+      <pre class="diff">{{ e.argv | join(' ') }}</pre>
+      {% if e.stdout %}<h4>stdout</h4><pre class="diff">{{ e.stdout }}</pre>{% endif %}
+      {% if e.stderr %}<h4>stderr</h4><pre class="diff">{{ e.stderr }}</pre>{% endif %}
+    </details>
+  {% endfor %}
+{% endblock %}

@@ -480,8 +480,8 @@ def _parent_of(page: dict):
     return None
 
 
-@app.get("/wiki/{slug}/talk", response_class=HTMLResponse)
-def talk_view(request: Request, slug: str):
+@app.get("/wiki/{slug}/details", response_class=HTMLResponse)
+def details_view(request: Request, slug: str):
     """The article's discussion/metadata page — settings, links, history,
     proposed edits, comments, and chat. Kept out of the article view."""
     page = store.get_page(slug)
@@ -496,7 +496,7 @@ def talk_view(request: Request, slug: str):
             fromfile="current", tofile="proposed", lineterm=""))
         suggestions.append(s)
     return templates.TemplateResponse(request,
-        "talk.html", _ctx(request, page=page,
+        "details.html", _ctx(request, page=page,
                           trashed=bool(page.get("deleted_at")),
                           versions=store.page_versions(slug),
                           backlinks=store.backlinks(slug), parent=_parent_of(page),
@@ -509,25 +509,25 @@ def talk_view(request: Request, slug: str):
 @app.post("/wiki/{slug}/comment")
 def add_comment_view(slug: str, body: str = Form(...)):
     store.comment_add(slug, body, author="human")
-    return RedirectResponse(f"/wiki/{slug}/talk#comments", status_code=303)
+    return RedirectResponse(f"/wiki/{slug}/details#comments", status_code=303)
 
 
 @app.post("/wiki/{slug}/comment/{cid}/resolve")
 def resolve_comment_view(slug: str, cid: int):
     store.comment_resolve(cid)
-    return RedirectResponse(f"/wiki/{slug}/talk#comments", status_code=303)
+    return RedirectResponse(f"/wiki/{slug}/details#comments", status_code=303)
 
 
 @app.post("/wiki/{slug}/suggestion/{sid}/apply")
 def apply_suggestion_view(slug: str, sid: int):
     store.suggestion_apply(sid)
-    return RedirectResponse(f"/wiki/{slug}/talk", status_code=303)
+    return RedirectResponse(f"/wiki/{slug}/details", status_code=303)
 
 
 @app.post("/wiki/{slug}/suggestion/{sid}/reject")
 def reject_suggestion_view(slug: str, sid: int):
     store.suggestion_reject(sid)
-    return RedirectResponse(f"/wiki/{slug}/talk", status_code=303)
+    return RedirectResponse(f"/wiki/{slug}/details", status_code=303)
 
 
 @app.get("/wikis/{slug}/export-md")
@@ -606,7 +606,7 @@ def clone_page_view(slug: str):
 @app.post("/wiki/{slug}/parent")
 def set_parent_view(slug: str, parent: str = Form("")):
     store.set_parent(slug, parent or None)
-    return RedirectResponse(f"/wiki/{slug}/talk", status_code=303)
+    return RedirectResponse(f"/wiki/{slug}/details", status_code=303)
 
 
 @app.post("/wiki/{slug}/restore")

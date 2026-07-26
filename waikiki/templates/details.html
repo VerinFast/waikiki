@@ -1,16 +1,16 @@
 {% extends "base.html" %}
-{% block title %}Talk: {{ page.title }} — Waikiki{% endblock %}
+{% block title %}Details: {{ page.title }} — Waikiki{% endblock %}
 {% block topbar_actions %}{% if not trashed %}{% include "_page_options.html" %}{% endif %}{% endblock %}
 {% block content %}
   <script>window.WAIKIKI_PAGE = {slug: {{ page.slug | tojson }}, wiki: {{ current_wiki | tojson }}};</script>
   <article class="article">
     <div class="article-head">
-      <h1>{{ page.title }} <span class="muted">— Discussion</span></h1>
+      <h1>{{ page.title }} <span class="muted">— Details</span></h1>
     </div>
 
     <nav class="pagetabs">
       <a class="tab" href="/wiki/{{ page.slug }}">Article</a>
-      <a class="tab on" href="/wiki/{{ page.slug }}/talk">Talk</a>
+      <a class="tab on" href="/wiki/{{ page.slug }}/details">Details</a>
     </nav>
 
     <p class="muted">Page settings, links, history, and discussion for

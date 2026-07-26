@@ -6,17 +6,17 @@
   {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
 
   <form method="post" action="/settings" class="settings">
-    <fieldset>
-      <legend>Theme</legend>
+    <details class="settings-sec" open>
+      <summary>Theme</summary>
       <select name="theme">
         {% for t in themes %}
           <option value="{{ t }}" {{ 'selected' if settings.theme == t }}>{{ t }}</option>
         {% endfor %}
       </select>
-    </fieldset>
+    </details>
 
-    <fieldset>
-      <legend>Content <span class="muted">(this wiki)</span></legend>
+    <details class="settings-sec" open>
+      <summary>Content <span class="muted">(this wiki)</span></summary>
       <label class="rag-toggle">
         <input type="checkbox" name="allow_html" value="1"
                {{ 'checked' if settings.allow_html == '1' }}>
@@ -25,10 +25,10 @@
       <p class="muted note">Lets you paste custom HTML/CSS snippets and embed
         <code>&lt;video&gt;</code>/<code>&lt;iframe&gt;</code>. Enable only for
         trusted local content.</p>
-    </fieldset>
+    </details>
 
-    <fieldset>
-      <legend>Retention <span class="muted">(this wiki)</span></legend>
+    <details class="settings-sec" open>
+      <summary>Retention <span class="muted">(this wiki)</span></summary>
       <label>Keep the last N versions per page
         <input type="number" name="retention_versions" min="0"
                value="{{ settings.retention_versions }}">
@@ -39,10 +39,10 @@
                value="{{ settings.retention_trash_days }}">
         <span class="muted">0 = never auto-empty</span>
       </label>
-    </fieldset>
+    </details>
 
-    <fieldset>
-      <legend>AI generation <span class="muted">(the editor's Generate button)</span></legend>
+    <details class="settings-sec" open>
+      <summary>AI generation <span class="muted">(the editor's Generate button)</span></summary>
       <label>Provider
         <select name="gen_provider">
           <option value="anthropic" {{ 'selected' if settings.gen_provider != 'ollama' }}>Anthropic (cloud)</option>
@@ -64,10 +64,10 @@
       <p class="muted note">Local generation needs <a href="https://ollama.com">Ollama</a>
         running (<code>ollama serve</code>) with the model pulled
         (<code>ollama pull phi3</code>).</p>
-    </fieldset>
+    </details>
 
-    <fieldset>
-      <legend>Chat <span class="muted">(chat with an article)</span></legend>
+    <details class="settings-sec" open>
+      <summary>Chat <span class="muted">(chat with an article)</span></summary>
       <label>CLI
         <select name="chat_provider">
           <option value="claude" {{ 'selected' if settings.chat_provider != 'gemini' }}>Claude Code</option>
@@ -81,10 +81,10 @@
       <p class="muted note">Chat shells out to a local CLI. Install the
         <code>claude</code> or <code>gemini</code> command and make sure it's
         signed in.</p>
-    </fieldset>
+    </details>
 
-    <fieldset>
-      <legend>Images <span class="muted">(generate an image)</span></legend>
+    <details class="settings-sec" open>
+      <summary>Images <span class="muted">(generate an image)</span></summary>
       <label>Image CLI
         <input type="text" name="image_cli" value="{{ settings.image_cli }}"
                placeholder="agy">
@@ -92,22 +92,21 @@
       <label>Model <span class="muted">(blank = CLI default)</span>
         <input type="text" name="image_model" value="{{ settings.image_model }}">
       </label>
-      <label>House style for this wiki <span class="muted">(applied to every image)</span>
-        <textarea name="image_style_prompt" rows="2"
-                  placeholder="e.g. clockwork punk pixel art RPG in the style of Dragon Warrior 7">{{ settings.image_style_prompt }}</textarea>
-      </label>
+      <label>House style for this wiki <span class="muted">(applied to every image)</span></label>
+      <textarea name="image_style_prompt" rows="3"
+                placeholder="e.g. clockwork punk pixel art RPG in the style of Dragon Warrior 7">{{ settings.image_style_prompt }}</textarea>
       <p class="muted note"><code>claude</code> writes the prompt, then this CLI
         (e.g. <code>agy</code> or <code>gemini</code>) renders a PNG into the
         article's own folder — images for one article share a folder so the CLI
         can keep them visually consistent. Use the ✨ button in the editor.</p>
-    </fieldset>
+    </details>
 
     <button class="btn primary" type="submit">Save settings</button>
   </form>
 
   <section class="settings">
-    <fieldset>
-      <legend>Embedding model (RAG)</legend>
+    <details class="settings-sec" open>
+      <summary>Embedding model (RAG)</summary>
       <p class="muted">Active: <strong>{{ active_provider }}</strong> · <code>{{ active_model }}</code></p>
 
       {% if library %}
@@ -150,12 +149,12 @@
       <datalist id="fe-catalog">
         {% for s in catalog %}<option value="{{ s }}"></option>{% endfor %}
       </datalist>
-    </fieldset>
+    </details>
   </section>
 
   <section class="settings">
-    <fieldset>
-      <legend>Style reference images <span class="muted">(this wiki)</span></legend>
+    <details class="settings-sec" open>
+      <summary>Style reference images <span class="muted">(this wiki)</span></summary>
       <p class="muted note">Images that define this wiki's art style. During image
         generation they're handed to the image CLI with <code>--add-dir</code> so it
         can study and match them. Folder: <code>{{ style_refs_dir }}</code></p>
@@ -177,6 +176,6 @@
         <input type="file" name="files" accept="image/*" multiple required>
         <button class="btn primary" type="submit">Upload reference images</button>
       </form>
-    </fieldset>
+    </details>
   </section>
 {% endblock %}

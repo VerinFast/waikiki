@@ -24,7 +24,7 @@
     {% if not trashed %}
       <nav class="pagetabs">
         <a class="tab on" href="/wiki/{{ page.slug }}">Article</a>
-        <a class="tab" href="/wiki/{{ page.slug }}/talk">Talk{% if comment_count %} <span class="tabcount">{{ comment_count }}</span>{% endif %}</a>
+        <a class="tab" href="/wiki/{{ page.slug }}/details">Details{% if comment_count %} <span class="tabcount">{{ comment_count }}</span>{% endif %}</a>
       </nav>
     {% endif %}
 

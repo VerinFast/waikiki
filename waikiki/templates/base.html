@@ -224,6 +224,27 @@
       history.replaceState(null, '', '#' + id);
     });
 
+    // Image lightbox: article images render small (≤400px); click for full size.
+    document.addEventListener('click', function (e) {
+      var img = e.target.closest('.rendered img');
+      if (!img || (img.closest && img.closest('a'))) return;   // leave linked images
+      e.preventDefault();
+      var box = document.createElement('div');
+      box.className = 'lightbox';
+      var full = document.createElement('img');
+      full.src = img.currentSrc || img.src;
+      full.alt = img.alt || '';
+      box.appendChild(full);
+      box.addEventListener('click', function () { box.remove(); });
+      document.body.appendChild(box);
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        var lb = document.querySelector('.lightbox');
+        if (lb) lb.remove();
+      }
+    });
+
     // "Open in browser/viewer" buttons (e.g. PDF) — use the system app in desktop.
     document.addEventListener('click', function (e) {
       var b = e.target.closest('[data-open-url]');

@@ -19,7 +19,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from . import (ai, chat, collab, config, db, edits, embeddings, help_content,
-               pdfgen, rag, render, store, wikis)
+               imagegen, pdfgen, rag, render, store, wikis)
 
 
 @asynccontextmanager
@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI):
             retention_task.cancel()
 
 
-app = FastAPI(title="Waikiki", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Waikiki", version=config.VERSION, lifespan=lifespan)
 
 
 def _resolve_wiki(scope) -> str:
@@ -409,6 +409,22 @@ async def chat_endpoint(slug: str, body: ChatIn):
         lambda: chat.answer(slug, body.question, provider, model, body.history or []))
 
 
+class ImageGenIn(BaseModel):
+    description: str
+    model: str | None = None
+
+
+@app.post("/wiki/{slug}/generate-image")
+async def generate_image_endpoint(slug: str, body: ImageGenIn):
+    """Generate an image for a page: Claude writes the prompt, the image CLI
+    (agy/gemini) renders it into the article's folder. Runs off-thread."""
+    import anyio
+    cli = db.get_setting("image_cli", "agy")
+    model = body.model if body.model is not None else db.get_setting("image_model", "")
+    return await anyio.to_thread.run_sync(
+        lambda: imagegen.generate(slug, body.description, cli, model))
+
+
 @app.get("/wiki/{slug}/pdf")
 def page_pdf_view(slug: str):
     page = store.get_page(slug)
@@ -651,7 +667,9 @@ def settings_save(theme: str = Form(...),
                   gen_model_local: str = Form("phi3"),
                   ollama_url: str = Form("http://localhost:11434"),
                   chat_provider: str = Form("claude"),
-                  chat_model: str = Form("")):
+                  chat_model: str = Form(""),
+                  image_cli: str = Form("agy"),
+                  image_model: str = Form("")):
     db.set_setting("theme", theme)
     db.set_setting("retention_versions", str(max(0, int(retention_versions or 0))))
     db.set_setting("retention_trash_days", str(max(0, int(retention_trash_days or 0))))
@@ -663,6 +681,8 @@ def settings_save(theme: str = Form(...),
     db.set_setting("chat_provider",
                    chat_provider if chat_provider in ("claude", "gemini") else "claude")
     db.set_setting("chat_model", chat_model.strip())
+    db.set_setting("image_cli", image_cli.strip() or "agy")
+    db.set_setting("image_model", image_model.strip())
     new_html = "1" if allow_html else "0"
     if new_html != db.get_setting("allow_html", "0"):
         db.set_setting("allow_html", new_html)

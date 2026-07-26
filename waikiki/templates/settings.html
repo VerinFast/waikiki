@@ -83,6 +83,21 @@
         signed in.</p>
     </fieldset>
 
+    <fieldset>
+      <legend>Images <span class="muted">(generate an image)</span></legend>
+      <label>Image CLI
+        <input type="text" name="image_cli" value="{{ settings.image_cli }}"
+               placeholder="agy">
+      </label>
+      <label>Model <span class="muted">(blank = CLI default)</span>
+        <input type="text" name="image_model" value="{{ settings.image_model }}">
+      </label>
+      <p class="muted note"><code>claude</code> writes the prompt, then this CLI
+        (e.g. <code>agy</code> or <code>gemini</code>) renders a PNG into the
+        article's own folder — images for one article share a folder so the CLI
+        can keep them visually consistent. Use the ✨ button in the editor.</p>
+    </fieldset>
+
     <button class="btn primary" type="submit">Save settings</button>
   </form>
 

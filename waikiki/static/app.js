@@ -14,6 +14,8 @@ function init() {
               "unordered-list", "ordered-list", "|", "link", "image",
               {name: "attach", className: "fa fa-paperclip",
                title: "Attach image / video / audio", action: attachMedia},
+              {name: "genimage", className: "fa fa-magic",
+               title: "Generate an image with AI", action: generateImage},
               "|", "preview", "side-by-side", "fullscreen", "|", "guide"],
     uploadImage: true,
     imageUploadFunction: uploadImage,
@@ -30,6 +32,35 @@ function init() {
       if (f) uploadImage(f, (url) => insertAtCursor(`![${f.name}](${url})\n`));
     };
     inp.click();
+  }
+
+  // --- Generate an image with AI (Claude writes the prompt → agy/gemini renders) ---
+  function generateImage() {
+    if (!CFG.slug) {
+      alert("Save the page first — generated images are stored per article.");
+      return;
+    }
+    const desc = window.prompt("Describe the image to generate:");
+    if (!desc || !desc.trim()) return;
+    const doc = cm.getDoc();
+    const placeholder = `![⏳ generating image…](gen-${Date.now()})`;
+    doc.replaceRange("\n" + placeholder + "\n", doc.getCursor());
+    const replacePlaceholder = (text) => {
+      const idx = easymde.value().indexOf(placeholder);
+      if (idx < 0) return;                       // user removed it — leave content alone
+      doc.replaceRange(text, doc.posFromIndex(idx),
+                       doc.posFromIndex(idx + placeholder.length));
+    };
+    fetch(`/wiki/${CFG.slug}/generate-image`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: desc.trim() }),
+    }).then((r) => r.json()).then((res) => {
+      replacePlaceholder(res.ok ? res.markdown : "");
+      if (!res.ok) alert("Image generation failed: " + (res.error || "unknown"));
+    }).catch((err) => {
+      replacePlaceholder("");
+      alert("Image generation failed: " + err);
+    });
   }
 
   // Keep the hidden textarea in sync on submit (Save posts current content).

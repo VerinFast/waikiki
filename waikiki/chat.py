@@ -11,13 +11,10 @@ runs under the caller's active wiki.
 """
 from __future__ import annotations
 
-import os
 import re
-import shutil
 import subprocess
-from pathlib import Path
 
-from . import config, rag, store
+from . import config, rag, shellenv, store
 
 DEFAULT_CHAT_SYSTEM = (
     "You are a helpful assistant answering questions about a single wiki article. "
@@ -27,29 +24,11 @@ DEFAULT_CHAT_SYSTEM = (
 )
 CHAT_PROMPT_SLUG = "chat-system-prompt"
 
-# Where CLIs commonly live when the login shell PATH isn't inherited (packaged
-# .app launched from Finder gets a minimal PATH).
-_EXTRA_BINS = [
-    Path.home() / ".claude" / "local",
-    Path("/opt/homebrew/bin"),
-    Path("/usr/local/bin"),
-    Path.home() / ".npm-global" / "bin",
-    Path.home() / ".local" / "bin",
-    Path.home() / "bin",
-    Path.home() / ".volta" / "bin",
-]
-
 
 def find_cli(name: str) -> str | None:
-    """Locate a CLI binary by name — PATH first, then common install dirs."""
-    found = shutil.which(name)
-    if found:
-        return found
-    for d in _EXTRA_BINS:
-        cand = d / name
-        if cand.exists() and os.access(cand, os.X_OK):
-            return str(cand)
-    return None
+    """Locate a CLI binary using the login-shell PATH (Finder-launched apps get a
+    minimal PATH otherwise)."""
+    return shellenv.which(name)
 
 
 def chat_system_prompt() -> str:
@@ -98,14 +77,6 @@ def _excerpts(question: str, exclude_slug: str) -> str:
     return "\n\n---\n\n".join(blocks[:5])
 
 
-def _run_env() -> dict:
-    env = dict(os.environ)
-    extra = os.pathsep.join(str(d) for d in _EXTRA_BINS if d.exists())
-    if extra:
-        env["PATH"] = extra + os.pathsep + env.get("PATH", "")
-    return env
-
-
 def answer(slug: str, question: str, provider: str = "claude",
            model: str = "", history: list[dict] | None = None,
            timeout: int = 180) -> dict:
@@ -134,7 +105,7 @@ def answer(slug: str, question: str, provider: str = "claude",
     try:
         proc = subprocess.run(
             _cli_args(provider, cli, model, prompt),
-            capture_output=True, text=True, timeout=timeout, env=_run_env())
+            capture_output=True, text=True, timeout=timeout, env=shellenv.env())
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"The {binary} CLI timed out after {timeout}s."}
     except Exception as exc:

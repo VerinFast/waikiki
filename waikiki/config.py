@@ -70,6 +70,10 @@ DEFAULT_SETTINGS = {
     # model means "use the CLI's own default".
     "chat_provider": "claude",
     "chat_model": "",
+    # Image generation: `claude` writes the prompt, then this CLI (agy/gemini)
+    # renders the PNG into the article's own folder. Empty model = CLI default.
+    "image_cli": "agy",
+    "image_model": "",
 }
 
 # Built-in page templates seeded into each wiki (editable/removable in the UI).

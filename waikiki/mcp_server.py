@@ -560,6 +560,50 @@ def version() -> dict:
     return {"waikiki_version": config.VERSION}
 
 
+# Keys the MCP set_setting tool may write. Deliberately excludes settings with
+# heavy side effects (allow_html → re-render all; embedder_* / model_library →
+# re-index all) — change those in the browser.
+_SETTABLE = {
+    "image_style_prompt", "image_cli", "image_model",
+    "gen_provider", "gen_model", "gen_model_local", "ollama_url",
+    "chat_provider", "chat_model", "theme",
+    "retention_versions", "retention_trash_days",
+}
+
+
+@mcp.tool
+def get_settings() -> dict:
+    """Return all settings for the active wiki (theme, AI providers/models, image
+    house style + CLI, retention, …). Settings are per-wiki."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "settings": db.all_settings()}
+
+
+@mcp.tool
+def set_setting(key: str, value: str) -> dict:
+    """Set one setting for the active wiki. Allowed keys: image_style_prompt,
+    image_cli, image_model, gen_provider, gen_model, gen_model_local, ollama_url,
+    chat_provider, chat_model, theme, retention_versions, retention_trash_days.
+    Other keys (embedder, allow_html) are read-only here to avoid heavy re-index/
+    re-render — change those in the browser."""
+    wiki = _require_wiki()
+    if key not in _SETTABLE:
+        return {"wiki": wiki, "error": f"'{key}' is not settable via MCP",
+                "allowed": sorted(_SETTABLE)}
+    value = "" if value is None else str(value)
+    if key == "gen_provider" and value not in ("anthropic", "ollama"):
+        return {"wiki": wiki, "error": "gen_provider must be 'anthropic' or 'ollama'"}
+    if key == "chat_provider" and value not in ("claude", "gemini"):
+        return {"wiki": wiki, "error": "chat_provider must be 'claude' or 'gemini'"}
+    if key in ("retention_versions", "retention_trash_days"):
+        try:
+            value = str(max(0, int(value)))
+        except ValueError:
+            return {"wiki": wiki, "error": f"{key} must be a non-negative integer"}
+    db.set_setting(key, value)
+    return {"wiki": wiki, "key": key, "value": value}
+
+
 @mcp.tool
 def generate_image(slug: str, description: str) -> dict:
     """Generate an illustration for a page and return markdown to embed it.

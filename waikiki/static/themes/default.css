@@ -287,4 +287,11 @@ pre.diff .hunk{color:var(--muted);display:block}
 .chatform select{padding:.45rem .5rem;border:1px solid var(--border);border-radius:8px;
   background:var(--bg);color:var(--text)}
 
+/* Style reference image thumbnails (Settings) */
+.refgrid{display:flex;flex-wrap:wrap;gap:.6rem;margin:.6rem 0}
+.ref{margin:0;position:relative;width:96px}
+.ref img{width:96px;height:96px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block}
+.ref form{position:absolute;top:3px;right:3px;margin:0}
+.ref .btn.small{padding:0 .35rem;line-height:1.4;background:var(--surface)}
+
 @media(max-width:720px){.layout{grid-template-columns:1fr}.sidebar{display:none}}

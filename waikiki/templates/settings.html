@@ -152,4 +152,31 @@
       </datalist>
     </fieldset>
   </section>
+
+  <section class="settings">
+    <fieldset>
+      <legend>Style reference images <span class="muted">(this wiki)</span></legend>
+      <p class="muted note">Images that define this wiki's art style. During image
+        generation they're handed to the image CLI with <code>--add-dir</code> so it
+        can study and match them. Folder: <code>{{ style_refs_dir }}</code></p>
+      {% if style_refs %}
+        <div class="refgrid">
+          {% for r in style_refs %}
+            <figure class="ref">
+              <img src="/style-ref/{{ r }}?wiki={{ current_wiki }}" alt="{{ r }}" loading="lazy">
+              <form method="post" action="/settings/style-refs/{{ r }}/delete">
+                <button class="btn small danger" type="submit" title="Remove {{ r }}">✕</button>
+              </form>
+            </figure>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="muted">No reference images yet.</p>
+      {% endif %}
+      <form method="post" action="/settings/style-refs" enctype="multipart/form-data" class="addmodel">
+        <input type="file" name="files" accept="image/*" multiple required>
+        <button class="btn primary" type="submit">Upload reference images</button>
+      </form>
+    </fieldset>
+  </section>
 {% endblock %}

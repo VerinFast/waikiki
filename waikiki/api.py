@@ -10,7 +10,7 @@ import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import (FastAPI, Form, HTTPException, Request, UploadFile,
+from fastapi import (FastAPI, File, Form, HTTPException, Request, UploadFile,
                      WebSocket, WebSocketDisconnect)
 from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
                                StreamingResponse, Response)
@@ -661,13 +661,41 @@ def search_view(request: Request, q: str = ""):
 def settings_view(request: Request, msg: str = "", error: str = ""):
     themes = sorted(p.stem for p in (_STATIC / "themes").glob("*.css"))
     provider, model = embeddings.active()
+    wiki = db.active_wiki()
     return templates.TemplateResponse(request,
         "settings.html",
         _ctx(request, settings=db.all_settings(), themes=themes,
              library=embeddings.get_library(), active_provider=provider,
              active_model=model, catalog=embeddings.fastembed_catalog(),
+             style_refs=imagegen.list_style_refs(wiki),
+             style_refs_dir=str(imagegen.style_reference_dir(wiki)),
              msg=msg, error=error),
     )
+
+
+@app.get("/style-ref/{filename}")
+def serve_style_ref(filename: str):
+    import os
+    path = imagegen.style_reference_dir(db.active_wiki()) / os.path.basename(filename)
+    if not path.exists():
+        raise HTTPException(404, "Not found")
+    return FileResponse(str(path))
+
+
+@app.post("/settings/style-refs")
+async def upload_style_refs(files: list[UploadFile] = File(...)):
+    wiki = db.active_wiki()
+    for f in files:
+        data = await f.read()
+        if data:
+            imagegen.save_style_ref(wiki, f.filename or "image", data)
+    return RedirectResponse("/settings?msg=Reference+images+updated", status_code=303)
+
+
+@app.post("/settings/style-refs/{filename}/delete")
+def delete_style_ref_view(filename: str):
+    imagegen.delete_style_ref(db.active_wiki(), filename)
+    return RedirectResponse("/settings", status_code=303)
 
 
 @app.post("/settings")

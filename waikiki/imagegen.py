@@ -22,11 +22,47 @@ from pathlib import Path
 from . import clirun, config, db, render, shellenv, store
 
 
+_REF_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
 def article_image_dir(wiki: str, slug: str) -> Path:
     """Per-article image folder — one place per article, for --add-dir consistency."""
     d = config.DATA_DIR / "images" / wiki / slug
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def style_reference_dir(wiki: str) -> Path:
+    """Per-wiki folder of reference images that define the wiki's art style. Its
+    contents are handed to the image CLI via --add-dir so it can match them."""
+    d = config.DATA_DIR / "style_refs" / wiki
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _safe_name(name: str) -> str:
+    import os
+    return os.path.basename(name or "").replace("/", "_").strip() or "image"
+
+
+def list_style_refs(wiki: str) -> list[str]:
+    d = style_reference_dir(wiki)
+    return sorted(p.name for p in d.glob("*") if p.suffix.lower() in _REF_EXTS)
+
+
+def save_style_ref(wiki: str, filename: str, data: bytes) -> str:
+    name = _safe_name(filename)
+    (style_reference_dir(wiki) / name).write_bytes(data)
+    return name
+
+
+def delete_style_ref(wiki: str, filename: str) -> bool:
+    d = style_reference_dir(wiki)
+    p = d / _safe_name(filename)
+    if p.exists() and p.parent == d:
+        p.unlink()
+        return True
+    return False
 
 
 def _next_filename(folder: Path, description: str) -> str:
@@ -85,10 +121,18 @@ def generate(slug: str, description: str, image_cli: str = "agy",
     style = db.get_setting("image_style_prompt", "")
     img_prompt = write_image_prompt(page["title"], page["markdown"], description, style)
 
+    ref_dir = style_reference_dir(wiki)
+    refs = list_style_refs(wiki)
+
     save_path = folder / _next_filename(folder, description)
     style_line = f"Overall visual style: {style}\n\n" if style.strip() else ""
+    ref_line = (
+        f"Reference images that define the required art style are in {ref_dir} "
+        f"({len(refs)} image{'s' if len(refs) != 1 else ''}) — study them and match "
+        f"their style, palette, and linework closely.\n\n" if refs else ""
+    )
     instruction = (
-        f"{img_prompt}\n\n{style_line}"
+        f"{img_prompt}\n\n{style_line}{ref_line}"
         f"Render at 1024x1024 px. Use your built-in image generation tool and save "
         f"the result as a PNG to {save_path}. If {folder} already contains images, "
         f"keep the visual style consistent with them."
@@ -96,8 +140,10 @@ def generate(slug: str, description: str, image_cli: str = "agy",
     argv = [cli]
     if model:
         argv += ["-m", model]
-    argv += ["--add-dir", str(folder), "--dangerously-skip-permissions",
-             "--print", instruction]
+    argv += ["--add-dir", str(folder)]
+    if refs:                                # let the CLI see the style references
+        argv += ["--add-dir", str(ref_dir)]
+    argv += ["--dangerously-skip-permissions", "--print", instruction]
 
     before = set(folder.glob("*.png"))
     try:

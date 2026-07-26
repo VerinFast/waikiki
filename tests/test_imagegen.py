@@ -31,6 +31,41 @@ def test_generate_missing_cli(wiki, monkeypatch):
     assert out["ok"] is False and "agy" in out["error"]
 
 
+def test_style_refs_crud(wiki):
+    assert imagegen.list_style_refs("main") == []
+    imagegen.save_style_ref("main", "ref.png", b"\x89PNG\r\n")
+    imagegen.save_style_ref("main", "../evil.png", b"x")     # path-traversal sanitized
+    refs = imagegen.list_style_refs("main")
+    assert "ref.png" in refs and "evil.png" in refs
+    assert imagegen.delete_style_ref("main", "ref.png") is True
+    assert "ref.png" not in imagegen.list_style_refs("main")
+
+
+def test_reference_images_reach_render_add_dir(wiki, monkeypatch):
+    store.create_page("Reef", "# Reef\nbody")
+    imagegen.save_style_ref("main", "style1.png", b"\x89PNG\r\n")
+    monkeypatch.setattr(shellenv, "which", lambda name: "/usr/bin/" + name)
+
+    calls = {}
+
+    def fake_run(label, argv, timeout):
+        calls[label] = argv
+        if label.endswith(":image"):
+            (imagegen.article_image_dir("main", "reef") / "out-1.png").write_bytes(b"\x89PNG")
+
+        class P:
+            stdout = ""
+            stderr = ""
+            returncode = 0
+        return P()
+
+    monkeypatch.setattr(clirun, "run", fake_run)
+    assert imagegen.generate("reef", "a fish", image_cli="agy")["ok"] is True
+    argv = calls["agy:image"]
+    assert argv.count("--add-dir") == 2                       # article + style refs
+    assert str(imagegen.style_reference_dir("main")) in argv
+
+
 def test_house_style_reaches_the_render_call(wiki, monkeypatch):
     """The per-wiki house style must be woven into the image CLI instruction."""
     store.create_page("Reef", "# Reef\nbody")

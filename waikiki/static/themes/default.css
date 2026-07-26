@@ -243,9 +243,26 @@ pre.diff .hunk{color:var(--muted);display:block}
 .histbtn:hover{border-color:var(--accent);color:var(--accent)}
 .brand .ver{font-size:.7rem;font-weight:600;color:var(--muted);vertical-align:super}
 
-/* Page options summary reads as a button, not a link */
-.tools .menu>summary.btn{color:var(--text);display:inline-block}
-.tools .menu .menu-items{min-width:170px}
+/* Consistent top-bar actions: New / Settings / Help / Page options all read as buttons */
+.actions{display:flex;align-items:center;gap:.5rem}
+.menu>summary.btn{color:var(--text);display:inline-block}
+.menu>summary.btn:hover{border-color:var(--accent)}
+.menu .menu-items{min-width:170px}
+/* Forms/buttons inside a dropdown look like the <a> items */
+.menu .menu-items form{margin:0}
+.menu .menu-items button{display:block;width:100%;text-align:left;border:none;background:none;
+  color:var(--text);padding:.4rem .6rem;border-radius:6px;cursor:pointer;font-size:.95rem;font-family:inherit}
+.menu .menu-items button:hover{background:var(--code-bg)}
+.menu .menu-items button.danger{color:var(--danger)}
+
+/* Article / Talk tabs (Wikipedia-style) */
+.pagetabs{display:flex;gap:.25rem;margin:0 0 1.3rem;border-bottom:1px solid var(--border)}
+.pagetabs .tab{padding:.4rem .95rem;color:var(--muted);border:1px solid transparent;
+  border-bottom:none;border-radius:8px 8px 0 0}
+.pagetabs .tab:hover{color:var(--accent);text-decoration:none}
+.pagetabs .tab.on{color:var(--text);background:var(--surface);border-color:var(--border);
+  font-weight:600;margin-bottom:-1px}
+.pagetabs .tabcount{font-size:.8em;color:var(--muted);font-weight:400}
 
 /* Custom right-click context menu (Copy/Paste/Select All) */
 .ctxmenu{position:fixed;z-index:1000;background:var(--surface);border:1px solid var(--border);

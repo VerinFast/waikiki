@@ -1,0 +1,15 @@
+{# Per-page action dropdown shown in the top bar on Article and Talk pages. #}
+<details class="menu">
+  <summary class="btn">Page options</summary>
+  <div class="menu-items page-actions">
+    <a href="/wiki/{{ page.slug }}/edit">Edit</a>
+    <button type="button" onclick="window.print()">Print</button>
+    <form method="post" action="/wiki/{{ page.slug }}/clone">
+      <button type="submit">Clone</button>
+    </form>
+    <form method="post" action="/wiki/{{ page.slug }}/delete"
+          onsubmit="return confirm('Move this page to the Trash?')">
+      <button type="submit" class="danger">Delete</button>
+    </form>
+  </div>
+</details>

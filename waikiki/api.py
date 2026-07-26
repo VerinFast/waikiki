@@ -430,11 +430,34 @@ def view_page(request: Request, slug: str):
                                 "markdown": ""}, is_new=True, missing=slug),
             status_code=404,
         )
-    parent = None
+    parent = _parent_of(page)
+    # The article view is intentionally bare — just the content. Page settings,
+    # backlinks, history, suggestions, comments, and chat live on the Talk page.
+    return templates.TemplateResponse(request,
+        "page.html", _ctx(request, page=page,
+                          trashed=bool(page.get("deleted_at")),
+                          toc=render.extract_toc(page["markdown"]),
+                          children=store.children(slug), parent=parent,
+                          tags=store.tags_of(slug),
+                          comment_count=len(store.comments_list(slug)))
+    )
+
+
+def _parent_of(page: dict):
     if page.get("parent_id"):
         prow = db.get_conn().execute(
             "SELECT slug, title FROM pages WHERE id=?", (page["parent_id"],)).fetchone()
-        parent = dict(prow) if prow else None
+        return dict(prow) if prow else None
+    return None
+
+
+@app.get("/wiki/{slug}/talk", response_class=HTMLResponse)
+def talk_view(request: Request, slug: str):
+    """The article's discussion/metadata page — settings, links, history,
+    proposed edits, comments, and chat. Kept out of the article view."""
+    page = store.get_page(slug)
+    if not page:
+        raise HTTPException(404, "Page not found")
     all_pages = [p for p in store.list_pages() if p["slug"] != slug]
     suggestions = []
     for s in store.suggestions_list(slug):
@@ -444,11 +467,10 @@ def view_page(request: Request, slug: str):
             fromfile="current", tofile="proposed", lineterm=""))
         suggestions.append(s)
     return templates.TemplateResponse(request,
-        "page.html", _ctx(request, page=page, versions=store.page_versions(slug),
+        "talk.html", _ctx(request, page=page,
                           trashed=bool(page.get("deleted_at")),
-                          toc=render.extract_toc(page["markdown"]),
-                          backlinks=store.backlinks(slug),
-                          children=store.children(slug), parent=parent,
+                          versions=store.page_versions(slug),
+                          backlinks=store.backlinks(slug), parent=_parent_of(page),
                           all_pages=all_pages, tags=store.tags_of(slug),
                           comments=store.comments_list(slug),
                           suggestions=suggestions)
@@ -458,25 +480,25 @@ def view_page(request: Request, slug: str):
 @app.post("/wiki/{slug}/comment")
 def add_comment_view(slug: str, body: str = Form(...)):
     store.comment_add(slug, body, author="human")
-    return RedirectResponse(f"/wiki/{slug}#comments", status_code=303)
+    return RedirectResponse(f"/wiki/{slug}/talk#comments", status_code=303)
 
 
 @app.post("/wiki/{slug}/comment/{cid}/resolve")
 def resolve_comment_view(slug: str, cid: int):
     store.comment_resolve(cid)
-    return RedirectResponse(f"/wiki/{slug}#comments", status_code=303)
+    return RedirectResponse(f"/wiki/{slug}/talk#comments", status_code=303)
 
 
 @app.post("/wiki/{slug}/suggestion/{sid}/apply")
 def apply_suggestion_view(slug: str, sid: int):
     store.suggestion_apply(sid)
-    return RedirectResponse(f"/wiki/{slug}", status_code=303)
+    return RedirectResponse(f"/wiki/{slug}/talk", status_code=303)
 
 
 @app.post("/wiki/{slug}/suggestion/{sid}/reject")
 def reject_suggestion_view(slug: str, sid: int):
     store.suggestion_reject(sid)
-    return RedirectResponse(f"/wiki/{slug}", status_code=303)
+    return RedirectResponse(f"/wiki/{slug}/talk", status_code=303)
 
 
 @app.get("/wikis/{slug}/export-md")
@@ -555,7 +577,7 @@ def clone_page_view(slug: str):
 @app.post("/wiki/{slug}/parent")
 def set_parent_view(slug: str, parent: str = Form("")):
     store.set_parent(slug, parent or None)
-    return RedirectResponse(f"/wiki/{slug}", status_code=303)
+    return RedirectResponse(f"/wiki/{slug}/talk", status_code=303)
 
 
 @app.post("/wiki/{slug}/restore")

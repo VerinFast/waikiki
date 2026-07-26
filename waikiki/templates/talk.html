@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}Talk: {{ page.title }} — Waikiki{% endblock %}
+{% block topbar_actions %}{% if not trashed %}{% include "_page_options.html" %}{% endif %}{% endblock %}
+{% block content %}
+  <script>window.WAIKIKI_PAGE = {slug: {{ page.slug | tojson }}, wiki: {{ current_wiki | tojson }}};</script>
+  <article class="article">
+    <div class="article-head">
+      <h1>{{ page.title }} <span class="muted">— Discussion</span></h1>
+    </div>
+
+    <nav class="pagetabs">
+      <a class="tab" href="/wiki/{{ page.slug }}">Article</a>
+      <a class="tab on" href="/wiki/{{ page.slug }}/talk">Talk</a>
+    </nav>
+
+    <p class="muted">Page settings, links, history, and discussion for
+      <a href="/wiki/{{ page.slug }}">{{ page.title }}</a>. None of this shows on
+      the article itself.</p>
+
+    <section class="chatpanel" id="chat">
+      <details class="history" open>
+        <summary>💬 Chat with this article</summary>
+        <div class="chatlog" id="chatlog"></div>
+        <form id="chatform" class="chatform">
+          <input type="text" id="chatq" placeholder="Ask about this page…"
+                 autocomplete="off" required>
+          <select id="chatprovider" title="Which CLI">
+            <option value="">Default</option>
+            <option value="claude">Claude</option>
+            <option value="gemini">Gemini</option>
+          </select>
+          <button class="btn primary" type="submit">Ask</button>
+        </form>
+        <p class="muted note">Answered by a local CLI (Settings → Chat), grounded
+          in this page plus related excerpts from this wiki.</p>
+      </details>
+    </section>
+
+    <details class="history" id="page-settings">
+      <summary>Page settings</summary>
+      <form method="post" action="/wiki/{{ page.slug }}/parent" class="addmodel">
+        <label>Parent page (children are hidden from the sidebar &amp; main search)
+          <select name="parent">
+            <option value="">— none (top-level) —</option>
+            {% for p in all_pages %}
+              <option value="{{ p.slug }}" {{ 'selected' if parent and parent.slug == p.slug }}>{{ p.title }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <button class="btn" type="submit">Save parent</button>
+      </form>
+    </details>
+
+    <details class="history" id="backlinks">
+      <summary>What links here ({{ backlinks | length }})</summary>
+      {% if backlinks %}
+        <ul>
+          {% for b in backlinks %}
+            <li><a href="/wiki/{{ b.slug }}">{{ b.title }}</a></li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="muted">No other pages link here yet.</p>
+      {% endif %}
+    </details>
+
+    {% if versions %}
+      <details class="history" id="history">
+        <summary>History ({{ versions | length }})</summary>
+        <ul class="versionlist">
+          {% for v in versions %}
+            <li>
+              <span class="badge {{ v.author }}">{{ v.author }}</span>
+              <a href="/wiki/{{ page.slug }}/history/{{ v.id }}">{{ v.created_at }}</a>
+              <span class="muted">{{ v.title }}</span>
+              {% if not loop.first %}
+                <form method="post" action="/wiki/{{ page.slug }}/history/{{ v.id }}/restore"
+                      style="display:inline"
+                      onsubmit="return confirm('Restore this version?')">
+                  <button class="btn small" type="submit">Restore</button>
+                </form>
+              {% else %}
+                <span class="muted">(current)</span>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+
+    {% if suggestions %}
+      <section class="review">
+        <h3>Proposed edits ({{ suggestions | length }})</h3>
+        {% for s in suggestions %}
+          <details class="history" open>
+            <summary><span class="badge {{ s.author }}">{{ s.author }}</span>
+              {{ s.note or 'Proposed rewrite' }} <span class="muted">{{ s.created_at }}</span></summary>
+            <pre class="diff">{% for line in s.diff.split('\n') %}<span class="{% if line.startswith('+') and not line.startswith('+++') %}add{% elif line.startswith('-') and not line.startswith('---') %}del{% elif line.startswith('@@') %}hunk{% endif %}">{{ line }}</span>
+{% endfor %}</pre>
+            <form method="post" action="/wiki/{{ page.slug }}/suggestion/{{ s.id }}/apply" style="display:inline">
+              <button class="btn primary" type="submit">Apply</button>
+            </form>
+            <form method="post" action="/wiki/{{ page.slug }}/suggestion/{{ s.id }}/reject" style="display:inline">
+              <button class="btn danger" type="submit">Reject</button>
+            </form>
+          </details>
+        {% endfor %}
+      </section>
+    {% endif %}
+
+    <section id="comments" class="review">
+      <h3>Comments ({{ comments | length }})</h3>
+      {% for c in comments %}
+        <div class="comment {{ 'resolved' if c.resolved }}">
+          <span class="badge {{ c.author }}">{{ c.author }}</span>
+          {{ c.body }} <span class="muted">{{ c.created_at }}</span>
+          {% if not c.resolved %}
+            <form method="post" action="/wiki/{{ page.slug }}/comment/{{ c.id }}/resolve" style="display:inline">
+              <button class="btn small" type="submit">Resolve</button>
+            </form>
+          {% else %}<span class="muted">✓ resolved</span>{% endif %}
+        </div>
+      {% endfor %}
+      <form method="post" action="/wiki/{{ page.slug }}/comment" class="addmodel">
+        <input type="text" name="body" placeholder="Add a comment…" required>
+        <button class="btn" type="submit">Comment</button>
+      </form>
+    </section>
+  </article>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var form = document.getElementById('chatform');
+    if (!form) return;
+    var log = document.getElementById('chatlog');
+    var q = document.getElementById('chatq');
+    var prov = document.getElementById('chatprovider');
+    var history = [];
+    function bubble(role, text, cls) {
+      var d = document.createElement('div');
+      d.className = 'chatmsg ' + role + (cls ? ' ' + cls : '');
+      d.textContent = text;
+      log.appendChild(d);
+      log.scrollTop = log.scrollHeight;
+      return d;
+    }
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var question = q.value.trim();
+      if (!question) return;
+      bubble('user', question);
+      q.value = ''; q.disabled = true;
+      var thinking = bubble('assistant', 'Thinking…', 'thinking');
+      fetch('/wiki/' + WAIKIKI_PAGE.slug + '/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: question, provider: prov.value || null, history: history
+        })
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        thinking.remove(); q.disabled = false; q.focus();
+        if (res.ok) {
+          bubble('assistant', res.answer);
+          history.push({ role: 'user', content: question });
+          history.push({ role: 'assistant', content: res.answer });
+        } else {
+          bubble('assistant', res.error || 'Chat failed.', 'err');
+        }
+      }).catch(function (err) {
+        thinking.remove(); q.disabled = false;
+        bubble('assistant', 'Request failed: ' + err, 'err');
+      });
+    });
+  })();
+</script>
+{% endblock %}

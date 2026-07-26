@@ -28,9 +28,10 @@
       <input type="search" name="q" placeholder="Search {{ current_wiki_name }}…" value="{{ q or '' }}">
     </form>
     <nav class="actions">
-      <a href="/new">+ New</a>
+      {% block topbar_actions %}{% endblock %}
+      <a class="btn" href="/new">+ New</a>
       <details class="menu">
-        <summary>Settings</summary>
+        <summary class="btn">Settings</summary>
         <div class="menu-items">
           <a href="/settings">Settings</a>
           <a href="/templates">Templates</a>
@@ -40,7 +41,7 @@
         </div>
       </details>
       <details class="menu">
-        <summary>Help</summary>
+        <summary class="btn">Help</summary>
         <div class="menu-items">
           <a href="/help">Help contents</a>
           <a href="/help/about">About</a>

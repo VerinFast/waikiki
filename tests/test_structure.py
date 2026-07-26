@@ -14,6 +14,25 @@ def test_parse_frontmatter_absent():
     assert meta == {} and tags == [] and body == "# Just a page"
 
 
+def test_parse_frontmatter_crlf():
+    # The web editor's form submit sends Windows CRLF — the fence and values must
+    # still parse (regression: CRLF dropped the whole block, losing tags).
+    meta, tags, body = structure.parse_frontmatter(
+        "---\r\ntags: Character, Spirit\r\nhp: 42\r\n---\r\n# Body\r\ntext")
+    assert tags == ["character", "spirit"]
+    assert meta == {"hp": "42"}
+    assert body.startswith("# Body") and "\r" not in body
+
+
+def test_crlf_page_indexes_and_stores_lf(wiki):
+    store.create_page("Meru", "---\r\ntags: character, spirit\r\n---\r\nA guardian.\r\n")
+    assert store.tags_of("meru") == ["character", "spirit"]
+    tags = {t["tag"]: t["count"] for t in store.all_tags()}
+    assert tags["character"] == 1 and tags["spirit"] == 1
+    assert "meru" in {p["slug"] for p in store.pages_with_tag("character")}
+    assert "\r" not in store.get_page("meru")["markdown"]   # stored as LF
+
+
 def test_timeline_component():
     h = render.render_markdown("```timeline\n1990: Founded\n2020: IPO\n```")
     assert '<div class="timeline">' in h

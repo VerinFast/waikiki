@@ -20,10 +20,15 @@ _FM = re.compile(r"^\s*---[ \t]*\n(.*?)\n---[ \t]*\n?", re.S)
 
 
 def parse_frontmatter(markdown: str) -> tuple[dict, list[str], str]:
-    """Return (properties, tags, body_without_frontmatter)."""
-    m = _FM.match(markdown or "")
+    """Return (properties, tags, body_without_frontmatter).
+
+    Line endings are normalized to LF first: the web editor's form submit sends
+    Windows CRLF, and the fence regex (``---[ \\t]*\\n``) won't match ``---\\r\\n``,
+    which would silently drop the whole frontmatter block (and the page's tags)."""
+    text = (markdown or "").replace("\r\n", "\n").replace("\r", "\n")
+    m = _FM.match(text)
     if not m:
-        return {}, [], markdown or ""
+        return {}, [], text
     meta: dict[str, str] = {}
     for line in m.group(1).splitlines():
         if ":" in line and not line.lstrip().startswith("#"):
@@ -35,4 +40,4 @@ def parse_frontmatter(markdown: str) -> tuple[dict, list[str], str]:
     for key in list(meta):
         if key.lower() == "tags":
             tags = [t.strip().lower() for t in re.split(r"[,;]", meta.pop(key)) if t.strip()]
-    return meta, tags, markdown[m.end():]
+    return meta, tags, text[m.end():]

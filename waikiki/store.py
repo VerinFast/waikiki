@@ -120,8 +120,15 @@ def _prune_versions(page_id: int) -> None:
     )
 
 
+def _normalize_newlines(markdown: str) -> str:
+    """Store LF only. Browsers send CRLF from <textarea> on form submit; CRLF
+    breaks the frontmatter fence match (dropping tags) and dirties diffs."""
+    return (markdown or "").replace("\r\n", "\n").replace("\r", "\n")
+
+
 def create_page(title: str, markdown: str = "", author: str = "human") -> dict:
     conn = db.get_conn()
+    markdown = _normalize_newlines(markdown)
     base = render.slugify(title) or "untitled"
     slug, n = base, 2
     while conn.execute("SELECT 1 FROM pages WHERE slug=?", (slug,)).fetchone():
@@ -142,6 +149,7 @@ def create_page(title: str, markdown: str = "", author: str = "human") -> dict:
 def _set_body(slug: str, title: str, markdown: str, author: str) -> None:
     """Core page write: render (link-by-title), save, snapshot, reindex."""
     conn = db.get_conn()
+    markdown = _normalize_newlines(markdown)
     page = get_page(slug)
     html = render_html(markdown)
     conn.execute(

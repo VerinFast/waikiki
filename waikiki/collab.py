@@ -91,21 +91,32 @@ async def replace_text(wiki: str, slug: str, markdown: str) -> str:
     return str(txt)
 
 
+def _byte_offset(s: str, i: int) -> int:
+    """Convert a Python code-point index to a UTF-8 byte offset. pycrdt/yrs Text
+    indexes in *bytes*, but the edit planners compute offsets with Python str
+    (code points), so any edit at/after a multi-byte char (e.g. an emoji like 🌺)
+    would otherwise land at the wrong position — dropping/overwriting characters
+    at the edit border, or panicking on a character boundary."""
+    return len(s[:i].encode("utf-8"))
+
+
 async def apply_edit(wiki: str, slug: str, planner) -> dict:
     """Apply a pure edit planner (from waikiki.edits) as a *surgical* CRDT change:
     only the planned [start:end] range is replaced, so it merges with concurrent
     human edits. `planner(current_text) -> (start, end, insert)` or raises."""
     room = await ensure_room(wiki, slug)
     txt = _ytext(room)
+    current = str(txt)
     try:
-        start, end, insert = planner(str(txt))
+        start, end, insert = planner(current)
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
+    b_start, b_end = _byte_offset(current, start), _byte_offset(current, end)
     with room.ydoc.transaction():
-        if end > start:
-            del txt[start:end]
+        if b_end > b_start:
+            del txt[b_start:b_end]
         if insert:
-            txt.insert(start, insert)
+            txt.insert(b_start, insert)
     _claude_present(room_key(wiki, slug), room)
     return {"ok": True, "length": len(str(txt))}
 

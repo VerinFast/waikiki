@@ -18,13 +18,15 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import (ai, chat, collab, config, db, debuglog, edits, embeddings,
-               help_content, imagegen, pdfgen, rag, render, store, wikis)
+from . import (accesslog, ai, appconfig, chat, collab, config, db, debuglog,
+               edits, embeddings, help_content, imagegen, pdfgen, rag, render,
+               store, wikis)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()  # ensures the wiki registry + default wiki schema
+    accesslog.setup()  # capture ERROR-level logs into the access log
     wikis.ensure_help_wiki()  # so the Help wiki shows in the switcher immediately
 
     async def _seed_help():
@@ -47,7 +49,7 @@ async def lifespan(app: FastAPI):
             print(f"[waikiki] embedder warmup skipped: {exc}")
 
     async def _retention():
-        # Enforce the trash retention policy across all wikis, hourly.
+        # Enforce the trash + access-log retention policies, hourly.
         import anyio
         while True:
             for w in wikis.list_wikis():
@@ -56,6 +58,10 @@ async def lifespan(app: FastAPI):
                     await anyio.to_thread.run_sync(store.sweep_trash)
                 except Exception as exc:
                     print(f"[waikiki] trash sweep failed for {w['slug']}: {exc}")
+            try:
+                await anyio.to_thread.run_sync(accesslog.sweep)
+            except Exception as exc:
+                print(f"[waikiki] access-log sweep failed: {exc}")
             await asyncio.sleep(3600)
 
     async with collab.server:                       # start the CRDT websocket server
@@ -118,7 +124,50 @@ class WikiContextMiddleware:
             await self.app(scope, receive, send)
 
 
+class AccessLogMiddleware:
+    """Pure-ASGI: log every HTTP request (method, path, status, size, duration)
+    and any unhandled error to the access log. Registered last so it's the
+    outermost user middleware and sees the final status."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        import time as _t
+        if scope["type"] != "http" or scope.get("path", "").startswith("/static"):
+            return await self.app(scope, receive, send)
+        start = _t.monotonic()
+        info = {"status": 0, "size": 0}
+
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                info["status"] = message["status"]
+            elif message["type"] == "http.response.body":
+                info["size"] += len(message.get("body", b"") or b"")
+            await send(message)
+
+        headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+        client = (scope.get("client") or ["-"])[0]
+        method = scope.get("method", "-")
+        path = scope.get("path", "-")
+        if scope.get("query_string"):
+            path += "?" + scope["query_string"].decode()
+        proto = "HTTP/" + scope.get("http_version", "1.1")
+        ua, ref = headers.get("user-agent", "-"), headers.get("referer", "-")
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception as exc:
+            dur = _t.monotonic() - start
+            accesslog.error(f"{method} {path}", exc, dur)
+            accesslog.http(client, method, path, proto, 500, info["size"], dur, ua, ref)
+            raise
+        dur = _t.monotonic() - start
+        accesslog.http(client, method, path, proto, info["status"], info["size"],
+                       dur, ua, ref)
+
+
 app.add_middleware(WikiContextMiddleware)
+app.add_middleware(AccessLogMiddleware)  # added last → outermost
 
 _STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
@@ -253,6 +302,21 @@ def debug_view(request: Request):
 def debug_clear():
     debuglog.clear()
     return RedirectResponse("/debug", status_code=303)
+
+
+@app.get("/logs", response_class=HTMLResponse)
+def logs_view(request: Request, q: str = "", kind: str = "", limit: int = 500):
+    """Human-readable access log: requests received + calls made + errors."""
+    entries = accesslog.read(limit=min(max(limit, 1), 2000), query=q, kind=kind)
+    return templates.TemplateResponse(request, "logs.html", _ctx(
+        request, entries=entries, q=q, kind=kind,
+        retention_hours=accesslog.retention_hours()))
+
+
+@app.post("/logs/clear")
+def logs_clear():
+    accesslog.clear()
+    return RedirectResponse("/logs", status_code=303)
 
 
 @app.get("/connect", response_class=HTMLResponse)
@@ -669,6 +733,7 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
              active_model=model, catalog=embeddings.fastembed_catalog(),
              style_refs=imagegen.list_style_refs(wiki),
              style_refs_dir=str(imagegen.style_reference_dir(wiki)),
+             log_retention_hours=accesslog.retention_hours(),
              msg=msg, error=error),
     )
 
@@ -711,8 +776,13 @@ def settings_save(theme: str = Form(...),
                   chat_model: str = Form(""),
                   image_cli: str = Form("agy"),
                   image_model: str = Form(""),
-                  image_style_prompt: str = Form("")):
+                  image_style_prompt: str = Form(""),
+                  log_retention_hours: str = Form("24")):
     db.set_setting("theme", theme)
+    try:
+        appconfig.set("log_retention_hours", max(1, int(log_retention_hours)))
+    except ValueError:
+        pass
     db.set_setting("retention_versions", str(max(0, int(retention_versions or 0))))
     db.set_setting("retention_trash_days", str(max(0, int(retention_trash_days or 0))))
     db.set_setting("gen_provider",

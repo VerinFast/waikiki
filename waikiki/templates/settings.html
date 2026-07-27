@@ -101,6 +101,17 @@
         can keep them visually consistent. Use the ✨ button in the editor.</p>
     </details>
 
+    <details class="settings-sec" open>
+      <summary>Logging <span class="muted">(all wikis)</span></summary>
+      <label>Keep access logs for N hours
+        <input type="number" name="log_retention_hours" min="1"
+               value="{{ log_retention_hours }}">
+      </label>
+      <p class="muted note">The <a href="/logs">access log</a> records every request
+        and CLI/MCP call (hour-stamped files, swept after this many hours). View it
+        under <strong>Help → Access log</strong>.</p>
+    </details>
+
     <button class="btn primary" type="submit">Save settings</button>
   </form>
 

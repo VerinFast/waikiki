@@ -23,7 +23,7 @@ import httpx
 from fastmcp import FastMCP
 from mcp.types import Icon
 
-from . import config, db, edits, imagegen, rag, render, store, wikis
+from . import accesslog, config, db, edits, imagegen, rag, render, store, wikis
 
 WEB = config.WEB_URL
 _ACTIVE_FILE = config.DATA_DIR / "mcp_active_wiki"
@@ -67,6 +67,35 @@ def _load_active() -> str | None:
         return val if val and wikis.exists(val) else None
     except Exception:
         return None
+
+
+def _install_access_log() -> None:
+    """Log every MCP tool call (name + duration + errors) to the shared access
+    log — the key signal for diagnosing Claude Cowork/Desktop timeouts."""
+    import time
+
+    from fastmcp.server.middleware import Middleware
+
+    class _AccessLog(Middleware):
+        async def on_call_tool(self, context, call_next):
+            t0 = time.monotonic()
+            msg = getattr(context, "message", None)
+            name = getattr(msg, "name", None) or "tool"
+            args = getattr(msg, "arguments", None) or {}
+            detail = " ".join(f"{k}={str(v)[:40]}" for k, v in list(args.items())[:4])
+            try:
+                result = await call_next(context)
+            except Exception as exc:
+                accesslog.mcp(name, False, time.monotonic() - t0,
+                              f"{type(exc).__name__}: {exc} | {detail}")
+                raise
+            accesslog.mcp(name, True, time.monotonic() - t0, detail)
+            return result
+
+    try:
+        mcp.add_middleware(_AccessLog())
+    except Exception as exc:  # never block the server on logging setup
+        print(f"[waikiki] MCP access-log middleware skipped: {exc}", file=sys.stderr)
 
 
 def _save_active(slug: str) -> None:
@@ -560,6 +589,16 @@ def version() -> dict:
     return {"waikiki_version": config.VERSION}
 
 
+@mcp.tool
+def read_log(limit: int = 200, query: str = "", kind: str = "") -> dict:
+    """Read the access log — every request received and call made across the app
+    and this MCP server, plus errors. `kind` filters to HTTP/MCP/CLI/ERROR;
+    `query` is a case-insensitive substring. Newest first. Use this to diagnose
+    timeouts and failures. No wiki selection required."""
+    return {"entries": accesslog.read(limit=min(max(limit, 1), 1000),
+                                      query=query, kind=kind)}
+
+
 # Keys the MCP set_setting tool may write. Deliberately excludes settings with
 # heavy side effects (allow_html → re-render all; embedder_* / model_library →
 # re-index all) — change those in the browser.
@@ -625,6 +664,8 @@ def generate_image(slug: str, description: str) -> dict:
 def main() -> None:
     global _ACTIVE
     db.init_db()
+    accesslog.setup()
+    _install_access_log()
     _ACTIVE = _load_active()
     mcp.run()
 

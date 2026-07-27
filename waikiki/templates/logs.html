@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Access log — Waikiki{% endblock %}
+{% block content %}
+  <div class="article-head">
+    <h1>Access log</h1>
+    <form method="post" action="/logs/clear"
+          onsubmit="return confirm('Delete all access-log files?')">
+      <button class="btn danger" type="submit">Clear</button>
+    </form>
+  </div>
+  <p class="muted">Every request received and call made — the web app and the MCP
+    server — plus Python errors, with duration. Newest first. Kept
+    {{ retention_hours }}h (change in Settings → Logging). Slow calls (≥3s) are
+    highlighted — a good first stop for the Cowork timeout.</p>
+
+  <form class="logbar" method="get" action="/logs">
+    <input type="search" name="q" value="{{ q }}" placeholder="Server-side filter…">
+    <select name="kind">
+      <option value="">All kinds</option>
+      {% for k in ['HTTP', 'MCP', 'CLI', 'ERROR'] %}
+        <option value="{{ k }}" {{ 'selected' if kind == k }}>{{ k }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit">Apply</button>
+    <span class="logtools">
+      <input type="search" id="logsearch" placeholder="Search loaded rows…">
+      <label class="muted">Go to <input type="datetime-local" id="gototime"></label>
+    </span>
+  </form>
+
+  {% if not entries %}
+    <p class="muted">No log entries {{ 'match that filter' if q or kind else 'yet' }}.</p>
+  {% endif %}
+
+  <div class="logwrap">
+    <table class="logtable">
+      <thead><tr>
+        <th>Time</th><th>Kind</th><th>Status</th><th>ms</th><th>Request</th><th>Detail</th>
+      </tr></thead>
+      <tbody id="logrows">
+        {% for e in entries %}
+          <tr data-epoch="{{ e.epoch }}"
+              class="k-{{ e.kind | lower }}{{ ' slow' if e.ms >= 3000 }}{{ ' err' if e.kind == 'ERROR' }}">
+            <td class="mono nowrap">{{ e.ts }}</td>
+            <td><span class="logkind k-{{ e.kind | lower }}">{{ e.kind }}</span></td>
+            <td class="mono">{{ e.status }}</td>
+            <td class="mono ms">{{ e.ms }}</td>
+            <td class="mono req">{{ e.request }}</td>
+            <td class="detail">{{ e.detail }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <script>
+    (function () {
+      var search = document.getElementById('logsearch');
+      var rows = [].slice.call(document.querySelectorAll('#logrows tr'));
+      if (search) search.addEventListener('input', function () {
+        var q = search.value.toLowerCase();
+        rows.forEach(function (r) {
+          r.style.display = r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+        });
+      });
+      var goto = document.getElementById('gototime');
+      if (goto) goto.addEventListener('change', function () {
+        var t = new Date(goto.value).getTime() / 1000;
+        if (!t) return;
+        var target = null;                     // rows are newest-first
+        for (var i = 0; i < rows.length; i++) {
+          if (parseFloat(rows[i].getAttribute('data-epoch')) <= t) { target = rows[i]; break; }
+        }
+        if (!target && rows.length) target = rows[rows.length - 1];
+        if (!target) return;
+        var box = document.querySelector('.content');
+        if (box) {
+          box.scrollTop = target.getBoundingClientRect().top
+            - box.getBoundingClientRect().top + box.scrollTop - 60;
+        } else { target.scrollIntoView(); }
+        target.classList.add('flash');
+        setTimeout(function () { target.classList.remove('flash'); }, 1600);
+      });
+    })();
+  </script>
+{% endblock %}

@@ -309,4 +309,26 @@ pre.diff .hunk{color:var(--muted);display:block}
 .ref form{position:absolute;top:3px;right:3px;margin:0}
 .ref .btn.small{padding:0 .35rem;line-height:1.4;background:var(--surface)}
 
+/* Access log viewer */
+.logbar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.8rem 0}
+.logbar input[type=search]{padding:.4rem .6rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.logbar select{padding:.4rem .5rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.logtools{display:inline-flex;gap:.5rem;align-items:center;margin-left:auto}
+.logtools input{padding:.35rem .5rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.logwrap{overflow-x:auto}
+.logtable{width:100%;border-collapse:collapse;font-size:.85rem}
+.logtable th{text-align:left;color:var(--muted);font-weight:600;border-bottom:1px solid var(--border);padding:.4rem .5rem;position:sticky;top:0;background:var(--bg)}
+.logtable td{padding:.3rem .5rem;border-bottom:1px solid var(--border);vertical-align:top}
+.logtable .mono{font-family:var(--mono);font-size:.82rem}
+.logtable .nowrap{white-space:nowrap}
+.logtable .req{max-width:32ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.logtable .detail{color:var(--muted);word-break:break-word}
+.logtable tr.slow .ms{color:var(--danger);font-weight:700}
+.logtable tr.err{background:color-mix(in srgb,var(--danger) 10%,transparent)}
+.logtable tr.flash{background:color-mix(in srgb,var(--accent) 24%,transparent)}
+.logkind{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:.05rem .35rem;border-radius:5px;border:1px solid var(--border);color:var(--muted)}
+.logkind.k-mcp{color:var(--accent);border-color:var(--accent)}
+.logkind.k-error{color:var(--danger);border-color:var(--danger)}
+.logkind.k-cli{color:#a06a00}
+
 @media(max-width:720px){.layout{grid-template-columns:1fr}.sidebar{display:none}}

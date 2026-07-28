@@ -179,6 +179,7 @@ def get_page(slug: str) -> dict:
         markdown = r.json()["markdown"] if r.status_code == 200 else page["markdown"]
     except Exception:
         markdown = page["markdown"]
+    store.log_activity("ai", "read")
     return {"wiki": wiki, "slug": page["slug"], "title": page["title"],
             "markdown": markdown, "outline": render.extract_toc(markdown)}
 
@@ -587,6 +588,67 @@ def search_subpages(parent_slug: str, query: str, k: int = 6) -> dict:
 def version() -> dict:
     """Return the running Waikiki release version. No wiki selection required."""
     return {"waikiki_version": config.VERSION}
+
+
+@mcp.tool
+def list_order() -> dict:
+    """List the top-level pages in the wiki's Custom (manual) sidebar order."""
+    wiki = _require_wiki()
+    return {"wiki": wiki, "order": store.custom_order()}
+
+
+@mcp.tool
+def get_order(slug: str) -> dict:
+    """Return a page's 0-indexed position in the Custom order (null if it's not a
+    top-level page)."""
+    wiki = _require_wiki()
+    order = store.custom_order()
+    return {"wiki": wiki, "slug": slug,
+            "position": order.index(slug) if slug in order else None,
+            "count": len(order)}
+
+
+@mcp.tool
+def set_order(slug: str, position: int) -> dict:
+    """Move `slug` to `position` (0-indexed) in the Custom sidebar order. The page
+    is removed and re-inserted: items between its old and new spots shift by one,
+    the rest keep their positions. E.g. set_order('third-article', 1) makes it
+    second and bumps the former second page to third."""
+    wiki = _require_wiki()
+    order = store.move_page_order(slug, position)
+    if order is None:
+        return {"wiki": wiki, "error": f"no top-level page '{slug}' in {wiki}"}
+    return {"wiki": wiki, "order": order, "position": order.index(slug)}
+
+
+@mcp.tool
+def list_docs() -> dict:
+    """List Waikiki's built-in documentation pages (the Help wiki: usage, editing,
+    templates, AI/chat, etc.), without changing your active wiki. Read one with
+    read_doc(slug)."""
+    if not wikis.exists(config.HELP_WIKI):
+        return {"docs": []}
+    tok = db.current_wiki.set(config.HELP_WIKI)
+    try:
+        docs = [{"slug": p["slug"], "title": p["title"]}
+                for p in store.list_pages(include_children=True)]
+    finally:
+        db.current_wiki.reset(tok)
+    return {"docs": docs}
+
+
+@mcp.tool
+def read_doc(slug: str) -> dict:
+    """Read a documentation page (Help wiki) by slug — e.g. 'templates',
+    'editing-formatting' — without switching your active wiki. See list_docs()."""
+    tok = db.current_wiki.set(config.HELP_WIKI)
+    try:
+        page = store.get_page(slug)
+    finally:
+        db.current_wiki.reset(tok)
+    if not page:
+        return {"error": f"no doc '{slug}' — call list_docs() for the list"}
+    return {"slug": page["slug"], "title": page["title"], "markdown": page["markdown"]}
 
 
 @mcp.tool

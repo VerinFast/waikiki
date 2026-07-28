@@ -196,3 +196,32 @@ def test_custom_sort_order(wiki):
     assert [p["slug"] for p in store.list_pages(sort="custom")] == ["gamma", "alpha", "beta"]
     # Other sorts are unaffected.
     assert [p["slug"] for p in store.list_pages(sort="title")] == ["alpha", "beta", "gamma"]
+
+
+def test_move_page_order_insert_semantics(wiki):
+    for t in ("A", "B", "C", "D", "E"):
+        store.create_page(t, "x")
+    store.set_page_order(["a", "b", "c", "d", "e"])
+    # move C (index 2) to index 1: remove + insert → items between shift, rest stay
+    assert store.move_page_order("c", 1) == ["a", "c", "b", "d", "e"]
+    assert store.custom_order() == ["a", "c", "b", "d", "e"]
+    assert store.move_page_order("missing", 0) is None
+
+
+def test_activity_logging_and_7day_rollup(wiki):
+    store.log_activity("human", "read")
+    store.log_activity("ai", "read")
+    store.log_activity("ai", "write")
+    store.log_activity("bogus", "read")          # ignored (not human/ai)
+    days = store.activity_last_7_days()
+    assert len(days) == 7
+    today = days[-1]
+    assert today["human_read"] == 1 and today["ai_read"] == 1 and today["ai_write"] == 1
+
+
+def test_writes_are_logged_by_actor(wiki):
+    store.create_page("H", "x", author="human")
+    store.create_page("Ai", "y", author="ai")
+    store.create_page("Sys", "z", author="system")   # seeding — not counted
+    today = store.activity_last_7_days()[-1]
+    assert today["human_write"] == 1 and today["ai_write"] == 1

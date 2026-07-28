@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Wiki info — {{ wiki_label }} — Waikiki{% endblock %}
+{% block content %}
+  <div class="article-head">
+    <h1>Wiki info <span class="muted">— {{ wiki_label }}</span></h1>
+    <a class="btn" href="/index">📑 Back to Index</a>
+  </div>
+
+  <div class="statgrid">
+    <div class="stat"><span class="num">{{ stats.articles }}</span><span class="lbl">Articles</span></div>
+    <div class="stat"><span class="num">{{ stats.links }}</span><span class="lbl">Internal links</span></div>
+    <div class="stat"><span class="num">{{ stats.links_resolved }}</span><span class="lbl">Resolved links</span></div>
+    <div class="stat {{ 'bad' if stats.links_broken }}"><span class="num">{{ stats.links_broken }}</span><span class="lbl">Broken links</span></div>
+    <div class="stat"><span class="num">{{ stats.trashed }}</span><span class="lbl">In trash</span></div>
+    <div class="stat"><span class="num">{{ (stats.bytes / 1048576) | round(2) }}<small> MB</small></span><span class="lbl">Size on disk</span></div>
+  </div>
+
+  {% if stats.links_broken %}
+    <p class="muted note"><a href="/broken-links">See the {{ stats.links_broken }} broken link(s) →</a></p>
+  {% endif %}
+
+  <h3>Activity — last 7 days</h3>
+  <p class="muted">Page reads and writes per day, split Human vs AI. (Live
+    co-editing counts as AI; browser page views count as Human reads.)</p>
+  <div class="graphwrap">{{ graph_svg | safe }}</div>
+{% endblock %}

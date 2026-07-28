@@ -145,6 +145,8 @@ def create_page(title: str, markdown: str = "", author: str = "human") -> dict:
     _index_meta(page_id, markdown)
     conn.commit()
     rag.reindex_page(page_id, markdown)
+    if (b := _activity_bucket(author)):
+        log_activity(b, "write")
     return get_page(slug)
 
 
@@ -154,6 +156,72 @@ def set_page_order(slugs: list[str]) -> None:
     for i, slug in enumerate(slugs):
         conn.execute("UPDATE pages SET sort_order=? WHERE slug=?", (i, slug))
     conn.commit()
+
+
+def custom_order() -> List[str]:
+    """Top-level page slugs in the current Custom (manual) order."""
+    return [p["slug"] for p in list_pages(sort="custom")]
+
+
+def move_page_order(slug: str, position: int) -> Optional[List[str]]:
+    """Move `slug` to `position` in the Custom order (0-indexed): remove it, then
+    insert at `position` — items between old and new shift by one, the rest stay.
+    Returns the new order, or None if the slug isn't a top-level page."""
+    order = custom_order()
+    if slug not in order:
+        return None
+    order.remove(slug)
+    position = max(0, min(int(position), len(order)))
+    order.insert(position, slug)
+    set_page_order(order)
+    return order
+
+
+# --- Activity (reads/writes for the wiki-info graph) --------------------------
+
+def _activity_bucket(author: str) -> Optional[str]:
+    if author == "human":
+        return "human"
+    if author in ("ai", "api", "collab"):   # collab = live CRDT (mostly AI-driven)
+        return "ai"
+    return None                             # system/seed — not counted
+
+
+def log_activity(actor: str, action: str) -> None:
+    if actor not in ("human", "ai"):
+        return
+    conn = db.get_conn()
+    conn.execute("INSERT INTO activity(actor, action) VALUES (?, ?)", (actor, action))
+    conn.commit()
+
+
+def sweep_activity(days: int = 30) -> None:
+    conn = db.get_conn()
+    conn.execute("DELETE FROM activity WHERE ts < datetime('now', ?)",
+                 (f"-{int(days)} days",))
+    conn.commit()
+
+
+def activity_last_7_days() -> List[dict]:
+    """Per-day read/write counts by actor for the last 7 days (oldest first)."""
+    import datetime
+
+    rows = db.get_conn().execute(
+        "SELECT date(ts) d, actor, action, COUNT(*) c FROM activity "
+        "WHERE ts >= date('now','-6 days') GROUP BY d, actor, action").fetchall()
+    agg = {(r["d"], r["actor"], r["action"]): r["c"] for r in rows}
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    out = []
+    for i in range(6, -1, -1):
+        d = (today - datetime.timedelta(days=i)).isoformat()
+        out.append({
+            "date": d,
+            "human_read": agg.get((d, "human", "read"), 0),
+            "ai_read": agg.get((d, "ai", "read"), 0),
+            "human_write": agg.get((d, "human", "write"), 0),
+            "ai_write": agg.get((d, "ai", "write"), 0),
+        })
+    return out
 
 
 def _set_body(slug: str, title: str, markdown: str, author: str) -> None:
@@ -171,6 +239,8 @@ def _set_body(slug: str, title: str, markdown: str, author: str) -> None:
     _index_meta(page["id"], markdown)
     conn.commit()
     rag.reindex_page(page["id"], markdown)
+    if (b := _activity_bucket(author)):
+        log_activity(b, "write")
 
 
 def update_page(slug: str, title: str, markdown: str, author: str = "human") -> Optional[dict]:

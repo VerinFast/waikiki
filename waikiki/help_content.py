@@ -16,6 +16,7 @@ def _home() -> str:
         "Welcome to **Waikiki** — a small local wiki for Human/LLM collaboration.\n\n"
         "- [[Editing & Formatting]] — markdown, tables, wikilinks, sections, "
         "properties\n"
+        "- [[Templates]] — reusable page skeletons\n"
         "- [[Wikis & Isolation]] — multiple isolated wikis, switching, save/open\n"
         "- [[AI & Chat]] — generate drafts, and chat with an article\n"
         "- [[Connect Claude]] — let Claude Desktop read & edit your wikis over MCP\n"
@@ -50,6 +51,32 @@ def _editing() -> str:
         "## Media & transclusion\n"
         "Drag or attach images, video, and audio in the editor. Embed another "
         "page with `![[Page Title]]`.\n"
+    )
+
+
+def _templates() -> str:
+    return (
+        "# Templates\n\n"
+        "Templates are reusable page skeletons — start a new page from one instead "
+        "of a blank editor.\n\n"
+        "## Using a template\n"
+        "Click **+ New**, then pick a template (or open `/new?template=<name>`). "
+        "The template's markdown pre-fills the editor; edit and save as usual.\n\n"
+        "## Placeholders\n"
+        "`{{title}}` in a template is replaced with the new page's title when you "
+        "create from it. (Other `{{Key}}` values interpolate from the page's own "
+        "frontmatter once saved — see [[Editing & Formatting]].)\n\n"
+        "## Built-in templates\n"
+        "- **Meeting notes** — date, attendees, agenda, notes, action items.\n"
+        "- **How-to** — summary, prerequisites, numbered steps, see-also.\n"
+        "- **Person** — an infobox (role/team/contact) plus About and Notes.\n\n"
+        "## Managing templates\n"
+        "**Settings → Templates** lists them; add or edit one there (name + "
+        "markdown body). Deleting a template never touches pages created from it.\n\n"
+        "## For Claude (MCP)\n"
+        "- `list_templates` — see available templates.\n"
+        "- `create_template(name, markdown)` — add or replace one.\n"
+        "- `create_from_template(name, title)` — make a page from a template.\n"
     )
 
 
@@ -137,6 +164,7 @@ def seed() -> None:
         db.get_conn()  # ensure schema for the help DB
         _upsert("Getting Started", _home(), overwrite=False)
         _upsert("Editing & Formatting", _editing(), overwrite=False)
+        _upsert("Templates", _templates(), overwrite=False)
         _upsert("Wikis & Isolation", _wikis(), overwrite=False)
         _upsert("AI & Chat", _ai(), overwrite=False)
         _upsert("Connect Claude", _connect(), overwrite=False)

@@ -215,6 +215,14 @@ CREATE TABLE IF NOT EXISTS templates (
     markdown TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS activity (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts     TEXT NOT NULL DEFAULT (datetime('now')),
+    actor  TEXT NOT NULL,   -- human | ai
+    action TEXT NOT NULL    -- read | write
+);
+CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity(ts);
+
 CREATE TABLE IF NOT EXISTS images (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     filename   TEXT NOT NULL,

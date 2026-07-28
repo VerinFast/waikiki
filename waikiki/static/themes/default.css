@@ -345,8 +345,23 @@ pre.diff .hunk{color:var(--muted);display:block}
 .navlist>li.dragging{opacity:.45;background:var(--code-bg);border-radius:6px}
 
 /* Index (tag) page */
-.tag-group{margin:1.3rem 0}
-.tag-group h3{border-bottom:1px solid var(--border);padding-bottom:.25rem}
+.tag-group{margin:1rem 0}
+.tag-group>summary{font-weight:700;font-size:1.15rem;cursor:pointer;border-bottom:1px solid var(--border);padding-bottom:.25rem;list-style:none}
+.tag-group>summary::-webkit-details-marker{display:none}
+.tag-group>summary::before{content:"▸ ";color:var(--muted);font-size:.8em}
+.tag-group[open]>summary::before{content:"▾ "}
+
+/* Wiki info / stats page */
+.statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.7rem;margin:1rem 0}
+.stat{border:1px solid var(--border);border-radius:10px;padding:.8rem 1rem;background:var(--surface);display:flex;flex-direction:column;gap:.2rem}
+.stat .num{font-size:1.6rem;font-weight:700}
+.stat .num small{font-size:.9rem;font-weight:400;color:var(--muted)}
+.stat .lbl{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+.stat.bad .num{color:var(--danger)}
+.graphwrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;padding:.6rem;background:var(--surface)}
+.activity-graph{width:100%;max-width:660px;height:auto}
+.activity-graph .ag-title{fill:var(--text);font-size:12px;font-weight:700}
+.activity-graph .ag-ax{fill:var(--muted);font-size:9px}
 .allcols{columns:2;column-gap:2.5rem}
 .allcols li{break-inside:avoid}
 @media(max-width:720px){.allcols{columns:1}}

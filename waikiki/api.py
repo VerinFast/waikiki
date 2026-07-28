@@ -58,6 +58,10 @@ async def lifespan(app: FastAPI):
                     await anyio.to_thread.run_sync(store.sweep_trash)
                 except Exception as exc:
                     print(f"[waikiki] trash sweep failed for {w['slug']}: {exc}")
+                try:
+                    await anyio.to_thread.run_sync(store.sweep_activity)
+                except Exception as exc:
+                    print(f"[waikiki] activity sweep failed for {w['slug']}: {exc}")
             try:
                 await anyio.to_thread.run_sync(accesslog.sweep)
             except Exception as exc:
@@ -523,6 +527,7 @@ def view_page(request: Request, slug: str):
                                 "markdown": ""}, is_new=True, missing=slug),
             status_code=404,
         )
+    store.log_activity("human", "read")
     parent = _parent_of(page)
     # The article view is intentionally bare — just the content. Page settings,
     # backlinks, history, suggestions, comments, and chat live on the Talk page.
@@ -607,6 +612,56 @@ def wikis_export_markdown(slug: str):
 def tags_view(request: Request):
     return templates.TemplateResponse(request,
         "tags.html", _ctx(request, tags=store.all_tags()))
+
+
+def _activity_svg(days: list) -> str:
+    """Two stacked bar charts (Reads, Writes) over the last 7 days, each split
+    Human (accent) / AI (danger). Inline SVG uses the theme's CSS variables."""
+    import html as _h
+
+    def panel(ox, title, kh, ka):
+        vals = [(d[kh], d[ka]) for d in days]
+        mx = max((h + a for h, a in vals), default=0) or 1
+        cw, ch, base = 290.0, 150.0, 180.0
+        step = cw / len(days)
+        bw = step * 0.55
+        parts = [f'<text x="{ox}" y="14" class="ag-title">{title}</text>',
+                 f'<text x="{ox}" y="30" class="ag-ax">peak {mx}/day</text>']
+        for i, (h, a) in enumerate(vals):
+            cx = ox + i * step + (step - bw) / 2
+            hh, ah = h / mx * ch, a / mx * ch
+            yb = base - hh
+            tip = _h.escape(days[i]["date"])
+            parts.append(f'<rect x="{cx:.1f}" y="{yb:.1f}" width="{bw:.1f}" '
+                         f'height="{hh:.1f}" fill="var(--accent)"><title>{tip} '
+                         f'human {title.lower()}: {h}</title></rect>')
+            parts.append(f'<rect x="{cx:.1f}" y="{yb - ah:.1f}" width="{bw:.1f}" '
+                         f'height="{ah:.1f}" fill="var(--danger)"><title>{tip} '
+                         f'AI {title.lower()}: {a}</title></rect>')
+            parts.append(f'<text x="{cx + bw / 2:.1f}" y="{base + 13:.0f}" '
+                         f'class="ag-ax" text-anchor="middle">{days[i]["date"][5:]}</text>')
+        return "".join(parts)
+
+    return (
+        '<svg viewBox="0 0 640 214" class="activity-graph" '
+        'xmlns="http://www.w3.org/2000/svg">'
+        + panel(10, "Reads", "human_read", "ai_read")
+        + panel(340, "Writes", "human_write", "ai_write")
+        + '<rect x="10" y="202" width="10" height="10" fill="var(--accent)"/>'
+          '<text x="25" y="211" class="ag-ax">Human</text>'
+          '<rect x="80" y="202" width="10" height="10" fill="var(--danger)"/>'
+          '<text x="95" y="211" class="ag-ax">AI</text></svg>'
+    )
+
+
+@app.get("/info", response_class=HTMLResponse)
+def wiki_info_view(request: Request):
+    """Stats about the active wiki: counts, links, size, and a 7-day activity graph."""
+    wiki = db.active_wiki()
+    days = store.activity_last_7_days()
+    return templates.TemplateResponse(request, "info.html", _ctx(
+        request, stats=wikis.stats(wiki), wiki_label=wikis.name_of(wiki),
+        graph_svg=_activity_svg(days)))
 
 
 @app.get("/index", response_class=HTMLResponse)

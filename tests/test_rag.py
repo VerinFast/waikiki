@@ -32,6 +32,32 @@ def test_search_no_match_is_empty(wiki):
     assert rag.search_pages("xyzzyqwerty") == []
 
 
+def test_hybrid_user_search_main_index(wiki):
+    store.create_page("Espresso", "a concentrated coffee brewed under pressure")
+    store.create_page("Trails", "hiking routes through alpine forests")
+    res = rag.search("coffee pressure", index="main", mode="hybrid")
+    assert res and res[0]["slug"] == "espresso"
+    assert "<mark>" in res[0]["snip"]                 # keyword terms highlighted
+    assert rag.search("coffee", mode="keyword")       # BM25 only
+    assert rag.search("coffee", mode="semantic")      # embeddings (FakeEmbedder)
+
+
+def test_list_indices_and_partition_scoping(wiki):
+    store.create_page("Bestiary", "an index of monsters")
+    store.create_page("Gearwyrm", "a clockwork serpent haunting the foundry depths")
+    store.set_parent("gearwyrm", "bestiary")          # moves child to sub-index
+
+    keys = [ix["key"] for ix in rag.list_indices()]
+    assert keys[0] == "main" and "parent:bestiary" in keys
+
+    # child is excluded from the main index (both keyword and semantic)...
+    assert "gearwyrm" not in [r["slug"] for r in rag.search("clockwork serpent")]
+    assert "gearwyrm" not in [r["slug"] for r in rag.search("clockwork", mode="semantic")]
+    # ...but found when searching its parent's partition
+    sub = rag.search("clockwork serpent", index="parent:bestiary")
+    assert "gearwyrm" in [r["slug"] for r in sub]
+
+
 def test_soft_deleted_pages_excluded_from_search(wiki):
     store.create_page("Ghost", "unique content about aardvarks")
     assert rag.search_pages("aardvarks")            # found while active

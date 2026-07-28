@@ -249,3 +249,139 @@ def search_pages(query: str, limit: int = 20) -> List[dict]:
         (_fts_query(query), limit),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# --- User-facing search: hybrid, index-scoped -------------------------------
+
+MODES = ("hybrid", "keyword", "semantic")
+
+
+def list_indices() -> List[dict]:
+    """Searchable indices: the main index plus one partition per parent page
+    (its child pages, which are excluded from the main index)."""
+    parents = db.get_conn().execute(
+        "SELECT DISTINCT pa.id, pa.slug, pa.title FROM pages ch "
+        "JOIN pages pa ON pa.id = ch.parent_id "
+        "WHERE ch.deleted_at IS NULL AND pa.deleted_at IS NULL "
+        "ORDER BY pa.title"
+    ).fetchall()
+    out = [{"key": "main", "label": "Main index (top-level pages)"}]
+    out += [{"key": f"parent:{p['slug']}", "label": f"Sub-pages of {p['title']}"}
+            for p in parents]
+    return out
+
+
+def _resolve_index(index: str):
+    """Return the parent_id for an index key, or None for the main index."""
+    if index and index.startswith("parent:"):
+        row = db.get_conn().execute(
+            "SELECT id FROM pages WHERE slug=?", (index.split(":", 1)[1],)).fetchone()
+        return row["id"] if row else None
+    return None
+
+
+def _bm25_scoped(query: str, k: int, parent_id) -> List[int]:
+    conn = db.get_conn()
+    base = ("SELECT f.rowid AS cid FROM chunks_fts f JOIN chunks c ON c.id = f.rowid "
+            "JOIN pages p ON p.id = c.page_id "
+            "WHERE f.chunks_fts MATCH ? AND p.deleted_at IS NULL ")
+    if parent_id is None:
+        rows = conn.execute(base + "AND p.parent_id IS NULL ORDER BY bm25(f.chunks_fts) LIMIT ?",
+                            (_fts_query(query), k)).fetchall()
+    else:
+        rows = conn.execute(base + "AND p.parent_id = ? ORDER BY bm25(f.chunks_fts) LIMIT ?",
+                            (_fts_query(query), parent_id, k)).fetchall()
+    return [r["cid"] for r in rows]
+
+
+def _vec_scoped(query: str, k: int, parent_id) -> List[int]:
+    if not db.VEC_AVAILABLE:
+        return []
+    try:
+        import sqlite_vec
+
+        embedder = embeddings.get_embedder()
+        db.ensure_vec_table(embedder.dim)
+        qvec = sqlite_vec.serialize_float32(embedder.embed([query])[0])
+        conn = db.get_conn()
+        if parent_id is None:
+            rows = conn.execute(
+                "SELECT chunk_id FROM vec_chunks WHERE embedding MATCH ? "
+                "ORDER BY distance LIMIT ?", (qvec, k)).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT chunk_id FROM vec_chunks_sub WHERE parent_id=? "
+                "AND embedding MATCH ? ORDER BY distance LIMIT ?",
+                (parent_id, qvec, k)).fetchall()
+        return [r["chunk_id"] for r in rows]
+    except Exception as exc:
+        print(f"[waikiki] scoped vector search failed: {exc}")
+        return []
+
+
+def _snippet(text: str, query: str, width: int = 220) -> str:
+    import html
+
+    text = " ".join((text or "").split())
+    tokens = [t.lower() for t in re.findall(r"\w+", query) if t]
+    low = text.lower()
+    pos = min((low.find(t) for t in tokens if low.find(t) != -1), default=-1)
+    if pos == -1:
+        snip, lead, trail = text[:width], "", "…" if len(text) > width else ""
+    else:
+        start = max(0, pos - width // 3)
+        snip = text[start:start + width]
+        lead = "… " if start > 0 else ""
+        trail = " …" if start + width < len(text) else ""
+    out = html.escape(snip)
+    for t in sorted(set(tokens), key=len, reverse=True):
+        out = re.sub("(?i)(" + re.escape(t) + ")", r"<mark>\1</mark>", out)
+    return lead + out + trail
+
+
+def search(query: str, index: str = "main", mode: str = "hybrid",
+           limit: int = 20) -> List[dict]:
+    """Page-level search over a chosen index and mode. `index` is 'main' or
+    'parent:<slug>'; `mode` is hybrid (BM25 + embeddings), keyword (BM25), or
+    semantic (embeddings). Falls back to BM25 if vectors are unavailable."""
+    query = (query or "").strip()
+    if not query:
+        return []
+    mode = mode if mode in MODES else "hybrid"
+    parent_id = _resolve_index(index)
+    pool = max(limit * 4, 40)
+
+    rankings: List[List[int]] = []
+    if mode in ("hybrid", "keyword"):
+        rankings.append(_bm25_scoped(query, pool, parent_id))
+    if mode in ("hybrid", "semantic"):
+        vec = _vec_scoped(query, pool, parent_id)
+        if vec:
+            rankings.append(vec)
+    if not rankings:  # semantic requested but vectors off — fall back to BM25
+        rankings.append(_bm25_scoped(query, pool, parent_id))
+
+    scores: dict[int, float] = {}
+    for ranking in rankings:
+        for rank, cid in enumerate(ranking):
+            scores[cid] = scores.get(cid, 0.0) + 1.0 / (config.RRF_K + rank + 1)
+    if not scores:
+        return []
+
+    ids = list(scores)
+    placeholders = ",".join("?" * len(ids))
+    rows = db.get_conn().execute(
+        f"SELECT c.id AS cid, c.text, p.slug, p.title FROM chunks c "
+        f"JOIN pages p ON p.id = c.page_id WHERE c.id IN ({placeholders}) "
+        f"AND p.deleted_at IS NULL", ids).fetchall()
+    best: dict[str, dict] = {}
+    for r in rows:
+        s = scores[r["cid"]]
+        cur = best.get(r["slug"])
+        if cur is None or s > cur["_score"]:
+            best[r["slug"]] = {"slug": r["slug"], "title": r["title"],
+                               "_score": s, "_text": r["text"]}
+    ranked = sorted(best.values(), key=lambda d: d["_score"], reverse=True)[:limit]
+    return [{"slug": d["slug"], "title": d["title"],
+             "snip": _snippet(d["_text"], query), "score": round(d["_score"], 5)}
+            for d in ranked]

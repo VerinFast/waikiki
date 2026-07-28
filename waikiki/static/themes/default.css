@@ -331,4 +331,11 @@ pre.diff .hunk{color:var(--muted);display:block}
 .logkind.k-error{color:var(--danger);border-color:var(--danger)}
 .logkind.k-cli{color:#a06a00}
 
+/* Advanced search */
+.adv-search{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.6rem 0}
+.adv-search input[type=search]{flex:1;min-width:220px;padding:.5rem .7rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.adv-search select{padding:.45rem .5rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.adv-search label{display:flex;gap:.35rem;align-items:center;color:var(--muted);font-size:.9rem}
+.results .score{font-size:.76rem}
+
 @media(max-width:720px){.layout{grid-template-columns:1fr}.sidebar{display:none}}

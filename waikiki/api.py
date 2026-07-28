@@ -715,10 +715,21 @@ def history_restore(slug: str, version_id: int):
 
 @app.get("/search", response_class=HTMLResponse)
 def search_view(request: Request, q: str = ""):
-    results = rag.search_pages(q) if q else []
+    # Hybrid (BM25 + embeddings) over the main index. Advanced page picks index/mode.
+    results = rag.search(q, index="main", mode="hybrid") if q else []
     return templates.TemplateResponse(request,
         "search.html", _ctx(request, q=q, results=results)
     )
+
+
+@app.get("/search/advanced", response_class=HTMLResponse)
+def advanced_search_view(request: Request, q: str = "", index: str = "main",
+                         mode: str = "hybrid"):
+    results = rag.search(q, index=index, mode=mode) if q else []
+    return templates.TemplateResponse(request, "advanced.html", _ctx(
+        request, q=q, index=index, mode=mode, results=results,
+        indices=rag.list_indices(), modes=rag.MODES,
+        vec_off=not db.VEC_AVAILABLE))
 
 
 @app.get("/settings", response_class=HTMLResponse)

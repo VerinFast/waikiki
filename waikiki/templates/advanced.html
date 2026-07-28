@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Advanced search — Waikiki{% endblock %}
+{% block content %}
+  <h1>Advanced search</h1>
+  <form action="/search/advanced" method="get" class="adv-search">
+    <input type="search" name="q" value="{{ q }}" placeholder="Search…" autofocus>
+    <label>Index
+      <select name="index">
+        {% for ix in indices %}
+          <option value="{{ ix.key }}" {{ 'selected' if ix.key == index }}>{{ ix.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Mode
+      <select name="mode">
+        {% for m in modes %}
+          <option value="{{ m }}" {{ 'selected' if m == mode }}>{{ m | capitalize }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button class="btn primary" type="submit">Search</button>
+  </form>
+  <p class="muted note">
+    <strong>Index:</strong> the main index (top-level pages) or a parent page's
+    sub-page partition. <strong>Mode:</strong> hybrid = BM25 keyword + embeddings,
+    keyword = BM25 only, semantic = embeddings only.
+    {% if vec_off %}<br><em>Vector search is off (sqlite-vec not loaded) — modes
+    fall back to keyword.</em>{% endif %}
+  </p>
+
+  {% if q %}
+    <p class="muted">{{ results | length }} result(s) for “{{ q }}” · {{ mode }} ·
+      {{ (indices | selectattr('key', 'equalto', index) | map(attribute='label') | first) or index }}.</p>
+    <ul class="results">
+      {% for r in results %}
+        <li>
+          <a href="/wiki/{{ r.slug }}">{{ r.title }}</a>
+          <span class="muted score">score {{ r.score }}</span>
+          <div class="snip">{{ r.snip | safe }}</div>
+        </li>
+      {% else %}
+        <li class="muted">No matches in this index.</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+{% endblock %}

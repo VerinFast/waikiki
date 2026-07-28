@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Index — Waikiki{% endblock %}
+{% block content %}
+  <h1>Index</h1>
+  <p class="muted">Every tag and the pages under it, plus all articles A–Z. Tags
+    come from each page's frontmatter (<code>tags:</code>).</p>
+
+  {% if tag_groups %}
+    <div class="tagcloud">
+      {% for g in tag_groups %}
+        <a class="tagchip" href="#tag-{{ g.tag }}">{{ g.tag }} ({{ g.count }})</a>
+      {% endfor %}
+    </div>
+    {% for g in tag_groups %}
+      <section class="tag-group">
+        <h3 id="tag-{{ g.tag }}"><a href="/tag/{{ g.tag }}">#{{ g.tag }}</a>
+          <span class="muted">({{ g.count }})</span></h3>
+        <ul>
+          {% for p in g.pages %}
+            <li><a href="/wiki/{{ p.slug }}">{{ p.title }}</a></li>
+          {% endfor %}
+        </ul>
+      </section>
+    {% endfor %}
+  {% else %}
+    <p class="muted">No tags yet — add a <code>tags:</code> line to a page's
+      frontmatter and it'll be indexed here.</p>
+  {% endif %}
+
+  <section class="tag-group">
+    <h3 id="all-articles">All articles <span class="muted">({{ all_pages | length }})</span></h3>
+    <ul class="allcols">
+      {% for p in all_pages %}
+        <li><a href="/wiki/{{ p.slug }}">{{ p.title }}</a></li>
+      {% else %}
+        <li class="muted">No articles yet.</li>
+      {% endfor %}
+    </ul>
+  </section>
+{% endblock %}

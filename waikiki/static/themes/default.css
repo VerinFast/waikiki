@@ -331,8 +331,29 @@ pre.diff .hunk{color:var(--muted);display:block}
 .logkind.k-error{color:var(--danger);border-color:var(--danger)}
 .logkind.k-cli{color:#a06a00}
 
+/* Sidebar: navlist scrolls, Index pin stays at the bottom */
+.sidebar{display:flex;flex-direction:column;overflow:hidden}
+.navlist{flex:1 1 auto;overflow-y:auto;min-height:0}
+.sidebar-pin{flex:0 0 auto;display:block;margin-top:.5rem;padding:.55rem .3rem;
+  border-top:1px solid var(--border);color:var(--accent);font-weight:600}
+.sidebar-pin:hover{text-decoration:none;color:var(--text)}
+.sidebar-pin.on{color:var(--text)}
+
+/* Custom-sort drag & drop */
+.navlist.reorderable>li{cursor:grab}
+.navlist.reorderable>li a,.navlist.reorderable>li .star{-webkit-user-drag:none}
+.navlist>li.dragging{opacity:.45;background:var(--code-bg);border-radius:6px}
+
+/* Index (tag) page */
+.tag-group{margin:1.3rem 0}
+.tag-group h3{border-bottom:1px solid var(--border);padding-bottom:.25rem}
+.allcols{columns:2;column-gap:2.5rem}
+.allcols li{break-inside:avoid}
+@media(max-width:720px){.allcols{columns:1}}
+
 /* Advanced search */
 .adv-search{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:.6rem 0}
+.adv-search .excl{color:var(--text);font-size:.9rem}
 .adv-search input[type=search]{flex:1;min-width:220px;padding:.5rem .7rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
 .adv-search select{padding:.45rem .5rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
 .adv-search label{display:flex;gap:.35rem;align-items:center;color:var(--muted);font-size:.9rem}

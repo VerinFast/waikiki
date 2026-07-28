@@ -7,7 +7,9 @@
     <button class="btn" type="submit">Go</button>
     <a class="btn" href="/search/advanced?q={{ q | urlencode }}">Advanced ▸</a>
   </form>
-  <p class="muted note">Hybrid keyword + semantic search over the main index.</p>
+  <p class="muted note">Hybrid keyword + semantic search across all pages,
+    sub-pages included. Use <a href="/search/advanced">Advanced</a> to scope to a
+    partition or exclude sub-pages.</p>
   {% if q %}
     <p class="muted">{{ results | length }} result(s) for “{{ q }}”.</p>
     <ul class="results">

@@ -13,7 +13,9 @@ _INCLUDE = re.compile(r"!\[\[([^\]]+?)\]\]")   # ![[Page]] / ![[Page#Section]] t
 
 # --- Pages --------------------------------------------------------------------
 
-_SORTS = {"updated": "updated_at DESC", "title": "title COLLATE NOCASE ASC"}
+_SORTS = {"updated": "updated_at DESC", "title": "title COLLATE NOCASE ASC",
+          # Manual drag-and-drop order; unordered pages fall to the end by title.
+          "custom": "sort_order IS NULL, sort_order ASC, title COLLATE NOCASE ASC"}
 
 
 def list_pages(include_deleted: bool = False, sort: str = "updated",
@@ -144,6 +146,14 @@ def create_page(title: str, markdown: str = "", author: str = "human") -> dict:
     conn.commit()
     rag.reindex_page(page_id, markdown)
     return get_page(slug)
+
+
+def set_page_order(slugs: list[str]) -> None:
+    """Persist the manual (Custom) sidebar order: sort_order = position."""
+    conn = db.get_conn()
+    for i, slug in enumerate(slugs):
+        conn.execute("UPDATE pages SET sort_order=? WHERE slug=?", (i, slug))
+    conn.commit()
 
 
 def _set_body(slug: str, title: str, markdown: str, author: str) -> None:

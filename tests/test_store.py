@@ -183,3 +183,16 @@ def test_star_toggle_and_filter(wiki):
     assert store.toggle_star("fav") is False
     assert store.list_pages(starred_only=True) == []
     assert store.toggle_star("nope") is None
+
+
+def test_custom_sort_order(wiki):
+    store.create_page("Alpha", "a")
+    store.create_page("Beta", "b")
+    store.create_page("Gamma", "c")
+    # Before any manual order, custom falls back to title order.
+    assert [p["slug"] for p in store.list_pages(sort="custom")] == ["alpha", "beta", "gamma"]
+    # Set an explicit order; list_pages(custom) honors it.
+    store.set_page_order(["gamma", "alpha", "beta"])
+    assert [p["slug"] for p in store.list_pages(sort="custom")] == ["gamma", "alpha", "beta"]
+    # Other sorts are unaffected.
+    assert [p["slug"] for p in store.list_pages(sort="title")] == ["alpha", "beta", "gamma"]

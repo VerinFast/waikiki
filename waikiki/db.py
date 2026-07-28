@@ -271,6 +271,7 @@ def _ensure_schema(conn) -> None:
         "ALTER TABLE pages ADD COLUMN deleted_at TEXT",
         "ALTER TABLE pages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE pages ADD COLUMN parent_id INTEGER REFERENCES pages(id)",
+        "ALTER TABLE pages ADD COLUMN sort_order INTEGER",
     ):
         try:
             conn.execute(stmt)

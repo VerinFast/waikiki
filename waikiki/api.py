@@ -609,6 +609,19 @@ def tags_view(request: Request):
         "tags.html", _ctx(request, tags=store.all_tags()))
 
 
+@app.get("/index", response_class=HTMLResponse)
+def index_view(request: Request):
+    """A book-style index: every tag with the pages under it, plus an
+    all-articles A–Z list (sub-pages included)."""
+    tag_groups = [{"tag": t["tag"], "count": t["count"],
+                   "pages": store.pages_with_tag(t["tag"])}
+                  for t in store.all_tags()]
+    all_pages = sorted(store.list_pages(include_children=True),
+                       key=lambda p: (p["title"] or "").lower())
+    return templates.TemplateResponse(request, "tagindex.html",
+        _ctx(request, tag_groups=tag_groups, all_pages=all_pages))
+
+
 @app.get("/tag/{tag}", response_class=HTMLResponse)
 def tag_index_view(request: Request, tag: str):
     return templates.TemplateResponse(request,
@@ -659,6 +672,17 @@ def delete_page_view(slug: str):
 def star_page_view(slug: str, next: str = Form("/")):
     store.toggle_star(slug)
     return RedirectResponse(next or "/", status_code=303)
+
+
+class ReorderIn(BaseModel):
+    slugs: list[str]
+
+
+@app.post("/reorder")
+def reorder_pages(body: ReorderIn):
+    """Persist the Custom sidebar order (drag-and-drop)."""
+    store.set_page_order(body.slugs)
+    return {"ok": True}
 
 
 @app.post("/wiki/{slug}/clone")
@@ -715,20 +739,22 @@ def history_restore(slug: str, version_id: int):
 
 @app.get("/search", response_class=HTMLResponse)
 def search_view(request: Request, q: str = ""):
-    # Hybrid (BM25 + embeddings) over the main index. Advanced page picks index/mode.
-    results = rag.search(q, index="main", mode="hybrid") if q else []
+    # Hybrid (BM25 + embeddings) over ALL pages, sub-pages included. The advanced
+    # page picks the partition/mode and can exclude sub-pages.
+    results = rag.search(q, index="all", mode="hybrid") if q else []
     return templates.TemplateResponse(request,
         "search.html", _ctx(request, q=q, results=results)
     )
 
 
 @app.get("/search/advanced", response_class=HTMLResponse)
-def advanced_search_view(request: Request, q: str = "", index: str = "main",
-                         mode: str = "hybrid"):
-    results = rag.search(q, index=index, mode=mode) if q else []
+def advanced_search_view(request: Request, q: str = "", index: str = "all",
+                         mode: str = "hybrid", exclude_children: str = ""):
+    excl = bool(exclude_children)
+    results = rag.search(q, index=index, mode=mode, exclude_children=excl) if q else []
     return templates.TemplateResponse(request, "advanced.html", _ctx(
-        request, q=q, index=index, mode=mode, results=results,
-        indices=rag.list_indices(), modes=rag.MODES,
+        request, q=q, index=index, mode=mode, exclude_children=excl,
+        results=results, indices=rag.list_indices(), modes=rag.MODES,
         vec_off=not db.VEC_AVAILABLE))
 
 

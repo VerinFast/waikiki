@@ -62,13 +62,14 @@
                   class="{{ 'on' if nav_filter == 'starred' }}">★</button>
         </div>
         <select class="nav-sort" data-nav-sort title="Sort">
-          <option value="updated" {{ 'selected' if nav_sort != 'title' }}>Recent</option>
+          <option value="updated" {{ 'selected' if nav_sort == 'updated' }}>Recent</option>
           <option value="title" {{ 'selected' if nav_sort == 'title' }}>Title</option>
+          <option value="custom" {{ 'selected' if nav_sort == 'custom' }}>Custom</option>
         </select>
       </div>
-      <ul class="navlist">
+      <ul class="navlist {{ 'reorderable' if nav_sort == 'custom' }}">
         {% for p in nav_pages %}
-          <li>
+          <li data-slug="{{ p.slug }}" draggable="{{ 'true' if nav_sort == 'custom' else 'false' }}">
             <form method="post" action="/wiki/{{ p.slug }}/star" class="star-form">
               <input type="hidden" name="next" value="{{ current_path }}">
               <button class="star {{ 'on' if p.starred }}" type="submit"
@@ -84,6 +85,7 @@
       {% if not vec_available %}
         <p class="muted note">Vector search off (sqlite-vec not loaded) — BM25 only.</p>
       {% endif %}
+      <a class="sidebar-pin {{ 'on' if current_path == '/index' }}" href="/index">📑 Index</a>
     </aside>
     <main class="content">
       <div class="content-inner">
@@ -320,6 +322,44 @@
       });
       inp.addEventListener('blur', save);
     }
+
+    // Custom sort: drag pages to reorder the sidebar; persist to /reorder.
+    (function () {
+      var list = document.querySelector('.navlist.reorderable');
+      if (!list) return;
+      var dragEl = null;
+      list.addEventListener('dragstart', function (e) {
+        dragEl = e.target.closest('li[data-slug]');
+        if (dragEl) { dragEl.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; }
+      });
+      list.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        if (!dragEl) return;
+        var after = afterElement(e.clientY);
+        if (after == null) list.appendChild(dragEl);
+        else list.insertBefore(dragEl, after);
+      });
+      list.addEventListener('dragend', function () {
+        if (!dragEl) return;
+        dragEl.classList.remove('dragging'); dragEl = null;
+        var slugs = [].slice.call(list.querySelectorAll('li[data-slug]'))
+          .map(function (li) { return li.getAttribute('data-slug'); });
+        fetch('/reorder', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slugs: slugs })
+        });
+      });
+      function afterElement(y) {
+        var els = [].slice.call(list.querySelectorAll('li[data-slug]:not(.dragging)'));
+        var closest = { offset: -Infinity, el: null };
+        els.forEach(function (el) {
+          var box = el.getBoundingClientRect();
+          var offset = y - box.top - box.height / 2;
+          if (offset < 0 && offset > closest.offset) closest = { offset: offset, el: el };
+        });
+        return closest.el;
+      }
+    })();
 
     (function () {
       function setPref(name, val) {

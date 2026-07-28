@@ -18,11 +18,17 @@
         {% endfor %}
       </select>
     </label>
+    <label class="excl">
+      <input type="checkbox" name="exclude_children" value="1"
+             {{ 'checked' if exclude_children }}>
+      Exclude sub-pages
+    </label>
     <button class="btn primary" type="submit">Search</button>
   </form>
   <p class="muted note">
-    <strong>Index:</strong> the main index (top-level pages) or a parent page's
-    sub-page partition. <strong>Mode:</strong> hybrid = BM25 keyword + embeddings,
+    <strong>Index (partition):</strong> all pages, or a parent page's sub-page
+    partition. <strong>Exclude sub-pages</strong> restricts an all-pages search to
+    top-level pages. <strong>Mode:</strong> hybrid = BM25 keyword + embeddings,
     keyword = BM25 only, semantic = embeddings only.
     {% if vec_off %}<br><em>Vector search is off (sqlite-vec not loaded) — modes
     fall back to keyword.</em>{% endif %}

@@ -1,37 +1,31 @@
 {% extends "base.html" %}
 {% block title %}Templates — Waikiki{% endblock %}
 {% block content %}
-  <h1>Templates <span class="muted">— {{ current_wiki_name }}</span></h1>
-  <p class="muted">Start new pages from these. <code>{{ '{{title}}' }}</code> is
-    replaced with the page title.</p>
+  <div class="article-head">
+    <h1>Templates <span class="muted">— {{ current_wiki_name }}</span></h1>
+    <a class="btn primary" href="/templates/new">+ New template</a>
+  </div>
+  <p class="muted">Reusable page skeletons. Start a page from one;
+    <code>{{ '{{title}}' }}</code> becomes the page title. Templates accept
+    Markdown <strong>and arbitrary HTML</strong>.</p>
 
-  {% for t in templates_list %}
-    <details class="history">
-      <summary>{{ t.name }}
-        <a class="btn small" href="/new?template={{ t.id }}">New page →</a>
-      </summary>
-      <form method="post" action="/templates/save" class="settings">
-        <input type="hidden" name="tid" value="{{ t.id }}">
-        <label>Name <input type="text" name="name" value="{{ t.name }}"></label>
-        <label>Markdown
-          <textarea name="markdown" rows="8" style="width:100%;font-family:var(--mono)">{{ t.markdown }}</textarea>
-        </label>
-        <button class="btn primary" type="submit">Save</button>
-      </form>
-      <form method="post" action="/templates/{{ t.id }}/delete" style="display:inline"
-            onsubmit="return confirm('Delete this template?')">
-        <button class="btn danger" type="submit">Delete</button>
-      </form>
-    </details>
-  {% endfor %}
-
-  <h4>New template</h4>
-  <form method="post" action="/templates/save" class="settings">
-    <label>Name <input type="text" name="name" placeholder="e.g. Character sheet" required></label>
-    <label>Markdown
-      <textarea name="markdown" rows="6" style="width:100%;font-family:var(--mono)"
-                placeholder="# {{ '{{title}}' }}&#10;&#10;..."></textarea>
-    </label>
-    <button class="btn primary" type="submit">Create template</button>
-  </form>
+  {% if templates_list %}
+    <ul class="tpl-list">
+      {% for t in templates_list %}
+        <li>
+          <a class="tpl-name" href="/templates/{{ t.id }}/edit">{{ t.name }}</a>
+          <span class="tpl-actions">
+            <a class="btn small" href="/new?template={{ t.id }}">New page →</a>
+            <a class="btn small" href="/templates/{{ t.id }}/edit">Edit</a>
+            <form method="post" action="/templates/{{ t.id }}/delete" style="display:inline"
+                  onsubmit="return confirm('Delete this template?')">
+              <button class="btn small danger" type="submit">Delete</button>
+            </form>
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">No templates yet. <a href="/templates/new">Create one →</a></p>
+  {% endif %}
 {% endblock %}

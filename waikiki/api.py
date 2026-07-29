@@ -411,6 +411,21 @@ def templates_manage(request: Request):
         "templates.html", _ctx(request, templates_list=store.templates_list()))
 
 
+@app.get("/templates/new", response_class=HTMLResponse)
+def template_new_view(request: Request):
+    return templates.TemplateResponse(request, "template_edit.html", _ctx(
+        request, tpl={"id": "", "name": "", "markdown": ""}, is_new=True))
+
+
+@app.get("/templates/{tid}/edit", response_class=HTMLResponse)
+def template_edit_view(request: Request, tid: int):
+    tpl = store.template_get(tid)
+    if not tpl:
+        raise HTTPException(404, "Template not found")
+    return templates.TemplateResponse(request, "template_edit.html",
+        _ctx(request, tpl=tpl, is_new=False))
+
+
 @app.post("/templates/save")
 def templates_save(name: str = Form(...), markdown: str = Form(""),
                    tid: str = Form("")):

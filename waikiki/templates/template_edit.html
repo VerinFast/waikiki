@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}{{ 'New template' if is_new else 'Edit template' }} — Waikiki{% endblock %}
+{% block content %}
+  <div class="article-head">
+    <h1>{{ 'New template' if is_new else 'Edit template' }}</h1>
+    <a class="btn" href="/templates">← All templates</a>
+  </div>
+
+  <form method="post" action="/templates/save" class="settings">
+    <input type="hidden" name="tid" value="{{ tpl.id }}">
+    <label>Name
+      <input type="text" name="name" value="{{ tpl.name }}"
+             placeholder="e.g. Character sheet" required autofocus>
+    </label>
+    <label>Content <span class="muted">(Markdown &amp; HTML)</span>
+      <textarea name="markdown" rows="18"
+                style="width:100%;font-family:var(--mono)"
+                placeholder="# {{ '{{title}}' }}&#10;&#10;…">{{ tpl.markdown }}</textarea>
+    </label>
+    <p class="muted note">
+      Templates accept <strong>arbitrary HTML</strong> alongside Markdown — paste
+      custom layouts, <code>&lt;details&gt;</code>, tables, iframes, etc. Put
+      <code>{{ '{{title}}' }}</code> where the new page's title should go. Raw HTML
+      renders when this wiki has <a href="/settings">Allow raw HTML</a> turned on
+      (Settings → Content); otherwise it's shown as escaped text.
+    </p>
+    <div class="editor-actions">
+      <button class="btn primary" type="submit">{{ 'Create template' if is_new else 'Save template' }}</button>
+      <a class="btn" href="/templates">Cancel</a>
+    </div>
+  </form>
+{% endblock %}

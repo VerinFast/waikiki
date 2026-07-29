@@ -509,10 +509,10 @@ def link_index() -> dict:
 
 
 def backlinks(slug: str) -> List[dict]:
-    """Pages that link to `slug` ('what links here')."""
+    """Pages that link to `slug` ('what links here') — including sub-pages."""
     idx = link_index()
     out = []
-    for p in list_pages():
+    for p in list_pages(include_children=True):
         if p["slug"] == slug:
             continue
         page = get_page(p["slug"])
@@ -523,10 +523,11 @@ def backlinks(slug: str) -> List[dict]:
 
 
 def broken_links() -> List[dict]:
-    """Every wikilink whose target page doesn't exist (red links)."""
+    """Every wikilink whose target page doesn't exist (red links) — scans all
+    pages, sub-pages included."""
     idx = link_index()
     out = []
-    for p in list_pages():
+    for p in list_pages(include_children=True):
         page = get_page(p["slug"])
         for key in render.extract_wikilinks(page["markdown"]):
             if key not in idx:

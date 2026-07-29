@@ -126,6 +126,17 @@ def test_backlinks_and_broken(wiki):
     assert not any(b["target"] == "guide" for b in broken)
 
 
+def test_broken_links_and_backlinks_scan_children(wiki):
+    store.create_page("Parent", "the parent page")
+    store.create_page("Child", "links to [[Parent]] and to [[Nowhere Land]]")
+    store.set_parent("child", "parent")                      # child is now a sub-page
+    # a broken link inside a sub-page must still be reported
+    assert any(b["target"] == "nowhere-land" and b["from_slug"] == "child"
+               for b in store.broken_links())
+    # a sub-page linking to a top-level page counts as a backlink
+    assert "child" in [b["slug"] for b in store.backlinks("parent")]
+
+
 def test_link_by_title_resolves_in_html(wiki):
     store.create_page("Setup Guide", "content")           # slug: setup-guide
     home = store.create_page("Home", "see [[Setup Guide]]")

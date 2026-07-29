@@ -370,6 +370,9 @@ pre.diff .hunk{color:var(--muted);display:block}
 .stat .num small{font-size:.9rem;font-weight:400;color:var(--muted)}
 .stat .lbl{font-size:.8rem;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
 .stat.bad .num{color:var(--danger)}
+a.linkstat{text-decoration:none;color:inherit;cursor:pointer}
+a.linkstat:hover{border-color:var(--accent)}
+a.linkstat:hover .lbl{color:var(--accent)}
 .graphwrap{overflow-x:auto;border:1px solid var(--border);border-radius:10px;padding:.6rem;background:var(--surface)}
 .activity-graph{width:100%;max-width:660px;height:auto}
 .activity-graph .ag-title{fill:var(--text);font-size:12px;font-weight:700}

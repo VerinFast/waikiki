@@ -339,10 +339,22 @@ pre.diff .hunk{color:var(--muted);display:block}
 .sidebar-pin:hover{text-decoration:none;color:var(--text)}
 .sidebar-pin.on{color:var(--text)}
 
-/* Custom-sort drag & drop */
-.navlist.reorderable>li{cursor:grab}
-.navlist.reorderable>li a,.navlist.reorderable>li .star{-webkit-user-drag:none}
-.navlist>li.dragging{opacity:.45;background:var(--code-bg);border-radius:6px}
+/* Custom-sort drag & drop (pointer-based, via the handle) */
+.draghandle{cursor:grab;color:var(--muted);padding:0 .2rem;user-select:none;touch-action:none;font-size:.9rem}
+.draghandle:active{cursor:grabbing}
+.navlist>li.dragging{opacity:.5;background:var(--code-bg);border-radius:6px}
+
+/* Text-size (zoom) controls */
+.textzoom{display:inline-flex;gap:.15rem}
+.textzoom .histbtn{width:auto;min-width:1.9rem;padding:0 .35rem;font-size:.8rem;font-weight:700}
+.textzoom .azero{font-size:.7rem}
+
+/* Text-to-speech buttons */
+.rendered .tts-btn{opacity:0;margin-left:.3em;border:none;background:none;cursor:pointer;
+  font-size:.7em;vertical-align:middle;padding:0 2px;line-height:1}
+.rendered h1:hover .tts-btn,.rendered h2:hover .tts-btn,.rendered h3:hover .tts-btn,
+.rendered .tts-btn.speaking{opacity:.85}
+.tts-page.speaking,.tts-btn.speaking{opacity:1;color:var(--accent)}
 
 /* Index (tag) page */
 .tag-group{margin:1rem 0}

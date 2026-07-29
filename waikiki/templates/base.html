@@ -6,6 +6,14 @@
   <title>{% block title %}Waikiki{% endblock %}</title>
   <link rel="stylesheet" href="/static/themes/{{ theme }}.css">
   <style>{{ pygments_css | safe }}</style>
+  <script>
+    // Apply the saved text size before paint (all fonts are rem/em, so scaling
+    // the root font-size enlarges every text and reflows — no clipping like zoom).
+    (function () {
+      var m = document.cookie.match(/(?:^|; )waikiki_text_scale=([\d.]+)/);
+      if (m) document.documentElement.style.fontSize = (parseFloat(m[1]) * 100) + '%';
+    })();
+  </script>
 </head>
 <body>
   <header class="topbar">
@@ -14,6 +22,14 @@
               title="Back" aria-label="Back">‹</button>
       <button type="button" class="histbtn" onclick="history.forward()"
               title="Forward" aria-label="Forward">›</button>
+    </div>
+    <div class="textzoom" role="group" aria-label="Text size">
+      <button type="button" class="histbtn" onclick="wkTextScale.bump(-1)"
+              title="Smaller text" aria-label="Smaller text">A−</button>
+      <button type="button" class="histbtn azero" onclick="wkTextScale.reset()"
+              title="Reset text size" aria-label="Reset text size">A</button>
+      <button type="button" class="histbtn" onclick="wkTextScale.bump(1)"
+              title="Larger text" aria-label="Larger text">A+</button>
     </div>
     <a class="brand" href="/">🌺 Waikiki <span class="ver" title="Version">v{{ version }}</span></a>
     <form class="wiki-switch" method="post" action="/switch-wiki">
@@ -69,7 +85,8 @@
       </div>
       <ul class="navlist {{ 'reorderable' if nav_sort == 'custom' }}">
         {% for p in nav_pages %}
-          <li data-slug="{{ p.slug }}" draggable="{{ 'true' if nav_sort == 'custom' else 'false' }}">
+          <li data-slug="{{ p.slug }}">
+            {% if nav_sort == 'custom' %}<span class="draghandle" title="Drag to reorder" aria-hidden="true">⠿</span>{% endif %}
             <form method="post" action="/wiki/{{ p.slug }}/star" class="star-form">
               <input type="hidden" name="next" value="{{ current_path }}">
               <button class="star {{ 'on' if p.starred }}" type="submit"
@@ -323,32 +340,73 @@
       inp.addEventListener('blur', save);
     }
 
-    // Custom sort: drag pages to reorder the sidebar; persist to /reorder.
+    // Text size: scale the root font (all fonts are rem/em) so text grows and
+    // reflows — unlike browser zoom, which clips lines.
+    window.wkTextScale = (function () {
+      var STEPS = [0.85, 1, 1.15, 1.3, 1.5, 1.75, 2, 2.5];
+      function get() {
+        var m = document.cookie.match(/(?:^|; )waikiki_text_scale=([\d.]+)/);
+        return m ? parseFloat(m[1]) : 1;
+      }
+      function apply(s) {
+        document.documentElement.style.fontSize = (s * 100) + '%';
+        document.cookie = 'waikiki_text_scale=' + s + ';path=/;max-age=31536000;samesite=lax';
+      }
+      return {
+        get: get,
+        reset: function () { apply(1); },
+        bump: function (dir) {
+          var cur = get(), bi = 0;
+          STEPS.forEach(function (v, i) {
+            if (Math.abs(v - cur) < Math.abs(STEPS[bi] - cur)) bi = i;
+          });
+          apply(STEPS[Math.max(0, Math.min(STEPS.length - 1, bi + dir))]);
+        }
+      };
+    })();
+    document.addEventListener('keydown', function (e) {   // ⌘+/⌘-/⌘0 → text size
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === '=' || e.key === '+') { e.preventDefault(); wkTextScale.bump(1); }
+      else if (e.key === '-' || e.key === '_') { e.preventDefault(); wkTextScale.bump(-1); }
+      else if (e.key === '0') { e.preventDefault(); wkTextScale.reset(); }
+    });
+
+    // Custom sort: pointer-based drag (WKWebView's native HTML5 drag is flaky).
     (function () {
       var list = document.querySelector('.navlist.reorderable');
       if (!list) return;
-      var dragEl = null;
-      list.addEventListener('dragstart', function (e) {
-        dragEl = e.target.closest('li[data-slug]');
-        if (dragEl) { dragEl.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; }
-      });
-      list.addEventListener('dragover', function (e) {
+      var dragLi = null, startY = 0, moved = false;
+      list.addEventListener('pointerdown', function (e) {
+        var handle = e.target.closest('.draghandle');
+        if (!handle) return;
+        dragLi = handle.closest('li[data-slug]');
+        if (!dragLi) return;
         e.preventDefault();
-        if (!dragEl) return;
+        startY = e.clientY; moved = false;
+        dragLi.classList.add('dragging');
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp, { once: true });
+      });
+      function onMove(e) {
+        if (!dragLi) return;
+        if (Math.abs(e.clientY - startY) > 3) moved = true;
         var after = afterElement(e.clientY);
-        if (after == null) list.appendChild(dragEl);
-        else list.insertBefore(dragEl, after);
-      });
-      list.addEventListener('dragend', function () {
-        if (!dragEl) return;
-        dragEl.classList.remove('dragging'); dragEl = null;
-        var slugs = [].slice.call(list.querySelectorAll('li[data-slug]'))
-          .map(function (li) { return li.getAttribute('data-slug'); });
-        fetch('/reorder', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slugs: slugs })
-        });
-      });
+        if (after == null) list.appendChild(dragLi);
+        else if (after !== dragLi) list.insertBefore(dragLi, after);
+      }
+      function onUp() {
+        document.removeEventListener('pointermove', onMove);
+        if (dragLi) dragLi.classList.remove('dragging');
+        if (moved) {
+          var slugs = [].slice.call(list.querySelectorAll('li[data-slug]'))
+            .map(function (li) { return li.getAttribute('data-slug'); });
+          fetch('/reorder', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ slugs: slugs })
+          });
+        }
+        dragLi = null;
+      }
       function afterElement(y) {
         var els = [].slice.call(list.querySelectorAll('li[data-slug]:not(.dragging)'));
         var closest = { offset: -Infinity, el: null };
@@ -359,6 +417,56 @@
         });
         return closest.el;
       }
+    })();
+
+    // Text-to-speech: read the whole article or a single section aloud.
+    (function () {
+      var rendered = document.querySelector('.content .rendered');
+      if (!rendered) return;                      // only the article view
+      var supported = 'speechSynthesis' in window;
+      var current = null;
+      function cleanText(el) {
+        var c = el.cloneNode(true);
+        c.querySelectorAll('.header-anchor,.section-edit,.tts-btn,.cell-edit,button')
+          .forEach(function (n) { n.remove(); });
+        return (c.textContent || '').replace(/\s+/g, ' ').trim();
+      }
+      function reset(btn) { if (btn) { btn.textContent = btn.dataset.label; btn.classList.remove('speaking'); } }
+      function stop() { if (supported) window.speechSynthesis.cancel(); reset(current); current = null; }
+      function speak(text, btn) {
+        if (!supported) { alert("Text-to-speech isn't available here."); return; }
+        if (current === btn) { stop(); return; }  // toggle off
+        stop();
+        if (!text) return;
+        var u = new SpeechSynthesisUtterance(text);
+        u.onend = u.onerror = function () { if (current === btn) { reset(btn); current = null; } };
+        current = btn;
+        btn.dataset.label = btn.textContent; btn.textContent = '⏹'; btn.classList.add('speaking');
+        window.speechSynthesis.speak(u);
+      }
+      var head = document.querySelector('.article .article-head');
+      if (head) {
+        var pb = document.createElement('button');
+        pb.type = 'button'; pb.className = 'btn tts-page'; pb.textContent = '🔊 Listen';
+        pb.addEventListener('click', function () { speak(cleanText(rendered), pb); });
+        head.appendChild(pb);
+      }
+      rendered.querySelectorAll('h1,h2,h3').forEach(function (h) {
+        if (!h.id) return;
+        var b = document.createElement('button');
+        b.type = 'button'; b.className = 'tts-btn'; b.title = 'Read this section aloud';
+        b.textContent = '🔊';
+        b.addEventListener('click', function () {
+          var lvl = parseInt(h.tagName[1]), parts = [cleanText(h)], el = h.nextElementSibling;
+          while (el) {
+            if (/^H[1-6]$/.test(el.tagName) && parseInt(el.tagName[1]) <= lvl) break;
+            parts.push(cleanText(el)); el = el.nextElementSibling;
+          }
+          speak(parts.join('. '), b);
+        });
+        h.appendChild(b);
+      });
+      window.addEventListener('beforeunload', stop);
     })();
 
     (function () {

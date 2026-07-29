@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Custom elements — Waikiki{% endblock %}
+{% block content %}
+  <div class="article-head">
+    <h1>Custom elements <span class="muted">— {{ current_wiki_name }}</span></h1>
+    <a class="btn primary" href="/elements/new">+ New element</a>
+  </div>
+  <p class="muted">Reusable structured components (Web Components with their own
+    scoped CSS &amp; JS). Use one in a page with a fenced block named after its
+    slug:</p>
+  <pre class="diff">```infobox
+title: Spider-Man
+Real name: Peter Parker
+Publisher: Marvel Comics
+```</pre>
+
+  {% if elements_list %}
+    <ul class="tpl-list">
+      {% for e in elements_list %}
+        <li>
+          <a class="tpl-name" href="/elements/{{ e.slug }}/edit">{{ e.name }}</a>
+          <code class="muted">```{{ e.slug }}</code>
+          <span class="tpl-actions">
+            <a class="btn small" href="/elements/{{ e.slug }}/edit">Edit</a>
+            <form method="post" action="/elements/{{ e.slug }}/delete" style="display:inline"
+                  onsubmit="return confirm('Delete this element? Pages using it will show nothing.')">
+              <button class="btn small danger" type="submit">Delete</button>
+            </form>
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">No elements yet. <a href="/elements/new">Create one →</a></p>
+  {% endif %}
+{% endblock %}

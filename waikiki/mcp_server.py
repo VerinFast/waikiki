@@ -23,7 +23,8 @@ import httpx
 from fastmcp import FastMCP
 from mcp.types import Icon
 
-from . import accesslog, config, db, edits, imagegen, rag, render, store, wikis
+from . import (accesslog, config, db, edits, elements, imagegen, rag, render,
+               store, wikis)
 
 WEB = config.WEB_URL
 _ACTIVE_FILE = config.DATA_DIR / "mcp_active_wiki"
@@ -408,6 +409,60 @@ def create_from_template(template_name: str, title: str) -> dict:
     if not page:
         return {"wiki": wiki, "error": f"no template '{template_name}'"}
     return {"wiki": wiki, "slug": page["slug"], "title": page["title"]}
+
+
+@mcp.tool
+def list_elements() -> dict:
+    """List the wiki's custom elements — reusable structured components (Web
+    Components with scoped CSS/JS) invoked from a page via a ```<slug> fenced
+    block. Returns each element's slug, name, and field schema."""
+    wiki = _require_wiki()
+    import json as _json
+    out = []
+    for e in elements.list_elements():
+        try:
+            fields = _json.loads(e["fields"] or "[]")
+        except Exception:
+            fields = []
+        out.append({"slug": e["slug"], "name": e["name"], "fields": fields})
+    return {"wiki": wiki, "elements": out}
+
+
+@mcp.tool
+def get_element(slug: str) -> dict:
+    """Get a custom element's full definition (fields, html, css, js)."""
+    wiki = _require_wiki()
+    el = elements.get_element(slug)
+    if not el:
+        return {"wiki": wiki, "error": f"no element '{slug}' in {wiki}"}
+    return {"wiki": wiki, **el}
+
+
+@mcp.tool
+def create_element(name: str, fields: list[str], html: str, css: str = "",
+                   js: str = "", slug: str = "") -> dict:
+    """Create (or update) a custom element — an HTML5 Web Component with Shadow
+    DOM (scoped CSS, encapsulated JS). Invoke it in a page with a ```<slug> fenced
+    block of `key: value` lines.
+
+    fields: a list like ["title*", "image", "publisher*"] — a trailing * marks a
+    required field (a block missing one renders an error). html is the shadow-DOM
+    template; field values interpolate as {{field}} (escaped). css is scoped; js
+    runs with (root, props, host) and can build richer DOM. Templates and pages
+    can require an element's fields. Slug defaults to a slugified name."""
+    wiki = _require_wiki()
+    saved = elements.save_element(slug, name, fields, html, css, js)
+    store.rerender_all()
+    return {"wiki": wiki, "slug": saved, "usage": f"```{saved}"}
+
+
+@mcp.tool
+def delete_element(slug: str) -> dict:
+    """Delete a custom element. Pages that used it will render nothing for it."""
+    wiki = _require_wiki()
+    elements.delete_element(slug)
+    store.rerender_all()
+    return {"wiki": wiki, "deleted": slug}
 
 
 @mcp.tool

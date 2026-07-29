@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ 'New element' if is_new else 'Edit element' }} — Waikiki{% endblock %}
+{% block content %}
+  <div class="article-head">
+    <h1>{{ 'New element' if is_new else 'Edit element' }}</h1>
+    <a class="btn" href="/elements">← All elements</a>
+  </div>
+
+  <form method="post" action="/elements/save" class="settings element-editor" id="element-form">
+    <div class="el-grid">
+      <label>Name
+        <input type="text" name="name" value="{{ el.name }}" placeholder="Infobox" required>
+      </label>
+      <label>Slug <span class="muted">(the ```fence name)</span>
+        <input type="text" name="slug" value="{{ el.slug }}" placeholder="infobox"
+               {{ 'readonly' if not is_new }}>
+      </label>
+    </div>
+
+    <label>Fields <span class="muted">(one per line; <code>name*</code> = required;
+        <code>name* | Label</code>)</span>
+      <textarea name="fields" id="ed-fields" rows="4"
+                style="width:100%;font-family:var(--mono)"
+                placeholder="title*&#10;image&#10;publisher">{{ fields_text }}</textarea>
+    </label>
+
+    <div class="el-code">
+      <div class="el-pane">
+        <div class="el-pane-head">HTML <span class="muted">(shadow DOM · <code>{{ '{{field}}' }}</code>)</span>
+          <button type="button" class="btn small" data-fmt="html">Format</button></div>
+        <textarea name="html" id="ed-html">{{ el.html }}</textarea>
+      </div>
+      <div class="el-pane">
+        <div class="el-pane-head">CSS <span class="muted">(scoped)</span>
+          <button type="button" class="btn small" data-fmt="css">Format</button></div>
+        <textarea name="css" id="ed-css">{{ el.css }}</textarea>
+      </div>
+      <div class="el-pane">
+        <div class="el-pane-head">JS <span class="muted">(<code>root, props, host</code>)</span>
+          <button type="button" class="btn small" data-fmt="js">Format</button></div>
+        <textarea name="js" id="ed-js">{{ el.js }}</textarea>
+      </div>
+    </div>
+
+    <p class="muted note">HTML/CSS/JS render inside a <strong>Shadow DOM</strong> — CSS
+      is scoped and JS is encapsulated. Field values interpolate as
+      <code>{{ '{{field}}' }}</code> (escaped); the JS runs with <code>root</code>
+      (shadow root), <code>props</code>, and <code>host</code>. Theme CSS variables
+      (e.g. <code>var(--accent)</code>) pierce into the shadow DOM. Templates and
+      pages invoke the element with <code>```{{ el.slug or 'slug' }}</code> and must
+      supply its required fields.</p>
+
+    <div class="editor-actions">
+      <button class="btn primary" type="submit">{{ 'Create element' if is_new else 'Save element' }}</button>
+      <button class="btn" type="button" id="el-preview-btn">Preview ↻</button>
+      <a class="btn" href="/elements">Cancel</a>
+    </div>
+  </form>
+
+  <h3>Preview <span class="muted">(sample data)</span></h3>
+  <div id="el-preview" class="el-preview"><em class="muted">Click Preview to render with sample field values.</em></div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/element_editor.js"></script>
+{% endblock %}

@@ -381,6 +381,19 @@ a.linkstat:hover .lbl{color:var(--accent)}
 .allcols li{break-inside:avoid}
 @media(max-width:720px){.allcols{columns:1}}
 
+/* Custom elements */
+.element-error{border:1px solid var(--danger);border-radius:8px;padding:.6rem .8rem;
+  background:color-mix(in srgb,var(--danger) 10%,transparent);color:var(--danger);margin:1rem 0}
+.wk-element-host{margin:.5rem 0}
+.el-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.el-code{display:grid;grid-template-columns:1fr;gap:1rem;margin:1rem 0}
+.el-pane-head{display:flex;justify-content:space-between;align-items:center;font-weight:600;margin-bottom:.3rem}
+.el-code textarea{width:100%;min-height:150px;font-family:var(--mono);font-size:.85rem;
+  padding:.5rem;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text)}
+.el-code .CodeMirror{border:1px solid var(--border);border-radius:8px;height:auto;min-height:150px;font-size:.85rem}
+.el-preview{border:1px dashed var(--border);border-radius:10px;padding:1rem;min-height:80px;overflow:auto;background:var(--surface)}
+@media(max-width:720px){.el-grid{grid-template-columns:1fr}}
+
 /* Templates list */
 .tpl-list{list-style:none;padding:0;margin:1rem 0}
 .tpl-list li{display:flex;justify-content:space-between;align-items:center;gap:1rem;

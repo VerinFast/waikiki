@@ -17,6 +17,7 @@ def _home() -> str:
         "- [[Editing & Formatting]] — markdown, tables, wikilinks, sections, "
         "properties\n"
         "- [[Templates]] — reusable page skeletons\n"
+        "- [[Custom Elements]] — structured components (infoboxes, cards, …)\n"
         "- [[Wikis & Isolation]] — multiple isolated wikis, switching, save/open\n"
         "- [[AI & Chat]] — generate drafts, and chat with an article\n"
         "- [[Connect Claude]] — let Claude Desktop read & edit your wikis over MCP\n"
@@ -82,6 +83,36 @@ def _templates() -> str:
         "- `list_templates` — see available templates.\n"
         "- `create_template(name, markdown)` — add or replace one.\n"
         "- `create_from_template(name, title)` — make a page from a template.\n"
+    )
+
+
+def _elements() -> str:
+    return (
+        "# Custom Elements\n\n"
+        "Custom elements are reusable **structured components** — infoboxes, cards, "
+        "stat blocks — that keep the wiki markup simple but produce clean, "
+        "structured output. Each is a real HTML5 **Web Component** with a Shadow "
+        "DOM, so it has its own scoped CSS and encapsulated JS.\n\n"
+        "## Using one\n"
+        "Invoke an element in a page with a fenced block named after its slug, with "
+        "`key: value` lines:\n\n"
+        "```\n"
+        "```infobox\ntitle: Spider-Man\nReal name: Peter Parker\nPublisher: Marvel\n```\n"
+        "```\n\n"
+        "The built-in **infobox** renders a titled card; `title` is required and any "
+        "other lines become rows.\n\n"
+        "## Required metadata\n"
+        "An element declares fields; ones marked required **must** be present or the "
+        "block renders an inline error. Templates can embed element blocks and thus "
+        "require that metadata up front.\n\n"
+        "## Creating & editing\n"
+        "**Settings → Elements** lists them, each with its own edit page: a name, a "
+        "slug, a **Fields** list (`name*` = required), and **HTML / CSS / JS** "
+        "editors (syntax-highlighted, with Format and a live Preview). Theme "
+        "variables like `var(--accent)` pierce into the shadow DOM.\n\n"
+        "## For Claude (MCP)\n"
+        "`list_elements`, `get_element`, `create_element(name, fields, html, css, "
+        "js)`, `delete_element`. Fields are a list like `[\"title*\", \"image\"]`.\n"
     )
 
 
@@ -170,6 +201,7 @@ def seed() -> None:
         _upsert("Getting Started", _home(), overwrite=False)
         _upsert("Editing & Formatting", _editing(), overwrite=False)
         _upsert("Templates", _templates(), overwrite=False)
+        _upsert("Custom Elements", _elements(), overwrite=False)
         _upsert("Wikis & Isolation", _wikis(), overwrite=False)
         _upsert("AI & Chat", _ai(), overwrite=False)
         _upsert("Connect Claude", _connect(), overwrite=False)

@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 
-from . import db, edits, rag, render, structure
+from . import db, edits, elements, rag, render, structure
 
 _INCLUDE = re.compile(r"!\[\[([^\]]+?)\]\]")   # ![[Page]] / ![[Page#Section]] transclusion
 
@@ -422,7 +422,17 @@ def render_html(markdown: str) -> str:
     meta, _tags, body = structure.parse_frontmatter(markdown)
     body = _expand_includes(body)
     body = _interpolate_props(body, meta)
+    # Custom elements: swap ```<slug> fenced blocks for Web Components (only bother
+    # touching the DB registry when the page actually contains a fenced block).
+    slots = []
+    if "```" in body:
+        reg = elements.registry()
+        if reg:
+            body, slots = elements.expand(body, reg)
     html = render.render_markdown(body, link_index().get, allow_html=allow_html)
+    if slots:
+        html, used = elements.fill(html, slots)
+        html += elements.defs_script(used)
     return render.infobox(meta) + html
 
 

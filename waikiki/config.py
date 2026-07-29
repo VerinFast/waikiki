@@ -93,6 +93,45 @@ DEFAULT_TEMPLATES = [
      "## About\n\n## Notes\n"),
 ]
 
+# Built-in custom element(s) seeded into each wiki (editable/removable in the UI).
+# Each: (slug, name, fields-json, shadow-DOM html, scoped css, encapsulated js).
+# fields: [{"name","required","label"}]. Required fields must be present in a
+# block or it renders an error. Extra fields flow through as rows.
+DEFAULT_ELEMENTS = [
+    (
+        "infobox",
+        "Infobox",
+        '[{"name": "title", "required": true, "label": "Title"}]',
+        '<div class="ib">\n'
+        '  <div class="ib-title"></div>\n'
+        '  <div class="ib-img"></div>\n'
+        '  <table class="ib-rows"></table>\n'
+        '</div>',
+        ".ib{float:right;max-width:300px;margin:0 0 1rem 1.2rem;border:1px solid "
+        "var(--border,#ccc);border-radius:10px;overflow:hidden;background:var(--surface,#fff);"
+        "font-family:var(--font,sans-serif);font-size:.9rem;color:var(--text,#111)}\n"
+        ".ib-title{background:var(--accent,#0969da);color:var(--accent-contrast,#fff);"
+        "font-weight:700;padding:.5rem .7rem;text-align:center}\n"
+        ".ib-img img{width:100%;display:block}\n"
+        ".ib-rows{width:100%;border-collapse:collapse}\n"
+        ".ib-rows th,.ib-rows td{border-top:1px solid var(--border,#eee);padding:.35rem .6rem;"
+        "text-align:left;vertical-align:top}\n"
+        ".ib-rows th{width:40%;color:var(--muted,#666);font-weight:600}",
+        "root.querySelector('.ib-title').textContent = props.title || '';\n"
+        "var img = props.image || props.Image;\n"
+        "if (img) { var im = document.createElement('img'); im.src = img; "
+        "im.alt = props.title || ''; root.querySelector('.ib-img').appendChild(im); }\n"
+        "var tb = root.querySelector('.ib-rows');\n"
+        "Object.keys(props).forEach(function (k) {\n"
+        "  if (k.toLowerCase() === 'title' || k.toLowerCase() === 'image') return;\n"
+        "  var tr = document.createElement('tr');\n"
+        "  var th = document.createElement('th'); th.textContent = k;\n"
+        "  var td = document.createElement('td'); td.textContent = props[k];\n"
+        "  tr.appendChild(th); tr.appendChild(td); tb.appendChild(tr);\n"
+        "});",
+    ),
+]
+
 # Retrieval / chunking -----------------------------------------------------------
 CHUNK_CHARS = 1000
 CHUNK_OVERLAP = 150

@@ -19,8 +19,8 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from . import (accesslog, ai, appconfig, chat, collab, config, db, debuglog,
-               edits, embeddings, help_content, imagegen, pdfgen, rag, render,
-               store, wikis)
+               edits, elements, embeddings, help_content, imagegen, pdfgen, rag,
+               render, store, wikis)
 
 
 @asynccontextmanager
@@ -463,6 +463,48 @@ def templates_save(name: str = Form(...), markdown: str = Form(""),
 def templates_delete(tid: int):
     store.template_delete(tid)
     return RedirectResponse("/templates", status_code=303)
+
+
+# --- Custom elements ---------------------------------------------------------
+
+@app.get("/elements", response_class=HTMLResponse)
+def elements_manage(request: Request):
+    return templates.TemplateResponse(request, "elements.html",
+        _ctx(request, elements_list=elements.list_elements()))
+
+
+@app.get("/elements/new", response_class=HTMLResponse)
+def element_new_view(request: Request):
+    blank = {"slug": "", "name": "", "fields": "[]", "html": "", "css": "", "js": ""}
+    return templates.TemplateResponse(request, "element_edit.html",
+        _ctx(request, el=blank, fields_text="", is_new=True))
+
+
+@app.get("/elements/{slug}/edit", response_class=HTMLResponse)
+def element_edit_view(request: Request, slug: str):
+    el = elements.get_element(slug)
+    if not el:
+        raise HTTPException(404, "Element not found")
+    return templates.TemplateResponse(request, "element_edit.html", _ctx(
+        request, el=el, fields_text=elements.fields_to_text(el["fields"]), is_new=False))
+
+
+@app.post("/elements/save")
+def elements_save(request: Request, slug: str = Form(""), name: str = Form(...),
+                  fields: str = Form(""), html: str = Form(""), css: str = Form(""),
+                  js: str = Form("")):
+    if not name.strip():
+        return RedirectResponse("/elements", status_code=303)
+    saved = elements.save_element(slug, name.strip(), fields, html, css, js)
+    store.rerender_all()   # element changed → refresh pages that use it
+    return RedirectResponse(f"/elements/{saved}/edit", status_code=303)
+
+
+@app.post("/elements/{slug}/delete")
+def elements_delete(slug: str):
+    elements.delete_element(slug)
+    store.rerender_all()
+    return RedirectResponse("/elements", status_code=303)
 
 
 class TableCell(BaseModel):

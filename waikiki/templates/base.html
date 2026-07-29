@@ -6,6 +6,7 @@
   <title>{% block title %}Waikiki{% endblock %}</title>
   <link rel="stylesheet" href="/static/themes/{{ theme }}.css">
   <style>{{ pygments_css | safe }}</style>
+  <script src="/static/elements.js" defer></script>
   <script>
     // Apply the saved text size before paint (all fonts are rem/em, so scaling
     // the root font-size enlarges every text and reflows — no clipping like zoom).
@@ -51,6 +52,7 @@
         <div class="menu-items">
           <a href="/settings">Settings</a>
           <a href="/templates">Templates</a>
+          <a href="/elements">Elements</a>
           <a href="/tags">Tags</a>
           <a href="/changes">Changes</a>
           <a href="/trash">Trash</a>

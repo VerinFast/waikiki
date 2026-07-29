@@ -223,6 +223,15 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity(ts);
 
+CREATE TABLE IF NOT EXISTS custom_elements (
+    slug   TEXT PRIMARY KEY,       -- invoked from ```<slug> fenced blocks
+    name   TEXT NOT NULL,
+    fields TEXT NOT NULL DEFAULT '[]',   -- JSON [{"name","required","label"}]
+    html   TEXT NOT NULL DEFAULT '',     -- shadow-DOM template
+    css    TEXT NOT NULL DEFAULT '',     -- scoped CSS
+    js     TEXT NOT NULL DEFAULT ''      -- encapsulated JS (root, props, host)
+);
+
 CREATE TABLE IF NOT EXISTS images (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     filename   TEXT NOT NULL,
@@ -293,6 +302,11 @@ def _ensure_schema(conn) -> None:
         conn.execute(
             "INSERT OR IGNORE INTO templates(name, markdown) VALUES (?, ?)",
             (name, markdown),
+        )
+    for slug, name, fields, html, css, js in config.DEFAULT_ELEMENTS:
+        conn.execute(
+            "INSERT OR IGNORE INTO custom_elements(slug, name, fields, html, css, js) "
+            "VALUES (?, ?, ?, ?, ?, ?)", (slug, name, fields, html, css, js),
         )
     conn.commit()
 

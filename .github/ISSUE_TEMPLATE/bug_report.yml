@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in Waikiki isn't working right
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Waikiki version
+      description: Shown in the top bar (e.g. v0.6.2) or on the About page.
+      placeholder: v0.6.2
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+        3. …
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / errors
+      description: >
+        Help → Access log and Help → CLI debug often show the cause — paste any
+        errors or slow calls here.
+      render: text

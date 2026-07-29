@@ -1,0 +1,35 @@
+# Dependabot version updates. Security updates are separate and enabled in
+# Settings → Code security. No CI workflows are triggered by this file.
+version: 2
+updates:
+  # Python dependencies (requirements.txt + requirements-local.txt).
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Roll all minor/patch bumps into one PR to keep review light; majors get
+      # their own PR so they can be evaluated individually.
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions — enable once CI workflows exist (see ROADMAP). This does NOT
+  # run any workflow; it just keeps action pins current. Uncomment when ready:
+  # - package-ecosystem: "github-actions"
+  #   directory: "/"
+  #   schedule:
+  #     interval: "weekly"
+  #   labels:
+  #     - "dependencies"
+  #     - "ci"
+  #   commit-message:
+  #     prefix: "ci"

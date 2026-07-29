@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Setup & usage help
+    url: https://github.com/VerinFast/waikiki#readme
+    about: The README and the in-app Help wiki cover install, Claude/MCP setup, and usage.

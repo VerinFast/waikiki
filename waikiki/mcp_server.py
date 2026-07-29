@@ -393,8 +393,8 @@ def create_template(name: str, markdown: str) -> dict:
     """Create (or update) a page template in the active wiki. Put {{title}} where
     the page title should go — new pages made from it fill that in. Frontmatter is
     fine (e.g. a Character template with HitPoints / Class properties), and the
-    body may contain arbitrary HTML in addition to Markdown — raw HTML renders
-    only when the wiki has 'Allow raw HTML' enabled (Settings → Content)."""
+    body may contain arbitrary HTML in addition to Markdown — it renders (raw HTML
+    is on by default; can be turned off per wiki in Settings → Content)."""
     wiki = _require_wiki()
     store.template_save(name, markdown)
     return {"wiki": wiki, "template": name}

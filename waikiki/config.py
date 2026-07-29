@@ -58,8 +58,9 @@ DEFAULT_SETTINGS = {
     # after N days. 0 = unlimited / never.
     "retention_versions": "50",
     "retention_trash_days": "30",
-    # Allow raw HTML in markdown (per wiki). Local/trusted use; off by default.
-    "allow_html": "0",
+    # Allow raw HTML in markdown (per wiki). On by default: all content is local
+    # and only editable by the user and their local agent, so HTML is safe here.
+    "allow_html": "1",
     # AI text generation (the editor's "Generate" button). Provider is
     # {anthropic (cloud), ollama (local, e.g. phi3)}.
     "gen_provider": "anthropic",

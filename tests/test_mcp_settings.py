@@ -14,9 +14,9 @@ def test_get_and_set_setting_allowlist(wiki, monkeypatch):
     assert got["wiki"] == "main"
     assert got["settings"]["image_style_prompt"] == "clockwork punk pixel art"
 
-    # disallowed key is rejected and NOT written
-    bad = mcp_server.set_setting("allow_html", "1")
-    assert "error" in bad and db.get_setting("allow_html", "0") == "0"
+    # disallowed key is rejected and NOT written (allow_html defaults on = "1")
+    bad = mcp_server.set_setting("allow_html", "0")
+    assert "error" in bad and db.get_setting("allow_html", "1") == "1"
 
     # enum validation
     assert "error" in mcp_server.set_setting("gen_provider", "bogus")

@@ -418,7 +418,7 @@ def _interpolate_props(text: str, local_meta: dict) -> str:
 def render_html(markdown: str) -> str:
     """Render for the active wiki: frontmatter infobox + transclusions +
     property interpolation + link-by-title + per-wiki HTML setting."""
-    allow_html = db.get_setting("allow_html", "0") == "1"
+    allow_html = db.get_setting("allow_html", "1") == "1"
     meta, _tags, body = structure.parse_frontmatter(markdown)
     body = _expand_includes(body)
     body = _interpolate_props(body, meta)

@@ -35,9 +35,10 @@ def test_templates_seeded_and_create(wiki):
     assert "# Setup Guide" in store.get_page(p["slug"])["markdown"]
 
 
-def test_allow_html_per_wiki(wiki):
+def test_allow_html_on_by_default_and_optional_off(wiki):
+    assert db.get_setting("allow_html", "1") == "1"      # on by default (local/trusted)
     store.create_page("H", '<div class="box">hi</div>')
-    assert "<div" not in store.get_page("h")["html"]     # default: escaped
-    db.set_setting("allow_html", "1")
+    assert "<div" in store.get_page("h")["html"]         # renders by default
+    db.set_setting("allow_html", "0")
     store.rerender_all()
-    assert "<div" in store.get_page("h")["html"]         # opt-in: passes through
+    assert "<div" not in store.get_page("h")["html"]     # can be turned off per wiki

@@ -19,10 +19,10 @@
     </label>
     <p class="muted note">
       Templates accept <strong>arbitrary HTML</strong> alongside Markdown — paste
-      custom layouts, <code>&lt;details&gt;</code>, tables, iframes, etc. Put
-      <code>{{ '{{title}}' }}</code> where the new page's title should go. Raw HTML
-      renders when this wiki has <a href="/settings">Allow raw HTML</a> turned on
-      (Settings → Content); otherwise it's shown as escaped text.
+      custom layouts, <code>&lt;details&gt;</code>, tables, iframes, etc. — and it
+      renders. (Raw HTML is on by default because all content is local; you can
+      turn it off per wiki in <a href="/settings">Settings → Content</a>.) Put
+      <code>{{ '{{title}}' }}</code> where the new page's title should go.
     </p>
     <div class="editor-actions">
       <button class="btn primary" type="submit">{{ 'Create template' if is_new else 'Save template' }}</button>

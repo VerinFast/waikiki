@@ -38,6 +38,29 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             print(f"[waikiki] help seed skipped: {exc}")
 
+    async def _migrate_html_default():
+        # One-time: raw HTML is now on by default (all content is local/trusted).
+        # Flip existing wikis that still have the old off value, and re-render.
+        import anyio
+        if appconfig.get("html_default_on_v1"):
+            return
+
+        def do():
+            for w in wikis.list_wikis():
+                db.current_wiki.set(w["slug"])
+                try:
+                    if db.get_setting("allow_html", "1") != "1":
+                        db.set_setting("allow_html", "1")
+                        store.rerender_all()
+                except Exception as exc:
+                    print(f"[waikiki] html-default migration for {w['slug']}: {exc}")
+            appconfig.set("html_default_on_v1", True)
+
+        try:
+            await anyio.to_thread.run_sync(do)
+        except Exception as exc:
+            print(f"[waikiki] html-default migration skipped: {exc}")
+
     # Pre-load the embedding model once (under the default wiki context), off the
     # event loop, so the first search and a concurrent reindex don't race to load.
     async def _warm():
@@ -71,6 +94,7 @@ async def lifespan(app: FastAPI):
     async with collab.server:                       # start the CRDT websocket server
         warm_task = asyncio.create_task(_warm())
         seed_task = asyncio.create_task(_seed_help())
+        html_task = asyncio.create_task(_migrate_html_default())
         flush_task = asyncio.create_task(collab.flusher())
         retention_task = asyncio.create_task(_retention())
         try:
@@ -78,6 +102,7 @@ async def lifespan(app: FastAPI):
         finally:
             warm_task.cancel()
             seed_task.cancel()
+            html_task.cancel()
             flush_task.cancel()
             retention_task.cancel()
 

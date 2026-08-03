@@ -8,7 +8,10 @@ from waikiki.api import app
 
 
 def test_rest_and_collab_flow(wiki):
-    with TestClient(app) as c:
+    # client=loopback: this exercises the app as its owner does (the desktop
+    # window always connects over 127.0.0.1). Network callers are covered in
+    # test_auth.py, where LAN sharing gates them behind a password.
+    with TestClient(app, client=("127.0.0.1", 12345)) as c:
         # --- create + read ---
         r = c.post("/api/pages", json={"title": "Reef", "markdown": "coral reef life"})
         assert r.status_code == 200

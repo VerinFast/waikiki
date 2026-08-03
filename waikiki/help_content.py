@@ -19,6 +19,7 @@ def _home() -> str:
         "- [[Templates]] — reusable page skeletons\n"
         "- [[Custom Elements]] — structured components (infoboxes, cards, …)\n"
         "- [[Wikis & Isolation]] — multiple isolated wikis, switching, save/open\n"
+        "- [[Sharing]] — let others on your network read and edit\n"
         "- [[AI & Chat]] — generate drafts, and chat with an article\n"
         "- [[Connect Claude]] — let Claude Desktop read & edit your wikis over MCP\n"
         "- [[About]] — version, repository, license\n\n"
@@ -132,6 +133,34 @@ def _wikis() -> str:
     )
 
 
+def _sharing() -> str:
+    return (
+        "# Sharing\n\n"
+        "Waikiki normally listens only on your own machine. You can open it to "
+        "your local network so family or teammates can read and edit alongside "
+        "you — including live co-editing on the same page.\n\n"
+        "## Turning it on\n"
+        "**Settings → Share on your network**: set a password, tick the box, then "
+        "**restart Waikiki** (the network port is opened at startup). Settings "
+        "then shows the address to hand out, e.g. `http://192.168.1.42:8787`.\n\n"
+        "## Who can do what\n"
+        "- **You (owner)** — anyone using Waikiki *on this computer* gets full "
+        "access, no password.\n"
+        "- **Guests** — people who sign in over the network can read and edit "
+        "pages, use search, and co-edit live. They **cannot** open Settings, "
+        "manage wikis or elements, view the logs, or use Chat and image "
+        "generation.\n\n"
+        "That last restriction is deliberate: those features run programs on "
+        "*your* computer (and Settings can change which program), so handing out "
+        "the wiki password would otherwise hand out far more than the wiki.\n\n"
+        "## What this is not\n"
+        "One shared password over plain HTTP, for a network you trust. Traffic "
+        "isn't encrypted, everyone shares one password, and there are no per-user "
+        "accounts. Fine for a home or small office; not for the open internet. "
+        "It's off by default, and clearing the password turns it off.\n"
+    )
+
+
 def _ai() -> str:
     return (
         "# AI & Chat\n\n"
@@ -203,6 +232,7 @@ def seed() -> None:
         _upsert("Templates", _templates(), overwrite=False)
         _upsert("Custom Elements", _elements(), overwrite=False)
         _upsert("Wikis & Isolation", _wikis(), overwrite=False)
+        _upsert("Sharing", _sharing(), overwrite=False)
         _upsert("AI & Chat", _ai(), overwrite=False)
         _upsert("Connect Claude", _connect(), overwrite=False)
         # System prompts: created once, then owned by the user (never overwritten).

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — Waikiki</title>
+  <link rel="stylesheet" href="/static/themes/{{ theme }}.css">
+</head>
+<body class="loginpage">
+  <form class="loginbox" method="post" action="/login">
+    <h1>🌺 Waikiki</h1>
+    <p class="muted">This wiki is shared on the local network. Enter the password
+      to continue.</p>
+    {% if error %}<div class="banner err">Incorrect password.</div>{% endif %}
+    <input type="hidden" name="next" value="{{ next }}">
+    <input type="password" name="password" placeholder="Password" autofocus required>
+    <button class="btn primary" type="submit">Sign in</button>
+    <p class="muted note">Guests can read and edit pages. Settings, wiki
+      management, and the AI tools that run on the host stay with the owner.</p>
+  </form>
+</body>
+</html>

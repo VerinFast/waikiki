@@ -43,15 +43,25 @@ def main() -> None:
         mcp_server.main()
         return
 
+    # Bind beyond loopback only when the owner has turned on LAN sharing (and set
+    # a password) — see waikiki/auth.py. Read at startup, so toggling it needs a
+    # restart; that keeps the port closed by default.
+    #
+    # `host` stays the LOOPBACK address the window and health checks use: the auth
+    # middleware grants owner rights to loopback callers, so the desktop window
+    # must never load via 0.0.0.0 or its own LAN IP or we'd lock the owner out of
+    # their own Settings. `bind_host` is what uvicorn listens on.
+    from waikiki import auth
     host = config.HOST
     port = _pick_port(host, config.PORT)
+    bind_host = "0.0.0.0" if (host == "127.0.0.1" and auth.share_lan_enabled()) else host
 
     # Headless mode (used to smoke-test the packaged binary without a display):
     # run the server in the foreground, no window.
     if os.environ.get("WAIKIKI_HEADLESS"):
         print(f"Waikiki (headless) on http://{host}:{port}")
         uvicorn.Server(
-            uvicorn.Config(fastapi_app, host=host, port=port, log_level="info")
+            uvicorn.Config(fastapi_app, host=bind_host, port=port, log_level="info")
         ).run()
         return
 
@@ -96,7 +106,7 @@ def main() -> None:
                 return {"ok": False, "error": str(exc)}
 
     server = uvicorn.Server(
-        uvicorn.Config(fastapi_app, host=host, port=port, log_level="warning")
+        uvicorn.Config(fastapi_app, host=bind_host, port=port, log_level="warning")
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()

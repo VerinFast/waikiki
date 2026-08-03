@@ -7,6 +7,7 @@ import difflib
 import json
 import sys
 import tempfile
+from urllib.parse import quote
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,9 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import (accesslog, ai, appconfig, chat, collab, config, db, debuglog,
-               edits, elements, embeddings, help_content, imagegen, pdfgen, rag,
-               render, store, wikis)
+from . import (accesslog, ai, appconfig, auth, chat, collab, config, db,
+               debuglog, edits, elements, embeddings, help_content, imagegen,
+               pdfgen, rag, render, store, wikis)
 
 
 @asynccontextmanager
@@ -195,7 +196,68 @@ class AccessLogMiddleware:
                        dur, ua, ref)
 
 
+class ShareAuthMiddleware:
+    """Password-gate non-loopback requests when LAN sharing is on.
+
+    Loopback callers are the owner (full access). Network callers must present a
+    valid session cookie and are restricted to page reading/editing — see
+    auth.guest_may(), which blocks anything that runs a local command (chat,
+    image generation) or reconfigures the host (settings, wikis, logs)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        path = scope.get("path", "") or "/"
+        if path.startswith("/static") or path in ("/login", "/logout"):
+            return await self.app(scope, receive, send)
+
+        client = (scope.get("client") or ("", 0))[0]
+        if auth.is_local(client):
+            scope["waikiki_role"] = "owner"
+            return await self.app(scope, receive, send)
+
+        # Non-loopback from here on.
+        if not auth.enabled():
+            return await self._deny(scope, receive, send, 403,
+                                    "Sharing is off on this Waikiki.")
+        headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+        token = ""
+        for part in headers.get("cookie", "").split(";"):
+            if "=" in part:
+                k, v = part.strip().split("=", 1)
+                if k == auth.COOKIE:
+                    token = v
+        if not auth.check_token(token):
+            if scope["type"] == "websocket":
+                return await self._close_ws(send)
+            nxt = quote(path, safe="/")
+            return await self._redirect(scope, receive, send, f"/login?next={nxt}")
+        if not auth.guest_may(path):
+            if scope["type"] == "websocket":
+                return await self._close_ws(send)
+            return await self._deny(
+                scope, receive, send, 403,
+                "That area is limited to the owner of this Waikiki (it can run "
+                "commands on their computer).")
+        scope["waikiki_role"] = "guest"
+        return await self.app(scope, receive, send)
+
+    async def _deny(self, scope, receive, send, code, msg):
+        await Response(msg, status_code=code, media_type="text/plain")(
+            scope, receive, send)
+
+    async def _redirect(self, scope, receive, send, url):
+        await RedirectResponse(url, status_code=303)(scope, receive, send)
+
+    async def _close_ws(self, send):
+        await send({"type": "websocket.close", "code": 4403})
+
+
 app.add_middleware(WikiContextMiddleware)
+app.add_middleware(ShareAuthMiddleware)
 app.add_middleware(AccessLogMiddleware)  # added last → outermost
 
 _STATIC = Path(__file__).parent / "static"
@@ -264,6 +326,9 @@ def _ctx(request: Request, **extra) -> dict:
         "current_wiki_name": wikis.name_of(wiki),
         "wikis": wikis.list_wikis(),
         "version": config.VERSION,
+        # "owner" (loopback) or "guest" (LAN, password) — templates hide the
+        # owner-only controls from guests so the UI matches what they can do.
+        "role": request.scope.get("waikiki_role", "owner"),
     }
     base.update(extra)
     return base
@@ -272,6 +337,36 @@ def _ctx(request: Request, **extra) -> dict:
 # =============================================================================
 # HTML views (human-facing)
 # =============================================================================
+
+@app.get("/login", response_class=HTMLResponse)
+def login_view(request: Request, next: str = "/", error: str = ""):
+    return templates.TemplateResponse(request, "login.html", {
+        "request": request, "next": next, "error": error,
+        "theme": db.get_setting("theme", "default"), "version": config.VERSION})
+
+
+@app.post("/login")
+def login_submit(request: Request, password: str = Form(""), next: str = Form("/")):
+    client = (request.client.host if request.client else "")
+    if not auth.is_local(client) and not auth.enabled():
+        raise HTTPException(403, "Sharing is off")
+    if not auth.verify_password(password):
+        accesslog.record("LOGIN failed", status=401, host=client or "-")
+        return RedirectResponse(f"/login?next={quote(next, safe='/')}&error=1",
+                                status_code=303)
+    accesslog.record("LOGIN ok", status=200, host=client or "-")
+    resp = RedirectResponse(next or "/", status_code=303)
+    resp.set_cookie(auth.COOKIE, auth.make_token(), httponly=True, samesite="lax",
+                    max_age=auth.SESSION_DAYS * 86400)
+    return resp
+
+
+@app.post("/logout")
+def logout_view():
+    resp = RedirectResponse("/login", status_code=303)
+    resp.delete_cookie(auth.COOKIE)
+    return resp
+
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -908,8 +1003,27 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
              style_refs=imagegen.list_style_refs(wiki),
              style_refs_dir=str(imagegen.style_reference_dir(wiki)),
              log_retention_hours=accesslog.retention_hours(),
+             share_enabled=bool(appconfig.get("share_enabled")),
+             share_has_password=auth.has_password(),
+             share_lan_urls=auth.lan_urls(config.PORT),
              msg=msg, error=error),
     )
+
+
+@app.post("/settings/sharing")
+def settings_sharing(request: Request, share_enabled: str = Form(""),
+                     password: str = Form("")):
+    """Owner-only (the middleware blocks guests from /settings/*)."""
+    if password.strip():
+        auth.set_password(password.strip())
+    want_on = bool(share_enabled)
+    if want_on and not auth.has_password():
+        return RedirectResponse(
+            "/settings?error=Set+a+password+before+enabling+sharing", status_code=303)
+    appconfig.set("share_enabled", want_on)
+    msg = ("Sharing+on+—+restart+Waikiki+to+bind+to+the+network"
+           if want_on else "Sharing+off+—+restart+to+stop+listening")
+    return RedirectResponse(f"/settings?msg={msg}", status_code=303)
 
 
 @app.get("/style-ref/{filename}")

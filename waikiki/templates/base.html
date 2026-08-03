@@ -50,9 +50,11 @@
       <details class="menu">
         <summary class="btn">Settings</summary>
         <div class="menu-items">
-          <a href="/settings">Settings</a>
+          {% if role != 'guest' %}
+            <a href="/settings">Settings</a>
+            <a href="/elements">Elements</a>
+          {% endif %}
           <a href="/templates">Templates</a>
-          <a href="/elements">Elements</a>
           <a href="/tags">Tags</a>
           <a href="/changes">Changes</a>
           <a href="/trash">Trash</a>
@@ -63,11 +65,18 @@
         <div class="menu-items">
           <a href="/help">Help contents</a>
           <a href="/help/about">About</a>
-          <a href="/connect">Connect Claude</a>
-          <a href="/logs">Access log</a>
-          <a href="/debug">CLI debug</a>
+          {% if role != 'guest' %}
+            <a href="/connect">Connect Claude</a>
+            <a href="/logs">Access log</a>
+            <a href="/debug">CLI debug</a>
+          {% endif %}
         </div>
       </details>
+      {% if role == 'guest' %}
+        <form method="post" action="/logout" class="guest-out">
+          <button class="btn" type="submit" title="You are signed in as a guest">Guest · Sign out</button>
+        </form>
+      {% endif %}
     </nav>
   </header>
   <div class="layout">

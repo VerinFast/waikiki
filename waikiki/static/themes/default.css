@@ -381,6 +381,16 @@ a.linkstat:hover .lbl{color:var(--accent)}
 .allcols li{break-inside:avoid}
 @media(max-width:720px){.allcols{columns:1}}
 
+/* Sign-in page (LAN sharing) */
+.loginpage{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg)}
+.loginbox{width:min(92vw,380px);background:var(--surface);border:1px solid var(--border);
+  border-radius:14px;padding:1.6rem;box-shadow:0 10px 40px rgba(0,0,0,.12)}
+.loginbox h1{margin:0 0 .3rem;font-size:1.4rem}
+.loginbox input[type=password]{width:100%;box-sizing:border-box;padding:.6rem .7rem;margin:.6rem 0;
+  border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:1rem}
+.loginbox .btn{width:100%}
+.guest-out{margin:0}
+
 /* Custom elements */
 .element-error{border:1px solid var(--danger);border-radius:8px;padding:.6rem .8rem;
   background:color-mix(in srgb,var(--danger) 10%,transparent);color:var(--danger);margin:1rem 0}

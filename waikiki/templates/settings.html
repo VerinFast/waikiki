@@ -166,6 +166,41 @@
 
   <section class="settings">
     <details class="settings-sec" open>
+      <summary>Share on your network <span class="muted">(all wikis)</span></summary>
+      <form method="post" action="/settings/sharing" class="settings">
+        <label class="rag-toggle">
+          <input type="checkbox" name="share_enabled" value="1"
+                 {{ 'checked' if share_enabled }}>
+          Serve this Waikiki to the local network
+        </label>
+        <label>{{ 'Change password' if share_has_password else 'Set a password' }}
+          <input type="password" name="password" autocomplete="new-password"
+                 placeholder="{{ '••••••••  (leave blank to keep)' if share_has_password else 'required to enable sharing' }}">
+        </label>
+        <button class="btn primary" type="submit">Save sharing</button>
+      </form>
+
+      {% if share_enabled and share_lan_urls %}
+        <p class="muted note">Others on your network can reach it at:
+          {% for u in share_lan_urls %}<br><code>{{ u }}</code>{% endfor %}
+          <br><strong>Restart Waikiki</strong> after turning sharing on or off —
+          the network port is opened at startup.</p>
+      {% endif %}
+
+      <p class="muted note"><strong>What guests can do.</strong> Anyone who signs
+        in with the password can read and edit pages. They cannot open Settings,
+        manage wikis or elements, view logs, or use Chat and image generation —
+        those run programs on <em>this</em> computer, so they stay with you.</p>
+      <p class="muted note"><strong>Know the limits.</strong> This is a single
+        shared password over plain HTTP, meant for a home or office network you
+        trust — not hardened multi-user security. Anyone on the network who has
+        the password can edit every wiki, and traffic isn't encrypted. It's off
+        by default.</p>
+    </details>
+  </section>
+
+  <section class="settings">
+    <details class="settings-sec" open>
       <summary>Style reference images <span class="muted">(this wiki)</span></summary>
       <p class="muted note">Images that define this wiki's art style. During image
         generation they're handed to the image CLI with <code>--add-dir</code> so it

@@ -185,6 +185,20 @@
           {% for u in share_lan_urls %}<br><code>{{ u }}</code>{% endfor %}
           <br><strong>Restart Waikiki</strong> after turning sharing on or off —
           the network port is opened at startup.</p>
+        <p class="muted note">
+          {% if bonjour_on %}
+            📡 <strong>Discoverable via Bonjour</strong> — it appears automatically
+            on Macs and iPhones on this network (Safari → Bonjour bookmarks, or
+            <code>dns-sd -B _http._tcp</code>), so guests don't need to type the
+            IP address.
+          {% elif bonjour_available %}
+            Bonjour advertising starts with the app — restart to announce this
+            wiki on the network.
+          {% else %}
+            Bonjour advertising is unavailable on this system
+            (<code>dns-sd</code> not found); hand out the address above instead.
+          {% endif %}
+        </p>
       {% endif %}
 
       <p class="muted note"><strong>What guests can do.</strong> Anyone who signs

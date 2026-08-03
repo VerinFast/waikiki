@@ -19,9 +19,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import (accesslog, ai, appconfig, auth, chat, collab, config, db,
-               debuglog, edits, elements, embeddings, help_content, imagegen,
-               pdfgen, rag, render, store, wikis)
+from . import (accesslog, ai, appconfig, auth, bonjour, chat, collab, config,
+               db, debuglog, edits, elements, embeddings, help_content,
+               imagegen, pdfgen, rag, render, store, wikis)
 
 
 @asynccontextmanager
@@ -29,6 +29,10 @@ async def lifespan(app: FastAPI):
     db.init_db()  # ensures the wiki registry + default wiki schema
     accesslog.setup()  # capture ERROR-level logs into the access log
     wikis.ensure_help_wiki()  # so the Help wiki shows in the switcher immediately
+    # Advertise on the LAN via Bonjour, but only while sharing is actually on —
+    # an unreachable wiki isn't worth announcing.
+    if auth.share_lan_enabled():
+        bonjour.start(config.PORT)
 
     async def _seed_help():
         # Populate the Help wiki (prose + editable AI system prompts) off-thread;
@@ -101,6 +105,7 @@ async def lifespan(app: FastAPI):
         try:
             yield
         finally:
+            bonjour.stop()
             warm_task.cancel()
             seed_task.cancel()
             html_task.cancel()
@@ -1006,6 +1011,8 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
              share_enabled=bool(appconfig.get("share_enabled")),
              share_has_password=auth.has_password(),
              share_lan_urls=auth.lan_urls(config.PORT),
+             bonjour_on=bonjour.is_running(),
+             bonjour_available=bonjour.available(),
              msg=msg, error=error),
     )
 

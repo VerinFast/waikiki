@@ -15,6 +15,7 @@ X-Waikiki-Wiki header; read/search tools open the wiki's SQLite file directly.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -780,8 +781,25 @@ def generate_image(slug: str, description: str) -> dict:
     return {"wiki": wiki, **result}
 
 
+def _silence_stdout_noise() -> None:
+    """Keep third-party libraries off stdout.
+
+    This server speaks JSON-RPC over stdio, so **stdout is the protocol channel**.
+    Anything else written there corrupts the stream and the client stops being able
+    to parse replies — it then hangs on every subsequent call until restarted,
+    with no error on either side. fastembed / huggingface / onnxruntime print
+    download-progress bars to stdout on a model's first load, which is exactly the
+    kind of stray write that kills the transport.
+    """
+    for var, val in (("HF_HUB_DISABLE_PROGRESS_BARS", "1"),
+                     ("HF_HUB_DISABLE_TELEMETRY", "1"),
+                     ("TQDM_DISABLE", "1")):
+        os.environ.setdefault(var, val)
+
+
 def main() -> None:
     global _ACTIVE
+    _silence_stdout_noise()
     db.init_db()
     accesslog.setup()
     _install_access_log()

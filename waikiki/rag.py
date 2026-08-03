@@ -11,6 +11,7 @@ the wiki keeps working everywhere.
 from __future__ import annotations
 
 import re
+import sys
 from typing import List, Tuple
 
 from . import config, db, embeddings
@@ -91,7 +92,7 @@ def reindex_page(page_id: int, markdown: str) -> None:
                      for cid, v in zip(chunk_ids, vectors)],
                 )
         except Exception as exc:
-            print(f"[waikiki] embedding failed for page {page_id}: {exc}")
+            print(f"[waikiki] embedding failed for page {page_id}: {exc}", file=sys.stderr)
     conn.commit()
 
 
@@ -150,7 +151,7 @@ def _vector_chunks(query: str, k: int) -> List[int]:
         ).fetchall()
         return [r["chunk_id"] for r in rows]
     except Exception as exc:
-        print(f"[waikiki] vector search failed: {exc}")
+        print(f"[waikiki] vector search failed: {exc}", file=sys.stderr)
         return []
 
 
@@ -214,7 +215,7 @@ def search_subtree(query: str, parent_id: int, k: int = config.RAG_TOP_K) -> Lis
             for rank, r in enumerate(rows):
                 scores[r["chunk_id"]] = scores.get(r["chunk_id"], 0.0) + 1.0 / (config.RRF_K + rank + 1)
         except Exception as exc:
-            print(f"[waikiki] subtree vector search failed: {exc}")
+            print(f"[waikiki] subtree vector search failed: {exc}", file=sys.stderr)
 
     rows = conn.execute(
         "SELECT c.id AS cid FROM chunks_fts f JOIN chunks c ON c.id = f.rowid "
@@ -344,7 +345,7 @@ def _vec(query: str, k: int, scope) -> List[int]:
                 break
         return out
     except Exception as exc:
-        print(f"[waikiki] scoped vector search failed: {exc}")
+        print(f"[waikiki] scoped vector search failed: {exc}", file=sys.stderr)
         return []
 
 

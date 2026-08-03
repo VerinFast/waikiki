@@ -13,6 +13,7 @@ the rest of the app uses (dict rows, `.fetchone/.fetchall`, `.lastrowid`,
 from __future__ import annotations
 
 import contextvars
+import sys
 import threading
 from typing import Optional
 
@@ -120,7 +121,11 @@ def _load_sqlite_vec(conn) -> bool:
         return True
     except Exception as exc:  # pragma: no cover - environment dependent
         VEC_AVAILABLE = False
-        print(f"[waikiki] sqlite-vec unavailable, vector search disabled: {exc}")
+        # stderr, never stdout: when this module runs inside the stdio MCP server,
+        # stdout IS the JSON-RPC channel and any stray write corrupts the protocol
+        # (the client then silently hangs on every later call until restarted).
+        print(f"[waikiki] sqlite-vec unavailable, vector search disabled: {exc}",
+              file=sys.stderr)
         return False
 
 

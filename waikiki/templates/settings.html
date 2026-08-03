@@ -215,6 +215,42 @@
 
   <section class="settings">
     <details class="settings-sec" open>
+      <summary>Share with someone remote <span class="muted">(temporary public link)</span></summary>
+      {% if tunnel_url %}
+        <p>🔗 <strong>Live now:</strong>
+          <code class="tunnelurl">{{ tunnel_url }}</code></p>
+        <p class="muted note">Send that link <em>and</em> the password to them
+          separately (text the link, say the password out loud). They'll get the
+          same guest access as someone on your network. The link dies when you
+          stop it or quit Waikiki.</p>
+        <form method="post" action="/settings/tunnel/stop">
+          <button class="btn danger" type="submit">Stop public link</button>
+        </form>
+      {% elif not tunnel_available %}
+        <p class="muted">Needs <code>cloudflared</code>. Install it with
+          <code>brew install cloudflared</code>, then restart Waikiki.</p>
+      {% elif not share_has_password %}
+        <p class="muted">Set a sharing password above first — a public link puts
+          this wiki on the internet, so it can't be left open.</p>
+      {% else %}
+        <form method="post" action="/settings/tunnel/start">
+          <button class="btn primary" type="submit">Start public link</button>
+        </form>
+        <p class="muted note">Creates a temporary <code>https://…trycloudflare.com</code>
+          address that forwards to this wiki, so someone outside your network can
+          join. Traffic is encrypted, and visitors must sign in with your sharing
+          password — they get guest access only (no Settings, no AI tools that run
+          on this computer).</p>
+      {% endif %}
+      <p class="muted note"><strong>Be deliberate about this one.</strong> Unlike
+        network sharing, the link is reachable by anyone on the internet who has
+        it. Keep it short-lived, use a password you don't use elsewhere, and stop
+        the link when you're done.</p>
+    </details>
+  </section>
+
+  <section class="settings">
+    <details class="settings-sec" open>
       <summary>Style reference images <span class="muted">(this wiki)</span></summary>
       <p class="muted note">Images that define this wiki's art style. During image
         generation they're handed to the image CLI with <code>--add-dir</code> so it

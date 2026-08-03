@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from . import (accesslog, ai, appconfig, auth, bonjour, chat, collab, config,
                db, debuglog, edits, elements, embeddings, help_content,
-               imagegen, pdfgen, rag, render, store, wikis)
+               imagegen, pdfgen, rag, render, store, tunnel, wikis)
 
 
 @asynccontextmanager
@@ -106,6 +106,7 @@ async def lifespan(app: FastAPI):
             yield
         finally:
             bonjour.stop()
+            tunnel.stop()
             warm_task.cancel()
             seed_task.cancel()
             html_task.cancel()
@@ -220,15 +221,17 @@ class ShareAuthMiddleware:
             return await self.app(scope, receive, send)
 
         client = (scope.get("client") or ("", 0))[0]
-        if auth.is_local(client):
+        headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+        # Headers matter here: a tunnel reaches us over loopback, so address alone
+        # would hand internet traffic full owner rights.
+        if auth.is_local(client, headers):
             scope["waikiki_role"] = "owner"
             return await self.app(scope, receive, send)
 
-        # Non-loopback from here on.
+        # Remote caller from here on.
         if not auth.enabled():
             return await self._deny(scope, receive, send, 403,
                                     "Sharing is off on this Waikiki.")
-        headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
         token = ""
         for part in headers.get("cookie", "").split(";"):
             if "=" in part:
@@ -353,7 +356,8 @@ def login_view(request: Request, next: str = "/", error: str = ""):
 @app.post("/login")
 def login_submit(request: Request, password: str = Form(""), next: str = Form("/")):
     client = (request.client.host if request.client else "")
-    if not auth.is_local(client) and not auth.enabled():
+    hdrs = {k.lower(): v for k, v in request.headers.items()}
+    if not auth.is_local(client, hdrs) and not auth.enabled():
         raise HTTPException(403, "Sharing is off")
     if not auth.verify_password(password):
         accesslog.record("LOGIN failed", status=401, host=client or "-")
@@ -1013,6 +1017,8 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
              share_lan_urls=auth.lan_urls(config.PORT),
              bonjour_on=bonjour.is_running(),
              bonjour_available=bonjour.available(),
+             tunnel_url=tunnel.url(),
+             tunnel_available=tunnel.available(),
              msg=msg, error=error),
     )
 
@@ -1040,6 +1046,25 @@ def serve_style_ref(filename: str):
     if not path.exists():
         raise HTTPException(404, "Not found")
     return FileResponse(str(path))
+
+
+@app.post("/settings/tunnel/start")
+async def tunnel_start(request: Request):
+    """Open a temporary public URL (owner-only — guests can't reach /settings/*)."""
+    import anyio
+    result = await anyio.to_thread.run_sync(lambda: tunnel.start(config.PORT))
+    if not result.get("ok"):
+        return RedirectResponse(f"/settings?error={quote(result.get('error', 'failed'))}",
+                                status_code=303)
+    accesslog.record("TUNNEL open", status=200, detail=result["url"])
+    return RedirectResponse("/settings?msg=Public+link+is+live", status_code=303)
+
+
+@app.post("/settings/tunnel/stop")
+def tunnel_stop():
+    tunnel.stop()
+    accesslog.record("TUNNEL closed", status=200)
+    return RedirectResponse("/settings?msg=Public+link+closed", status_code=303)
 
 
 @app.post("/settings/style-refs")

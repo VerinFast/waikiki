@@ -105,3 +105,40 @@ def test_network_blocked_entirely_when_sharing_off(wiki):
     c = TestClient(_app(), client=("192.168.1.50", 5555))
     c.cookies.set(auth.COOKIE, auth.make_token())
     assert c.get("/wiki/reef", follow_redirects=False).status_code == 403
+
+
+# --- Tunnel traffic must never be mistaken for the owner ----------------------
+
+def test_proxy_headers_defeat_loopback_owner_check():
+    """cloudflared connects over loopback; without this, internet traffic would
+    arrive as 127.0.0.1 and be handed full owner access."""
+    assert auth.is_local("127.0.0.1", {}) is True
+    for hdr in ("x-forwarded-for", "cf-connecting-ip", "cf-ray", "x-real-ip",
+                "forwarded", "cf-ipcountry"):
+        assert auth.is_local("127.0.0.1", {hdr: "1.2.3.4"}) is False, hdr
+
+
+def test_tunnel_visitor_is_a_guest_not_the_owner(wiki):
+    auth.set_password("pw")
+    appconfig.set("share_enabled", True)
+    # Simulates cloudflared: loopback client, but carrying forwarding headers.
+    c = TestClient(_app(), client=("127.0.0.1", 5555),
+                   headers={"CF-Connecting-IP": "203.0.113.9"})
+    r = c.get("/settings", follow_redirects=False)
+    assert r.status_code == 303 and "/login" in r.headers["location"]
+
+    c.cookies.set(auth.COOKIE, auth.make_token())
+    assert c.get("/wiki/reef").text == "page ok"          # signed in: can read
+    assert c.get("/settings", follow_redirects=False).status_code == 403  # not owner
+
+
+def test_tunnel_alone_enables_remote_access(wiki, monkeypatch):
+    """With LAN sharing off but a tunnel up, remote callers are still gated."""
+    from waikiki import tunnel
+    auth.set_password("pw")
+    appconfig.set("share_enabled", False)
+    assert auth.enabled() is False
+    monkeypatch.setattr(tunnel, "is_running", lambda: True)
+    assert auth.enabled() is True
+    auth.set_password("")                                  # no password, no access
+    assert auth.enabled() is False

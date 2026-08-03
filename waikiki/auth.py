@@ -49,7 +49,14 @@ def _cfg(key, default=None):
 
 
 def enabled() -> bool:
-    return bool(_cfg("share_enabled")) and bool(_cfg("share_hash"))
+    """True when remote callers may reach this wiki at all — LAN sharing on, or a
+    public tunnel running. Either way a password must be set."""
+    if not _cfg("share_hash"):
+        return False
+    if bool(_cfg("share_enabled")):
+        return True
+    from . import tunnel          # lazy: tunnel imports nothing from auth
+    return tunnel.is_running()
 
 
 def has_password() -> bool:
@@ -107,7 +114,25 @@ def check_token(token: str) -> bool:
         return False
 
 
-def is_local(client_host: str) -> bool:
+# Headers a reverse proxy / tunnel adds. Their presence means the request did
+# NOT originate on this machine, even though it arrives from 127.0.0.1.
+_PROXY_HEADERS = ("x-forwarded-for", "cf-connecting-ip", "forwarded",
+                  "cf-ray", "x-real-ip", "cf-ipcountry")
+
+
+def is_proxied(headers: dict | None) -> bool:
+    return any(h in (headers or {}) for h in _PROXY_HEADERS)
+
+
+def is_local(client_host: str, headers: dict | None = None) -> bool:
+    """Owner access = physically on this machine.
+
+    A tunnel (cloudflared) connects to the server over loopback, so the client
+    address alone would wrongly mark internet traffic as the owner — which would
+    publish Settings and the command-running endpoints to the world. Any request
+    carrying proxy/forwarding headers is therefore never treated as local."""
+    if is_proxied(headers):
+        return False
     return client_host in ("127.0.0.1", "::1", "localhost", "::ffff:127.0.0.1")
 
 

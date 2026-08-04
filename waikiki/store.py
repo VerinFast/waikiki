@@ -446,23 +446,63 @@ def get_property(slug: str, key: str) -> Optional[str]:
 
 def set_property(slug: str, key: str, value: str) -> Optional[dict]:
     """Set a frontmatter property on a page (creating the frontmatter if absent)."""
+    return set_properties(slug, {key: value})
+
+
+def set_properties(slug: str, props: dict) -> Optional[dict]:
+    """Set several frontmatter properties in ONE rewrite.
+
+    Setting them one at a time re-parses, re-renders and re-indexes the page per
+    key, and creates a version per key; batching keeps history readable and is
+    much cheaper. Keys match existing ones case/space-insensitively. A value of
+    None removes the property."""
     page = get_page(slug)
     if not page:
         return None
     meta, tags, body = structure.parse_frontmatter(page["markdown"])
-    # replace an existing key (case/space-insensitive) or add it
-    target = key
-    norm = key.replace(" ", "").lower()
-    for k in meta:
-        if k.replace(" ", "").lower() == norm:
-            target = k
-            break
-    meta[target] = value
+    for key, value in (props or {}).items():
+        target, norm = key, key.replace(" ", "").lower()
+        for k in meta:
+            if k.replace(" ", "").lower() == norm:
+                target = k
+                break
+        if value is None:
+            meta.pop(target, None)
+        else:
+            meta[target] = str(value)
     lines = [f"{k}: {v}" for k, v in meta.items()]
     if tags:
         lines.insert(0, "tags: " + ", ".join(tags))
-    fm = "---\n" + "\n".join(lines) + "\n---\n"
+    fm = ("---\n" + "\n".join(lines) + "\n---\n") if lines else ""
     return update_page(slug, page["title"], fm + body.lstrip("\n"), author="ai")
+
+
+def page_metadata(slug: str) -> Optional[dict]:
+    """Everything *about* a page without its body: properties, tags, lineage and
+    timestamps. Agents use this to discover what a page records and to tell
+    whether their copy is stale."""
+    page = get_page(slug)
+    if not page:
+        return None
+    meta, tags, _body = structure.parse_frontmatter(page["markdown"])
+    parent = None
+    if page.get("parent_id"):
+        row = db.get_conn().execute(
+            "SELECT slug, title FROM pages WHERE id=?", (page["parent_id"],)).fetchone()
+        parent = dict(row) if row else None
+    return {
+        "slug": page["slug"],
+        "title": page["title"],
+        "properties": meta,
+        "tags": tags or tags_of(slug),
+        "parent": parent,
+        "children": [c["slug"] for c in children(slug)],
+        "starred": bool(page.get("starred")),
+        "created_at": page.get("created_at"),
+        "updated_at": page.get("updated_at"),
+        "deleted_at": page.get("deleted_at"),
+        "trashed": bool(page.get("deleted_at")),
+    }
 
 
 def _index_meta(page_id: int, markdown: str) -> None:

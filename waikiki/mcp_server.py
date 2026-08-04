@@ -25,7 +25,7 @@ from fastmcp import FastMCP
 from mcp.types import Icon
 
 from . import (accesslog, config, db, edits, elements, imagegen, rag, render,
-               store, wikis)
+               store, structure, wikis)
 
 WEB = config.WEB_URL
 _ACTIVE_FILE = config.DATA_DIR / "mcp_active_wiki"
@@ -171,19 +171,35 @@ def list_pages() -> dict:
 
 @mcp.tool
 def get_page(slug: str) -> dict:
-    """Get a page's title and current markdown (reflects unsaved live edits)."""
+    """Get a page's title, current markdown, properties and freshness.
+
+    `markdown` reflects unsaved live edits when someone has the page open, so it
+    can be NEWER than `updated_at` (which is the last saved revision) — `live`
+    tells you which you got. Check `trashed` before writing: a trashed page is in
+    the bin and edits to it are probably unwanted. Compare `updated_at` against
+    what you saw last to tell whether your copy is stale."""
     wiki = _require_wiki()
     page = store.get_page(slug)
     if not page:
         return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
+    markdown, live = page["markdown"], False
     try:
         r = httpx.get(f"{WEB}/api/collab/{slug}/live", headers=_headers(), timeout=10)
-        markdown = r.json()["markdown"] if r.status_code == 200 else page["markdown"]
+        if r.status_code == 200:
+            fresh = r.json()["markdown"]
+            live = fresh != page["markdown"]
+            markdown = fresh
     except Exception:
-        markdown = page["markdown"]
+        pass
     store.log_activity("ai", "read")
+    meta, tags, _ = structure.parse_frontmatter(markdown)
     return {"wiki": wiki, "slug": page["slug"], "title": page["title"],
-            "markdown": markdown, "outline": render.extract_toc(markdown)}
+            "markdown": markdown, "outline": render.extract_toc(markdown),
+            "properties": meta, "tags": tags,
+            "updated_at": page.get("updated_at"),
+            "deleted_at": page.get("deleted_at"),
+            "trashed": bool(page.get("deleted_at")),
+            "live": live}
 
 
 @mcp.tool
@@ -578,8 +594,44 @@ def set_property(slug: str, key: str, value: str) -> dict:
 
 
 @mcp.tool
+def get_metadata(slug: str) -> dict:
+    """Everything *about* a page without its body: all properties, tags, parent
+    and children, starred, and created/updated/deleted timestamps.
+
+    Use this to DISCOVER what a page records — get_property needs a key you
+    already know, this returns them all — and to check freshness (`updated_at`)
+    or whether the page is in the bin (`trashed`) before acting on it."""
+    wiki = _require_wiki()
+    meta = store.page_metadata(slug)
+    if meta is None:
+        return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
+    return {"wiki": wiki, **meta}
+
+
+@mcp.tool
+def set_metadata(slug: str, properties: dict) -> dict:
+    """Set several page properties at once, e.g.
+    {"HitPoints": "42", "Class": "Guardian"}.
+
+    One rewrite and one history entry for the whole batch, unlike calling
+    set_property repeatedly. A null value removes that property. Properties are
+    frontmatter, so they can be referenced from any page as {{Key}} (same page)
+    or {{Slug.Key}} (cross-page)."""
+    wiki = _require_wiki()
+    if not isinstance(properties, dict) or not properties:
+        return {"wiki": wiki, "error": "properties must be a non-empty object"}
+    page = store.set_properties(slug, properties)
+    if not page:
+        return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
+    meta = store.page_metadata(slug) or {}
+    return {"wiki": wiki, "slug": slug, "properties": meta.get("properties", {}),
+            "updated_at": meta.get("updated_at")}
+
+
+@mcp.tool
 def get_property(slug: str, key: str) -> dict:
-    """Get a page's property value (from its frontmatter)."""
+    """Get a page's property value (from its frontmatter). To see every property
+    at once, use get_metadata."""
     wiki = _require_wiki()
     return {"wiki": wiki, "slug": slug, "key": key,
             "value": store.get_property(slug, key)}

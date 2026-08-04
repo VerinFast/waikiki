@@ -58,7 +58,16 @@ mcp = FastMCP(
         "human editing the same page. Use replace_page ONLY to rewrite a page from "
         "scratch; it overwrites everything and discards concurrent human edits. "
         "Workflow: get_page to read exact current text, then edit_page with a "
-        "unique snippet."
+        "unique snippet.\n\n"
+        "This wiki changes underneath you. A human or another agent may edit a "
+        "page at any time, including while you are working — but your earlier "
+        "tool results stay in the conversation unchanged, so old text will look "
+        "current. Do not trust a page you read earlier in this conversation. "
+        "Keep the `version` each read returns, and before you rely on, quote, or "
+        "edit that page again, call check_pages({slug: version, ...}) — it is "
+        "cheap, batches every page you are holding, and returns no page bodies. "
+        "Re-read with get_page only what it reports as stale. `trashed` means the "
+        "page is in the bin: do not edit it without asking."
     ),
 )
 

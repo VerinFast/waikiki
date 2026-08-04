@@ -77,3 +77,54 @@ def test_mcp_get_and_set_metadata(wiki, monkeypatch):
     assert "error" in mcp_server.get_metadata("missing")
     assert "error" in mcp_server.set_metadata("meru", {})       # empty rejected
     assert "error" in mcp_server.set_metadata("missing", {"a": "b"})
+
+
+# --- Cheap revalidation (check_pages) ----------------------------------------
+
+def test_content_version_changes_with_text(wiki):
+    a = store.content_version("hello")
+    assert a == store.content_version("hello")      # stable
+    assert a != store.content_version("hello!")     # sensitive
+    assert len(a) == 12
+
+
+def test_check_pages_detects_stale_unchanged_and_missing(wiki, monkeypatch):
+    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    # No web app in tests → check_pages falls back to the DB path.
+    monkeypatch.setattr(mcp_server.httpx, "post",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+    store.create_page("Meru", "original")
+    store.create_page("Bram", "steady")
+
+    seen = {"meru": mcp_server.get_page("meru")["version"],
+            "bram": mcp_server.get_page("bram")["version"],
+            "ghost": "whatever"}
+    store.update_page("meru", "Meru", "CHANGED", author="human")
+
+    out = mcp_server.check_pages(seen)
+    assert out["stale"] == ["meru"]
+    assert out["unchanged"] == ["bram"]
+    assert out["missing"] == ["ghost"]
+    assert out["current"]["meru"] == store.content_version("CHANGED")
+    assert "meru" not in out["current"] or out["current"]["meru"] != seen["meru"]
+
+
+def test_check_pages_accepts_updated_at_as_token(wiki, monkeypatch):
+    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    monkeypatch.setattr(mcp_server.httpx, "post",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+    store.create_page("Meru", "body")
+    ts = store.get_page("meru")["updated_at"]
+    out = mcp_server.check_pages({"meru": ts})
+    assert out["unchanged"] == ["meru"]
+
+
+def test_check_pages_flags_trashed_and_rejects_empty(wiki, monkeypatch):
+    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    monkeypatch.setattr(mcp_server.httpx, "post",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+    store.create_page("Gone", "bye")
+    v = mcp_server.get_page("gone")["version"]
+    store.soft_delete("gone")
+    assert mcp_server.check_pages({"gone": v})["trashed"] == ["gone"]
+    assert "error" in mcp_server.check_pages({})

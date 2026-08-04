@@ -1297,6 +1297,36 @@ async def api_collab_replace(slug: str, body: CollabReplace):
     return {"wiki": wiki, "slug": slug, "length": len(text)}
 
 
+class VersionsIn(BaseModel):
+    slugs: list[str]
+
+
+@app.post("/api/collab/versions")
+async def api_collab_versions(body: VersionsIn):
+    """Fingerprint many pages in ONE call, using live text where a room is open.
+
+    This is the cheap revalidation path: an agent holding several pages in
+    context can re-check all of them without pulling any page bodies back."""
+    wiki = db.active_wiki()
+    out: dict[str, dict] = {}
+    for slug in (body.slugs or [])[:200]:
+        page = store.get_page(slug)
+        if not page:
+            out[slug] = {"exists": False}
+            continue
+        saved = page["markdown"]
+        md = await collab.live_markdown(wiki, slug)
+        live = md is not None and md != saved
+        out[slug] = {
+            "exists": True,
+            "version": store.content_version(md if md is not None else saved),
+            "updated_at": page.get("updated_at"),
+            "trashed": bool(page.get("deleted_at")),
+            "live": live,
+        }
+    return {"wiki": wiki, "pages": out}
+
+
 @app.get("/api/collab/{slug}/live")
 async def api_collab_live(slug: str):
     """Current live (possibly unsaved) markdown for a page."""

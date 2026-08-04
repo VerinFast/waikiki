@@ -477,6 +477,16 @@ def set_properties(slug: str, props: dict) -> Optional[dict]:
     return update_page(slug, page["title"], fm + body.lstrip("\n"), author="ai")
 
 
+def content_version(markdown: str) -> str:
+    """Short stable fingerprint of a page's text.
+
+    Cheaper to compare than `updated_at`, and strictly more accurate: timestamps
+    have one-second granularity (two saves in the same second look identical) and
+    don't move at all for unsaved live edits. Hashing the text catches both."""
+    import hashlib
+    return hashlib.sha256((markdown or "").encode("utf-8")).hexdigest()[:12]
+
+
 def page_metadata(slug: str) -> Optional[dict]:
     """Everything *about* a page without its body: properties, tags, lineage and
     timestamps. Agents use this to discover what a page records and to tell
@@ -502,6 +512,9 @@ def page_metadata(slug: str) -> Optional[dict]:
         "updated_at": page.get("updated_at"),
         "deleted_at": page.get("deleted_at"),
         "trashed": bool(page.get("deleted_at")),
+        # Same token check_pages compares against (saved text; get_page's version
+        # reflects live edits when a room is open).
+        "version": content_version(page["markdown"]),
     }
 
 

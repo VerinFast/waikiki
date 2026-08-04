@@ -199,7 +199,8 @@ def get_page(slug: str) -> dict:
             "updated_at": page.get("updated_at"),
             "deleted_at": page.get("deleted_at"),
             "trashed": bool(page.get("deleted_at")),
-            "live": live}
+            "live": live,
+            "version": store.content_version(markdown)}
 
 
 @mcp.tool
@@ -591,6 +592,64 @@ def set_property(slug: str, key: str, value: str) -> dict:
     if not page:
         return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
     return {"wiki": wiki, "slug": slug, "key": key, "value": value}
+
+
+@mcp.tool
+def check_pages(seen: dict) -> dict:
+    """Re-check pages you already read — cheaply, without pulling them back.
+
+    Anything you read earlier in this conversation may since have been edited by
+    the human or another agent, and your transcript will still show the OLD text
+    as if it were current. Pass what you last saw and this tells you what to
+    re-read, returning no page bodies at all.
+
+    `seen` maps slug -> the `version` (preferred) or `updated_at` you got from
+    get_page, e.g. {"meru": "a1b2c3d4e5f6", "characters": "9f8e7d6c5b4a"}.
+
+    Returns `stale` (re-read these with get_page), `unchanged`, `missing`
+    (deleted or renamed), `trashed`, and `current` (slug -> the version now), so
+    you can update what you're holding. Detects unsaved live edits too — a human
+    typing right now is exactly when your copy is most wrong."""
+    wiki = _require_wiki()
+    if not isinstance(seen, dict) or not seen:
+        return {"wiki": wiki, "error": "seen must be a non-empty object of "
+                                       "slug -> version (or updated_at)"}
+    slugs = list(seen)[:200]
+
+    # One round trip to the web app, which owns the live CRDT rooms.
+    info: dict = {}
+    try:
+        r = httpx.post(f"{WEB}/api/collab/versions", headers=_headers(),
+                       json={"slugs": slugs}, timeout=15)
+        if r.status_code == 200:
+            info = r.json().get("pages", {})
+    except Exception:
+        pass
+
+    stale, unchanged, missing, trashed, current = [], [], [], [], {}
+    for slug in slugs:
+        row = info.get(slug)
+        if row is None:                       # web app unreachable — use the DB
+            page = store.get_page(slug)
+            row = ({"exists": False} if not page else
+                   {"exists": True,
+                    "version": store.content_version(page["markdown"]),
+                    "updated_at": page.get("updated_at"),
+                    "trashed": bool(page.get("deleted_at")), "live": False})
+        if not row.get("exists"):
+            missing.append(slug)
+            continue
+        if row.get("trashed"):
+            trashed.append(slug)
+        current[slug] = row["version"]
+        # Accept either a content version or the older updated_at as the token.
+        was = str(seen.get(slug) or "")
+        if was in (row["version"], str(row.get("updated_at") or "")):
+            unchanged.append(slug)
+        else:
+            stale.append(slug)
+    return {"wiki": wiki, "stale": stale, "unchanged": unchanged,
+            "missing": missing, "trashed": trashed, "current": current}
 
 
 @mcp.tool

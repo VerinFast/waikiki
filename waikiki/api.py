@@ -148,23 +148,52 @@ def _resolve_wiki(scope) -> str:
     return wikis.default_slug() or "main"
 
 
+def _explicit_query_wiki(scope) -> str | None:
+    """The wiki named by an explicit ?wiki= on this request, if valid."""
+    from urllib.parse import parse_qs
+    q = parse_qs(scope.get("query_string", b"").decode())
+    cand = (q.get("wiki") or [None])[0]
+    return cand if cand and wikis.exists(cand) else None
+
+
 class WikiContextMiddleware:
     """Pure-ASGI middleware: bind db.current_wiki for the whole request in one
     task, so the contextvar reaches sync endpoints (a BaseHTTPMiddleware would
-    run downstream in a separate task and lose it)."""
+    run downstream in a separate task and lose it).
+
+    It also keeps the browser's cookie in step with what it is actually being
+    shown. Pages are resolved by ?wiki= first but cookie second, while the forms
+    on those pages POST to bare paths — so viewing a page with ?wiki=X while the
+    cookie said Y meant every write on it silently landed in Y. Rather than
+    thread the wiki through ~20 form actions (and every future one), a GET that
+    names a wiki explicitly re-points the cookie at it, so the implicit state can
+    never disagree with the visible page."""
 
     def __init__(self, app):
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] in ("http", "websocket"):
-            token = db.current_wiki.set(_resolve_wiki(scope))
-            try:
-                await self.app(scope, receive, send)
-            finally:
-                db.current_wiki.reset(token)
-        else:
-            await self.app(scope, receive, send)
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+
+        resolved = _resolve_wiki(scope)
+        send_wrapped = send
+        if (scope["type"] == "http" and scope.get("method") == "GET"
+                and _explicit_query_wiki(scope) == resolved):
+            async def send_wrapped(message):        # noqa: F811 - deliberate rebind
+                if message["type"] == "http.response.start":
+                    cookie = (f"waikiki_wiki={resolved}; Path=/; Max-Age=31536000; "
+                              f"SameSite=Lax")
+                    message = dict(message)
+                    message["headers"] = list(message.get("headers", [])) + [
+                        (b"set-cookie", cookie.encode())]
+                await send(message)
+
+        token = db.current_wiki.set(resolved)
+        try:
+            await self.app(scope, receive, send_wrapped)
+        finally:
+            db.current_wiki.reset(token)
 
 
 class AccessLogMiddleware:

@@ -113,3 +113,35 @@ def test_mcp_requires_active_wiki(monkeypatch):
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
     # _require_wiki also sets the db context; just check it returns the slug.
     assert mcp_server._require_wiki() == "main"
+
+
+def test_viewing_with_explicit_wiki_repoints_the_cookie(wiki):
+    """Forms POST to bare paths and resolve the wiki from the cookie. If viewing
+    ?wiki=X left the cookie on Y, every write on that page — including purge and
+    restore — would silently hit Y. Viewing must re-point the cookie."""
+    from fastapi.testclient import TestClient
+
+    from waikiki.api import app
+    with TestClient(app, client=("127.0.0.1", 1)) as c:
+        r = c.get("/?wiki=crosslake", headers={"Cookie": "waikiki_wiki=main"})
+        assert r.status_code == 200
+        assert "waikiki_wiki=crosslake" in r.headers.get("set-cookie", "")
+
+        # ...so a subsequent bare POST lands in the wiki that was on screen,
+        # not in the one the stale cookie named.
+        c.post("/wiki/save", data={"slug": "", "title": "Landed",
+                                   "markdown": "in crosslake"},
+               headers={"Cookie": "waikiki_wiki=crosslake"})
+        assert c.get("/api/pages/landed?wiki=crosslake").status_code == 200
+        assert c.get("/api/pages/landed?wiki=main").status_code == 404
+
+
+def test_cookie_untouched_without_an_explicit_wiki(wiki):
+    """A plain view must not disturb the active wiki."""
+    from fastapi.testclient import TestClient
+
+    from waikiki.api import app
+    with TestClient(app, client=("127.0.0.1", 1)) as c:
+        c.cookies.set("waikiki_wiki", "crosslake")
+        c.get("/")
+        assert c.cookies.get("waikiki_wiki") == "crosslake"

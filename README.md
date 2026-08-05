@@ -111,6 +111,25 @@ request, call a repository function (`store.get_page`, `store.parent_of`,
 [docs/repository-layer.md](docs/repository-layer.md) for the full rationale and
 the seam where multi-tenant scoping attaches later.
 
+### The Y.Doc is canonical
+
+A page's content is a **CRDT, not a string**. The full encoded `pycrdt` Y.Doc for
+every page is persisted in `page_ydoc` and is the **source of truth**; the
+`markdown`/`html` columns are a *projection* kept alongside it for full-text
+search, rendering, and RAG. Every content write goes through the repository and
+advances the canonical Y.Doc, so the CRDT accumulates real history across saves
+and restarts (the live co-editing room in `collab.py` is just an editing buffer
+whose flush lands through the same seam). See [`waikiki/ydoc.py`](waikiki/ydoc.py).
+
+Because the persisted state is a genuine CRDT, Waikiki can **export** a page as a
+snapshot (full Y.Doc + a content-addressed image sidecar) or a changelog (updates
+since a peer's state vector), and **import** the same from a peer — the local half
+of the round-trip with the hosted platform. The format is the vendored,
+version-pinned [`wiki_interchange`](docs/vendoring.md) library; it carries content
+only (no tenancy or permissions — those are the server's), regenerates embeddings
+locally on import, and **rejects** an incompatible spec/protocol version rather
+than merging bad bytes.
+
 ## Setup
 
 ```bash

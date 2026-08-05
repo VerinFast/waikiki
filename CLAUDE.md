@@ -18,8 +18,13 @@ two in parity (same substance, different voice) whenever you change either.
   FTS5, sqlite-vec load, apsw/stdlib backend shim, low-level settings SQL.
 - `waikiki/mcp_server.py` — FastMCP tool surface; shares `store`/`rag` with the API.
 - `waikiki/collab.py` — CRDT rooms + the debounced snapshot flusher.
+- `waikiki/ydoc.py` — **canonical Y.Doc persistence** + the wiki-interchange
+  produce/consume round-trip. Sits below `store`, like `rag`.
+- `waikiki/vendor/wiki_interchange/` — vendored, version-pinned interchange
+  format (see `docs/vendoring.md`).
 - `docs/rfc/0001-multi-tenant-waikiki.md` — the port-to-multi-tenant RFC.
 - `docs/repository-layer.md` — the layering spec (RFC 0001, Phase 0).
+- `docs/vendoring.md` — vendored packages, pins, and re-sync steps.
 
 ## Architectural rules (load-bearing)
 
@@ -40,6 +45,22 @@ two in parity (same substance, different voice) whenever you change either.
    MCP server's active wiki is independent of the browser's.
 5. **One code path for Human and LLM.** REST, HTML views, and MCP tools all go
    through `store`/`rag` so both callers get identical render + version + index.
+6. **The Y.Doc is the canonical persisted state; markdown is a projection.** Each
+   page's full encoded `pycrdt` Y.Doc lives in `page_ydoc` and is the source of
+   truth; `pages.markdown`/`html` are maintained *alongside* it for FTS, render
+   and RAG. Every content write goes through `store` and advances the canonical
+   Y.Doc (`store._sync_ydoc` → `ydoc.sync`) — never write markdown as truth and
+   discard the doc. The live `collab.py` room is still just an editing buffer; its
+   flush lands through `store` like any other write, so the canonical doc stays
+   authoritative. See `waikiki/ydoc.py`.
+7. **The Kahala ⟷ Waikiki round-trip is content-only and version-gated.** Export
+   (`store.export_snapshot` / `export_changelog`) and import
+   (`store.import_snapshot` / `import_changelog`) go through the repository, using
+   the **vendored** `wiki_interchange` encoders. Payloads carry content only —
+   never invent or require `tenant_id`/`wiki_id`/permissions (Kahala re-attaches
+   those server-side); local embeddings are regenerated on import, never shipped.
+   An incompatible spec/Yjs version is **rejected**, never merged. Re-sync the
+   vendored lib per `docs/vendoring.md` and keep its pin in lockstep.
 
 ## Before committing
 
@@ -55,3 +76,10 @@ Postgres/RLS (P1), tenancy/Keycloak/Casbin (P2), tsvector+pgvector search (P3),
 externalised collab (P4), agents replacing the local CLIs — chat/imagegen/clirun/
 bonjour/tunnel (P5), and the desktop sync client (P6) are **later phases**. Don't
 pull them forward.
+
+Note: canonical Y.Doc persistence + the `wiki_interchange` round-trip (rules 6–7,
+`waikiki/ydoc.py`) belong to the newer **atd-v3 / Kahala** track (issue #3391),
+not to RFC 0001's phases. They stack on the Phase 0 chokepoint but are their own
+work: the interchange *format* and *canonical state*, not the P4/P6 transport.
+The local desktop surface is deliberately left intact (the monorepo fold is a
+separate ticket).

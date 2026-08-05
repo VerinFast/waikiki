@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from typing import List, Optional
 
-from . import db, edits, elements, rag, render, structure
+from . import db, edits, elements, rag, render, structure, ydoc
 
 _INCLUDE = re.compile(r"!\[\[([^\]]+?)\]\]")   # ![[Page]] / ![[Page#Section]] transclusion
 
@@ -171,6 +171,7 @@ def create_page(title: str, markdown: str = "", author: str = "human") -> dict:
     _index_meta(page_id, markdown)
     conn.commit()
     rag.reindex_page(page_id, markdown)
+    _sync_ydoc(page_id, slug, title, markdown)
     if (b := _activity_bucket(author)):
         log_activity(b, "write")
     return get_page(slug)
@@ -250,6 +251,16 @@ def activity_last_7_days() -> List[dict]:
     return out
 
 
+def _sync_ydoc(page_id: int, slug: str, title: str, markdown: str) -> None:
+    """Advance the page's canonical Y.Doc to match a projection write.
+
+    The Y.Doc is the source of truth (``page_ydoc``); ``pages.markdown``/``html``
+    are the projection this repository writes for FTS/render/RAG. Every content
+    write keeps the two in step via this call — see ``waikiki/ydoc.py``."""
+    _meta, tags, _body = structure.parse_frontmatter(markdown)
+    ydoc.sync(page_id, slug, title, markdown, list(tags))
+
+
 def _set_body(slug: str, title: str, markdown: str, author: str) -> None:
     """Core page write: render (link-by-title), save, snapshot, reindex."""
     conn = db.get_conn()
@@ -265,6 +276,7 @@ def _set_body(slug: str, title: str, markdown: str, author: str) -> None:
     _index_meta(page["id"], markdown)
     conn.commit()
     rag.reindex_page(page["id"], markdown)
+    _sync_ydoc(page["id"], slug, title, markdown)
     if (b := _activity_bucket(author)):
         log_activity(b, "write")
 
@@ -815,6 +827,62 @@ def get_image(image_id: int) -> Optional[dict]:
         "SELECT * FROM images WHERE id=?", (image_id,)
     ).fetchone()
     return dict(row) if row else None
+
+
+# --- Wiki-interchange: canonical Y.Doc snapshot + changelog round-trip --------
+# The repository is the chokepoint for the Kahala <-> Waikiki round-trip too:
+# routes/MCP call these, never the CRDT layer directly. "Produce" exports this
+# wiki's content for import-up to Kahala; "consume" applies content sent
+# export-down from Kahala. All payloads are content-only (no tenant_id/wiki_id/
+# permissions — those are the server's to re-attach) and local embeddings are
+# regenerated on import, never shipped. See ``waikiki/ydoc.py``.
+
+def export_snapshot(slug: str) -> Optional[bytes]:
+    """A page as a wiki-interchange snapshot (full Y.Doc + image sidecar)."""
+    page = get_page(slug)
+    return ydoc.export_snapshot(page) if page else None
+
+
+def page_state_vector(slug: str) -> Optional[bytes]:
+    """A page's Yjs state vector (what a peer sends to request a changelog)."""
+    page = get_page(slug)
+    return ydoc.state_vector(page) if page else None
+
+
+def export_changelog(slug: str, since_state_vector: bytes) -> Optional[bytes]:
+    """The updates a peer at ``since_state_vector`` is missing for a page."""
+    page = get_page(slug)
+    return ydoc.export_changelog(page, since_state_vector) if page else None
+
+
+def import_snapshot(raw: bytes, author: str = "import") -> dict:
+    """Create/update a page from a wiki-interchange snapshot (export-down).
+
+    Runs the version gate (an incompatible envelope raises before any write),
+    projects the decoded content into the store — which re-renders, re-indexes
+    RAG locally and versions it — then persists the *decoded* Y.Doc as the
+    canonical state, preserving the sender's CRDT lineage so later changelog
+    sync stays incremental. Matching is by ``slug`` (falling back to title)."""
+    imp = ydoc.decode_snapshot(raw)
+    title = imp.title or (imp.slug or "Untitled")
+    page = upsert_page(title, imp.content, slug=imp.slug, author=author)
+    ydoc.persist(page["id"], imp.doc)   # keep the sender's lineage authoritative
+    return get_page(page["slug"])
+
+
+def import_changelog(slug: str, raw: bytes, author: str = "import") -> Optional[dict]:
+    """Merge an incoming changelog into a page and re-project it (export-down).
+
+    Version-gated. Merges the update into the page's canonical Y.Doc, projects
+    the merged content back into the store, then persists the merged state as
+    canonical. Returns None if the page doesn't exist locally."""
+    page = get_page(slug)
+    if not page:
+        return None
+    doc = ydoc.apply_changelog(page, raw)   # version gate + CRDT merge
+    _set_body(slug, page["title"], ydoc.content_of(doc), author=author)
+    ydoc.persist(page["id"], doc)           # keep the merged lineage authoritative
+    return get_page(slug)
 
 
 # --- Settings -----------------------------------------------------------------

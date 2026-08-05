@@ -177,6 +177,18 @@ CREATE TABLE IF NOT EXISTS pages (
     parent_id  INTEGER REFERENCES pages(id) ON DELETE SET NULL  -- child page if set
 );
 
+-- Canonical CRDT state: the authoritative encoded Y.Doc for a page.
+-- The Y.Doc (not `pages.markdown`) is the source of truth; `pages.markdown`/
+-- `html` are a projection maintained alongside it for FTS, rendering and RAG.
+-- `ydoc_state` is a full `pycrdt` update (Yjs v1 binary); `spec_version` is the
+-- wiki-interchange spec version that produced it. See `waikiki/ydoc.py`.
+CREATE TABLE IF NOT EXISTS page_ydoc (
+    page_id      INTEGER PRIMARY KEY REFERENCES pages(id) ON DELETE CASCADE,
+    ydoc_state   BLOB NOT NULL,
+    spec_version INTEGER NOT NULL DEFAULT 1,
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Lightweight history: one row per save. Not CRDT, but gives undo/audit.
 CREATE TABLE IF NOT EXISTS page_versions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

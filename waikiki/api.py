@@ -54,8 +54,8 @@ async def lifespan(app: FastAPI):
             for w in wikis.list_wikis():
                 db.current_wiki.set(w["slug"])
                 try:
-                    if db.get_setting("allow_html", "1") != "1":
-                        db.set_setting("allow_html", "1")
+                    if store.get_setting("allow_html", "1") != "1":
+                        store.set_setting("allow_html", "1")
                         store.rerender_all()
                 except Exception as exc:
                     print(f"[waikiki] html-default migration for {w['slug']}: {exc}")
@@ -358,7 +358,7 @@ def _ctx(request: Request, **extra) -> dict:
     nav_sort = request.cookies.get("waikiki_nav_sort", "updated")
     base = {
         "request": request,
-        "theme": db.get_setting("theme", "default"),
+        "theme": store.get_setting("theme", "default"),
         "nav_pages": store.list_pages(sort=nav_sort,
                                       starred_only=(nav_filter == "starred"))[:500],
         "nav_filter": nav_filter,
@@ -386,7 +386,7 @@ def _ctx(request: Request, **extra) -> dict:
 def login_view(request: Request, next: str = "/", error: str = ""):
     return templates.TemplateResponse(request, "login.html", {
         "request": request, "next": next, "error": error,
-        "theme": db.get_setting("theme", "default"), "version": config.VERSION})
+        "theme": store.get_setting("theme", "default"), "version": config.VERSION})
 
 
 @app.post("/login")
@@ -706,8 +706,8 @@ async def chat_endpoint(slug: str, body: ChatIn):
     """Answer a question about a page via the configured CLI (claude/gemini),
     grounded in the page + wiki-search excerpts. Runs the subprocess off-thread."""
     import anyio
-    provider = body.provider or db.get_setting("chat_provider", "claude")
-    model = body.model if body.model is not None else db.get_setting("chat_model", "")
+    provider = body.provider or store.get_setting("chat_provider", "claude")
+    model = body.model if body.model is not None else store.get_setting("chat_model", "")
     return await anyio.to_thread.run_sync(
         lambda: chat.answer(slug, body.question, provider, model, body.history or []))
 
@@ -722,8 +722,8 @@ async def generate_image_endpoint(slug: str, body: ImageGenIn):
     """Generate an image for a page: Claude writes the prompt, the image CLI
     (agy/gemini) renders it into the article's folder. Runs off-thread."""
     import anyio
-    cli = db.get_setting("image_cli", "agy")
-    model = body.model if body.model is not None else db.get_setting("image_model", "")
+    cli = store.get_setting("image_cli", "agy")
+    model = body.model if body.model is not None else store.get_setting("image_model", "")
     return await anyio.to_thread.run_sync(
         lambda: imagegen.generate(slug, body.description, cli, model))
 
@@ -750,7 +750,7 @@ def view_page(request: Request, slug: str):
             status_code=404,
         )
     store.log_activity("human", "read")
-    parent = _parent_of(page)
+    parent = store.parent_of(page)
     # The article view is intentionally bare — just the content. Page settings,
     # backlinks, history, suggestions, comments, and chat live on the Talk page.
     return templates.TemplateResponse(request,
@@ -761,14 +761,6 @@ def view_page(request: Request, slug: str):
                           tags=store.tags_of(slug),
                           comment_count=len(store.comments_list(slug)))
     )
-
-
-def _parent_of(page: dict):
-    if page.get("parent_id"):
-        prow = db.get_conn().execute(
-            "SELECT slug, title FROM pages WHERE id=?", (page["parent_id"],)).fetchone()
-        return dict(prow) if prow else None
-    return None
 
 
 @app.get("/wiki/{slug}/details", response_class=HTMLResponse)
@@ -790,7 +782,7 @@ def details_view(request: Request, slug: str):
         "details.html", _ctx(request, page=page,
                           trashed=bool(page.get("deleted_at")),
                           versions=store.page_versions(slug),
-                          backlinks=store.backlinks(slug), parent=_parent_of(page),
+                          backlinks=store.backlinks(slug), parent=store.parent_of(page),
                           all_pages=all_pages, tags=store.tags_of(slug),
                           comments=store.comments_list(slug),
                           suggestions=suggestions)
@@ -1017,7 +1009,7 @@ def purge_page_view(slug: str):
 @app.get("/trash", response_class=HTMLResponse)
 def trash_view(request: Request):
     store.sweep_trash()  # opportunistically enforce retention
-    days = db.get_setting("retention_trash_days", "30")
+    days = store.get_setting("retention_trash_days", "30")
     return templates.TemplateResponse(request,
         "trash.html", _ctx(request, trash=store.list_trash(), retention_days=days))
 
@@ -1070,7 +1062,7 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
     wiki = db.active_wiki()
     return templates.TemplateResponse(request,
         "settings.html",
-        _ctx(request, settings=db.all_settings(), themes=themes,
+        _ctx(request, settings=store.all_settings(), themes=themes,
              library=embeddings.get_library(), active_provider=provider,
              active_model=model, catalog=embeddings.fastembed_catalog(),
              style_refs=imagegen.list_style_refs(wiki),
@@ -1190,27 +1182,27 @@ def settings_save(theme: str = Form(...),
                   image_model: str = Form(""),
                   image_style_prompt: str = Form(""),
                   log_retention_hours: str = Form("24")):
-    db.set_setting("theme", theme)
+    store.set_setting("theme", theme)
     try:
         appconfig.set("log_retention_hours", max(1, int(log_retention_hours)))
     except ValueError:
         pass
-    db.set_setting("retention_versions", str(max(0, int(retention_versions or 0))))
-    db.set_setting("retention_trash_days", str(max(0, int(retention_trash_days or 0))))
-    db.set_setting("gen_provider",
-                   gen_provider if gen_provider in ("anthropic", "ollama") else "anthropic")
-    db.set_setting("gen_model", gen_model.strip() or config.ANTHROPIC_MODEL)
-    db.set_setting("gen_model_local", gen_model_local.strip() or "phi3")
-    db.set_setting("ollama_url", ollama_url.strip() or "http://localhost:11434")
-    db.set_setting("chat_provider",
-                   chat_provider if chat_provider in ("claude", "gemini") else "claude")
-    db.set_setting("chat_model", chat_model.strip())
-    db.set_setting("image_cli", image_cli.strip() or "agy")
-    db.set_setting("image_model", image_model.strip())
-    db.set_setting("image_style_prompt", image_style_prompt.strip())
+    store.set_setting("retention_versions", str(max(0, int(retention_versions or 0))))
+    store.set_setting("retention_trash_days", str(max(0, int(retention_trash_days or 0))))
+    store.set_setting("gen_provider",
+                      gen_provider if gen_provider in ("anthropic", "ollama") else "anthropic")
+    store.set_setting("gen_model", gen_model.strip() or config.ANTHROPIC_MODEL)
+    store.set_setting("gen_model_local", gen_model_local.strip() or "phi3")
+    store.set_setting("ollama_url", ollama_url.strip() or "http://localhost:11434")
+    store.set_setting("chat_provider",
+                      chat_provider if chat_provider in ("claude", "gemini") else "claude")
+    store.set_setting("chat_model", chat_model.strip())
+    store.set_setting("image_cli", image_cli.strip() or "agy")
+    store.set_setting("image_model", image_model.strip())
+    store.set_setting("image_style_prompt", image_style_prompt.strip())
     new_html = "1" if allow_html else "0"
-    if new_html != db.get_setting("allow_html", "0"):
-        db.set_setting("allow_html", new_html)
+    if new_html != store.get_setting("allow_html", "0"):
+        store.set_setting("allow_html", new_html)
         store.rerender_all()  # re-render every page under the new HTML policy
     return RedirectResponse("/settings?msg=Saved", status_code=303)
 

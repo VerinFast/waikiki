@@ -12,7 +12,7 @@ time**, seeing each other's changes live.
 | Multiple isolated wikis | Separate DB per wiki; pages, search, and `[[links]]` never cross |
 | Themes | Swappable CSS in `waikiki/static/themes/` (default / dark / sepia) |
 | Images | Upload / paste / drag → stored in SQLite, served at `/image/{id}` |
-| Extensible | Clean `store` + `rag` + `collab` service layers; open-source deps |
+| Extensible | Layered `routes → store (repository) → db (SQLite)`; open-source deps |
 | MCP + REST | `waikiki.mcp_server` (FastMCP) and `/api/*` share one code path |
 | Markdown → HTML | `markdown-it-py` (GFM), `[[wiki links]]`, Pygments code |
 | Tables | GFM tables via the `gfm-like` preset |
@@ -88,6 +88,28 @@ or share.
 The old in-editor **✦ Generate** button is a *separate* convenience: it pulls a
 one-off draft from the Anthropic API (needs `ANTHROPIC_API_KEY`). The real
 collaboration path above uses no API key — the text comes from Claude over MCP.
+
+## Architecture — layers
+
+Data access is layered so routes stay thin and all SQL lives behind one seam:
+
+```
+HTTP routes / MCP tools   api.py, mcp_server.py   parse + validate, call the repository
+        ▼
+Repository (data access)  store.py, elements.py, wikis.py, rag.py   owns the SQL
+        ▼
+Infrastructure            db.py   SQLite connection, schema, FTS5 + sqlite-vec
+        ▼
+SQLite file per wiki      data/wikis/<slug>.db
+```
+
+Route handlers **never open a cursor and never contain SQL** — they parse the
+request, call a repository function (`store.get_page`, `store.parent_of`,
+`store.get_setting`, …), and shape the response. That invariant is guarded by
+`tests/test_repository_chokepoint.py`. This is Phase 0 of
+[RFC 0001](docs/rfc/0001-multi-tenant-waikiki.md); see
+[docs/repository-layer.md](docs/repository-layer.md) for the full rationale and
+the seam where multi-tenant scoping attaches later.
 
 ## Setup
 

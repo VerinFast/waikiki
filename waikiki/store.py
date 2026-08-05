@@ -1,5 +1,17 @@
-"""Page + image CRUD. Shared by the REST API, the HTML views, and the MCP server
-so Human and LLM callers go through identical logic (render + version + index).
+"""Repository chokepoint: page + image CRUD and settings access.
+
+This module is the data-access **chokepoint** for the domain. Route handlers
+(``api.py``), the HTML views, and the MCP server all go through it so Human and
+LLM callers share identical logic (render + version + index) and no route owns
+raw SQL. Routes parse/validate the request (pydantic), call a function here, and
+shape the response — they never open a cursor themselves. All page/settings SQL
+lives here or in the ``db`` infrastructure module it delegates to; see
+``docs/repository-layer.md`` (RFC 0001, Phase 0).
+
+The layering — ``routes → store (repository) → db (SQLite infra)`` — is the seam
+where multi-tenant / per-wiki scoping (``WikiScope`` + Postgres RLS) attaches in
+a later phase; keeping every read/write behind it now is what makes that possible
+without touching a single route.
 """
 from __future__ import annotations
 
@@ -44,6 +56,20 @@ def children(parent_slug: str) -> List[dict]:
         "ORDER BY title COLLATE NOCASE", (parent["id"],)
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def parent_of(page: Optional[dict]) -> Optional[dict]:
+    """The parent page (slug + title) of `page`, or None if it is top-level.
+
+    Repository home for the parent lookup that route handlers used to run as raw
+    SQL against a cursor (RFC 0001, Phase 0 — no SQL in routes)."""
+    parent_id = page.get("parent_id") if page else None
+    if not parent_id:
+        return None
+    row = db.get_conn().execute(
+        "SELECT slug, title FROM pages WHERE id=?", (parent_id,)
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def set_parent(slug: str, parent_slug: Optional[str]) -> Optional[dict]:
@@ -789,3 +815,25 @@ def get_image(image_id: int) -> Optional[dict]:
         "SELECT * FROM images WHERE id=?", (image_id,)
     ).fetchone()
     return dict(row) if row else None
+
+
+# --- Settings -----------------------------------------------------------------
+# Route-facing settings access. The SQL itself lives in the ``db`` infrastructure
+# chokepoint (the settings table is created and seeded there); these thin
+# delegations are what routes call, so no handler reaches into the connection
+# module directly. Non-route infrastructure (embeddings, imagegen, ai, the MCP
+# server) keeps calling ``db`` directly — those are already below the repository.
+
+def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    """Read a wiki setting for the active wiki (repository seam over ``db``)."""
+    return db.get_setting(key, default)
+
+
+def set_setting(key: str, value: str) -> None:
+    """Write a wiki setting for the active wiki (repository seam over ``db``)."""
+    db.set_setting(key, value)
+
+
+def all_settings() -> dict[str, str]:
+    """Every setting for the active wiki (repository seam over ``db``)."""
+    return db.all_settings()

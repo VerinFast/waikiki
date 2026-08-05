@@ -53,3 +53,30 @@ def test_mcp_element_tools(wiki, monkeypatch):
     assert got["name"] == "Card" and "{{heading}}" in got["html"]
     assert mcp_server.delete_element("card")["deleted"] == "card"
     assert "error" in mcp_server.get_element("card")
+
+
+def test_element_field_values_get_wikilinks_without_a_shim(wiki):
+    """Element fields are lifted out before markdown runs, so [[links]] in them
+    reached the component as raw text — every element author had to write their
+    own link parser in JS. The server now renders them."""
+    store.create_page("Meru", "the target page")
+    store.create_page("Hero", "```infobox\ntitle: Bram\nHome: [[Meru]]\n```")
+    html = store.get_page("hero")["html"]
+    assert 'data-html=' in html
+    assert "/wiki/meru" in html                 # resolved server-side
+    # raw props are still provided unchanged, so existing elements keep working
+    assert "[[Meru]]" in html
+
+
+def test_element_fields_resolve_by_title_like_prose(wiki):
+    """A client-side shim can only slugify; it can't do link-by-title, so links
+    to a renamed page silently broke."""
+    p = store.create_page("Setup Guide", "body")          # slug: setup-guide
+    store.create_page("Ref", "```infobox\ntitle: T\nSee: [[Setup Guide]]\n```")
+    assert f"/wiki/{p['slug']}" in store.get_page("ref")["html"]
+
+
+def test_element_field_values_are_escaped(wiki):
+    store.create_page("X", "```infobox\ntitle: T\nEvil: <script>alert(1)</script>\n```")
+    html = store.get_page("x")["html"]
+    assert "<script>alert(1)</script>" not in html

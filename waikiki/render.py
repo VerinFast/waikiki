@@ -131,6 +131,61 @@ def _expand_wikilinks(markdown: str, resolver=None) -> str:
     return _WIKILINK.sub(repl, markdown)
 
 
+# Wikilinks are resolved AFTER markdown rendering, directly to anchors.
+#
+# They used to be rewritten to markdown links *before* rendering, which broke in
+# every context the markdown renderer doesn't process:
+#   * inside raw HTML blocks the link stayed literal "[Label](/wiki/x)" — the
+#     shape most infobox templates are written in;
+#   * inside `code` spans and fenced blocks the text was rewritten too, so the
+#     Help pages documenting `[[Page Title]]` displayed a mangled link;
+#   * element props never saw it at all (see elements.py).
+# Rewriting the rendered HTML instead fixes all of those at once: markdown-it
+# passes "[[X]]" through untouched as text, so it survives to this pass wherever
+# it appears.
+_SKIP_BLOCKS = re.compile(r"(?is)(<pre\b.*?</pre>|<code\b.*?</code>|<a\b.*?</a>)")
+_TAG = re.compile(r"(<[^>]*>)")
+
+
+def wikilink_anchor(target: str, label: str | None, resolver=None) -> str:
+    label = (label or target).strip()
+    return f'<a href="{_esc(_wikilink_href(target, resolver))}">{_esc(label)}</a>'
+
+
+def render_value(text: str, resolver=None) -> str:
+    """Plain text -> safe HTML with [[wiki links]] resolved.
+
+    For short values that aren't markdown documents — custom-element fields,
+    infobox cells — so an element author gets working links without hand-writing
+    a link parser in their component's JS."""
+    return linkify_wikilinks(_esc(str(text if text is not None else "")), resolver)
+
+
+def linkify_wikilinks(html: str, resolver=None) -> str:
+    """Turn [[Page]] into anchors in already-rendered HTML.
+
+    Only text nodes are touched: code/pre/existing anchors are skipped whole, and
+    within what remains, tags are left alone so attribute values can't be
+    corrupted."""
+    if not html or "[[" not in html:
+        return html
+
+    def sub_text(text: str) -> str:
+        return _WIKILINK.sub(
+            lambda m: wikilink_anchor(m.group(1), m.group(2), resolver), text)
+
+    out = []
+    for i, chunk in enumerate(_SKIP_BLOCKS.split(html)):
+        if i % 2:                     # a skipped block (code / pre / anchor)
+            out.append(chunk)
+            continue
+        # Substitute in text only, never inside a tag's attributes.
+        out.append("".join(
+            part if j % 2 else sub_text(part)
+            for j, part in enumerate(_TAG.split(chunk))))
+    return "".join(out)
+
+
 def extract_wikilinks(markdown: str) -> list[str]:
     """Return the target *page* slugs of cross-page [[wiki links]] (ignores the
     section part and same-page #links) — for the resolved/broken link stats."""
@@ -205,7 +260,7 @@ def render_markdown(markdown: str, resolver=None, allow_html: bool = False) -> s
     """Render markdown to HTML. `allow_html` (per-wiki opt-in) passes raw HTML
     through; otherwise raw HTML is escaped."""
     md = _md_html if allow_html else _md
-    return _post_process(md.render(_expand_wikilinks(markdown or "", resolver)))
+    return linkify_wikilinks(_post_process(md.render(markdown or "")), resolver)
 
 
 def pygments_css() -> str:

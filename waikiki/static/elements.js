@@ -8,9 +8,14 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
     });
   }
-  function interp(tpl, props) {
+  // {{field}} uses the server-rendered value, so [[wiki links]] inside a field
+  // become real links without the element having to parse them itself. The
+  // server escapes these before adding anchors, so they're safe to inject.
+  function interp(tpl, props, rich) {
     return (tpl || "").replace(/\{\{\s*([\w.\- ]+?)\s*\}\}/g, function (_, k) {
-      var v = props[k.trim()];
+      var key = k.trim();
+      if (rich && rich[key] != null) return rich[key];
+      var v = props[key];
       return v == null ? "" : esc(String(v));
     });
   }
@@ -21,12 +26,16 @@
       connectedCallback() {
         if (this._wkDone) return;
         this._wkDone = true;
-        var props = {};
+        var props = {}, rich = {};
         try { props = JSON.parse(this.getAttribute("data-props") || "{}"); } catch (e) {}
+        try { rich = JSON.parse(this.getAttribute("data-html") || "{}"); } catch (e) {}
         var root = this.attachShadow({ mode: "open" });
-        root.innerHTML = "<style>" + (def.css || "") + "</style>" + interp(def.html || "", props);
+        root.innerHTML = "<style>" + (def.css || "") + "</style>"
+                       + interp(def.html || "", props, rich);
         if (def.js) {
-          try { new Function("root", "props", "host", def.js)(root, props, this); }
+          // `html` holds each field already rendered (wiki links resolved);
+          // assign it with innerHTML where you want links, props for plain text.
+          try { new Function("root", "props", "host", "html", def.js)(root, props, this, rich); }
           catch (e) { console.error("[waikiki element] " + tag, e); }
         }
       }

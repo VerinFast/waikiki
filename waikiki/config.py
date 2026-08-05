@@ -117,6 +117,8 @@ DEFAULT_ELEMENTS = [
         ".ib-rows th,.ib-rows td{border-top:1px solid var(--border,#eee);padding:.35rem .6rem;"
         "text-align:left;vertical-align:top}\n"
         ".ib-rows th{width:40%;color:var(--muted,#666);font-weight:600}",
+        "// `html` holds each field already rendered by the server, so [[wiki\n"
+        "// links]] in a value become real links — no link parsing needed here.\n"
         "root.querySelector('.ib-title').textContent = props.title || '';\n"
         "var img = props.image || props.Image;\n"
         "if (img) { var im = document.createElement('img'); im.src = img; "
@@ -126,7 +128,8 @@ DEFAULT_ELEMENTS = [
         "  if (k.toLowerCase() === 'title' || k.toLowerCase() === 'image') return;\n"
         "  var tr = document.createElement('tr');\n"
         "  var th = document.createElement('th'); th.textContent = k;\n"
-        "  var td = document.createElement('td'); td.textContent = props[k];\n"
+        "  var td = document.createElement('td');\n"
+        "  td.innerHTML = (html && html[k] != null) ? html[k] : '';\n"
         "  tr.appendChild(th); tr.appendChild(td); tb.appendChild(tr);\n"
         "});",
     ),

@@ -428,7 +428,9 @@ def render_html(markdown: str) -> str:
     if "```" in body:
         reg = elements.registry()
         if reg:
-            body, slots = elements.expand(body, reg)
+            # Same resolver the prose uses, so element fields get link-by-title
+            # resolution (and survive renames) rather than a client-side guess.
+            body, slots = elements.expand(body, reg, link_index().get)
     html = render.render_markdown(body, link_index().get, allow_html=allow_html)
     if slots:
         html, used = elements.fill(html, slots)

@@ -20,7 +20,7 @@ import html as _html
 import json
 import re
 
-from . import db
+from . import db, render
 
 # Fenced block: ```<slug>\n <body> \n```   (slug = letters/digits/-/_ )
 _FENCE = re.compile(r"(?ms)^```[ \t]*([A-Za-z0-9][A-Za-z0-9_-]*)[ \t]*\n(.*?)\n```[ \t]*$")
@@ -132,8 +132,14 @@ def _parse_body(body: str) -> dict:
     return props
 
 
-def expand(body: str, reg: dict):
-    """Swap element fences for placeholders (pre-markdown). Returns (body, slots)."""
+def expand(body: str, reg: dict, resolver=None):
+    """Swap element fences for placeholders (pre-markdown). Returns (body, slots).
+
+    Field values are also pre-rendered to HTML with [[wiki links]] resolved. The
+    fence body is lifted out before the markdown renderer runs, so raw values
+    never pass through it — which is why elements previously had to ship their
+    own wikilink parser in JS to cross-link. `resolver` gives link-by-title
+    resolution, which a component can't do client-side."""
     slots: list[dict] = []
 
     def repl(m):
@@ -147,7 +153,9 @@ def expand(body: str, reg: dict):
             fields = []
         missing = [f["name"] for f in fields
                    if f.get("required") and not (props.get(f["name"]) or "").strip()]
-        slots.append({"el": el, "props": props, "missing": missing})
+        rendered = {k: render.render_value(v, resolver) for k, v in props.items()}
+        slots.append({"el": el, "props": props, "html": rendered,
+                      "missing": missing})
         return f"\n\nWKELSLOT{len(slots) - 1}ENDWKEL\n\n"
 
     return _FENCE.sub(repl, body), slots
@@ -166,8 +174,10 @@ def fill(html: str, slots: list):
                     f'required field(s): {_html.escape(", ".join(slot["missing"]))}</div>')
         used[el["slug"]] = el
         data = _html.escape(json.dumps(slot["props"]), quote=True)
+        rich = _html.escape(json.dumps(slot.get("html") or {}), quote=True)
         tag = "wk-" + el["slug"]
-        return f'<div class="wk-element-host"><{tag} data-props="{data}"></{tag}></div>'
+        return (f'<div class="wk-element-host"><{tag} data-props="{data}" '
+                f'data-html="{rich}"></{tag}></div>')
 
     return _SLOT.sub(repl, html), used
 

@@ -75,3 +75,45 @@ def test_section_span_for_slug():
 def test_extract_wikilinks_ignores_section_and_self():
     links = render.extract_wikilinks("[[Guide#Setup]] and [[#Local]] and [[Other]]")
     assert links == ["guide", "other"]   # section stripped, same-page skipped
+
+
+# --- Wikilinks must resolve everywhere, and stay literal in code --------------
+
+def test_wikilinks_resolve_inside_raw_html():
+    """Infobox-style templates are raw HTML; markdown never runs inside an HTML
+    block, so links there used to render as literal '[Label](/wiki/x)'."""
+    html = render.render_markdown(
+        "<table><tr><td>[[Product Name]]</td></tr></table>", allow_html=True)
+    assert '<a href="/wiki/product-name">Product Name</a>' in html
+    assert "](/wiki/" not in html
+
+
+def test_wikilinks_stay_literal_in_code():
+    """The Help pages document the [[Page]] syntax; rewriting it there mangled
+    the documentation."""
+    assert "<code>[[Page Title]]</code>" in render.render_markdown(
+        "Use `[[Page Title]]` to link.")
+    fenced = render.render_markdown("```text\n[[Page Title]]\n```")
+    assert "[[Page Title]]" in fenced and "/wiki/page-title" not in fenced
+
+
+def test_wikilinks_not_injected_into_attributes():
+    html = render.render_markdown('<img alt="[[Page]]" src="/x.png">', allow_html=True)
+    assert 'alt="[[Page]]"' in html and "<a href" not in html
+
+
+def test_existing_links_are_not_double_wrapped():
+    html = render.render_markdown("[[Page]] and [already](/wiki/other)")
+    assert html.count("<a ") == 2
+
+
+def test_wikilink_labels_and_resolver_still_work():
+    idx = {"real-slug": "canonical"}
+    html = render.render_markdown("[[Real Slug|Shown]]", idx.get)
+    assert 'href="/wiki/canonical"' in html and ">Shown<" in html
+
+
+def test_render_value_escapes_then_links():
+    out = render.render_value("<b>x</b> [[Page]]")
+    assert "&lt;b&gt;" in out                       # escaped, not injected
+    assert '<a href="/wiki/page">Page</a>' in out

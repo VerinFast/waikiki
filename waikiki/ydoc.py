@@ -32,6 +32,7 @@ routes never touch CRDT state directly.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
 from typing import Optional
 
@@ -41,8 +42,10 @@ from . import db, structure
 from .vendor import wiki_interchange as wi
 from .vendor.wiki_interchange.schema import ROOT_CONTENT, ROOT_META, ROOT_TAGS
 
-# Local image references in page markdown: ![alt](/image/<id>/<name>).
-_IMG_REF = re.compile(r"/image/(\d+)")
+# Local image references in page markdown: ![alt](/image/<id>/<name>), or the
+# bare ![alt](/image/<id>) form. The trailing guard stops "/image/12abc" from
+# matching as image 12 — a false positive would mis-rewrite the id on import.
+_IMG_REF = re.compile(r"/image/(\d+)(?![\w-])")
 
 
 # --- Persistence primitives ---------------------------------------------------
@@ -107,7 +110,10 @@ def canonical_doc(page: dict) -> Doc:
 
 
 def content_of(doc: Doc) -> str:
-    """The markdown body carried by a page doc's ``content`` Text root."""
+    """The page markdown carried by a doc's ``content`` Text root.
+
+    This is the whole stored markdown, frontmatter included — it is synced from
+    ``pages.markdown`` verbatim, not the body with frontmatter stripped."""
     return str(doc.get(ROOT_CONTENT, type=Text))
 
 
@@ -202,13 +208,28 @@ def image_refs(markdown: str) -> list["wi.ImageRef"]:
 
 
 def _rehome_images(refs: list["wi.ImageRef"]) -> dict[int, int]:
-    """Re-home imported image blobs into the local store; old id -> new local id."""
+    """Re-home imported image blobs into the local store; old id -> new local id.
+
+    Blobs arrive from a peer, so the envelope's own claims about them are not
+    evidence. Each blob is re-hashed and its length checked before it is stored:
+    the sidecar is content-addressed, and accepting bytes under a hash that isn't
+    theirs would break de-duplication and let corrupted or substituted data land
+    under a trusted digest."""
     from . import store
 
     remap: dict[int, int] = {}
     for ref in refs:
         if ref.data is None:
             continue  # blob-by-reference fetch is a server concern, not local
+        actual = hashlib.sha256(ref.data).hexdigest()
+        if ref.sha256 and not hmac.compare_digest(actual, str(ref.sha256).lower()):
+            raise wi.MalformedEnvelopeError(
+                f"image {ref.image_id}: sidecar blob does not match its sha256 "
+                f"(claimed {str(ref.sha256)[:12]}…, actual {actual[:12]}…)")
+        if ref.byte_size is not None and int(ref.byte_size) != len(ref.data):
+            raise wi.MalformedEnvelopeError(
+                f"image {ref.image_id}: byte_size {ref.byte_size} does not match "
+                f"the {len(ref.data)} bytes supplied")
         new_id = store.save_image(
             ref.filename or f"{ref.sha256[:12]}", ref.media_type, ref.data
         )

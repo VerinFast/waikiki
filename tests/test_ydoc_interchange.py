@@ -204,3 +204,45 @@ def test_version_gate_rejects_below_floor(wiki):
     bad = _tamper(raw, spec_version=0)
     with pytest.raises(IncompatibleVersionError):
         store.import_snapshot(bad)
+
+
+# --- Review follow-ups (Copilot on #7) ---------------------------------------
+
+def test_image_sidecar_blob_must_match_its_hash(wiki):
+    """Blobs arrive from a peer, so the envelope's claims aren't evidence.
+    Accepting bytes under a hash that isn't theirs breaks content-addressing."""
+    import hashlib
+
+    import pytest
+
+    from waikiki import ydoc
+    from waikiki.vendor import wiki_interchange as wi
+
+    good = b"\x89PNG\r\n\x1a\n-real-bytes"
+    honest = wi.ImageRef(image_id="1", media_type="image/png",
+                         sha256=hashlib.sha256(good).hexdigest(),
+                         filename="a.png", byte_size=len(good), data=good)
+    assert ydoc._rehome_images([honest])          # honest blob is accepted
+
+    tampered = wi.ImageRef(image_id="2", media_type="image/png",
+                           sha256=hashlib.sha256(b"something else").hexdigest(),
+                           filename="b.png", byte_size=len(good), data=good)
+    with pytest.raises(wi.MalformedEnvelopeError):
+        ydoc._rehome_images([tampered])
+
+    wrong_size = wi.ImageRef(image_id="3", media_type="image/png",
+                             sha256=hashlib.sha256(good).hexdigest(),
+                             filename="c.png", byte_size=len(good) + 99, data=good)
+    with pytest.raises(wi.MalformedEnvelopeError):
+        ydoc._rehome_images([wrong_size])
+
+
+def test_image_ref_pattern_does_not_match_partial_ids():
+    from waikiki import ydoc
+
+    assert ydoc._IMG_REF.findall("![a](/image/12/pic.png)") == ["12"]
+    assert ydoc._IMG_REF.findall("![a](/image/12)") == ["12"]
+    # "/image/12abc" is not image 12 — matching it would rewrite the wrong id
+    assert ydoc._IMG_REF.findall("/image/12abc") == []
+    assert ydoc._remap_image_ids("/image/12abc", {12: 99}) == "/image/12abc"
+    assert ydoc._remap_image_ids("/image/12/p.png", {12: 99}) == "/image/99/p.png"

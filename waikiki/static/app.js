@@ -95,6 +95,92 @@ function init() {
   // --- Pull-model AI streaming (the "Generate" convenience button) ---
   setupAI(easymde);
   setupMetaTab(easymde);
+  setupAutosave(easymde, form);
+}
+
+// --- Autosave -----------------------------------------------------------------
+// Existing pages are persisted server-side by the CRDT flusher; the user just
+// couldn't tell. New pages had no room yet, so their text lived only in the
+// browser and closing the tab lost it. Both now save without a click, and say so.
+function setupAutosave(easymde, form) {
+  const status = document.getElementById("save-status");
+  const slugField = form && form.querySelector('input[name="slug"]');
+  const titleField = form && form.querySelector('input[name="title"]');
+  if (!status || !form) return;
+
+  let dirty = false, saving = false, timer = null, lastSaved = null;
+
+  function show(text, cls) {
+    status.textContent = text;
+    status.className = "savestatus" + (cls ? " " + cls : "");
+  }
+  function ago() {
+    if (!lastSaved) return "";
+    const s = Math.round((Date.now() - lastSaved) / 1000);
+    if (s < 5) return "just now";
+    if (s < 60) return s + "s ago";
+    return Math.round(s / 60) + "m ago";
+  }
+  function idle() {
+    if (dirty) show("Unsaved changes…", "pending");
+    else if (lastSaved) show("Saved " + ago(), "ok");
+    else show(CFG.collab ? "Saved automatically" : "", "ok");
+  }
+  setInterval(idle, 5000);
+
+  if (CFG.collab) {
+    // Server-side flusher owns persistence here — just reassure the human.
+    lastSaved = Date.now();
+    show("Saved automatically", "ok");
+    easymde.codemirror.on("change", () => { lastSaved = Date.now(); idle(); });
+    return;
+  }
+
+  async function save() {
+    const title = (titleField.value || "").trim();
+    if (!title) { show("Add a title to start autosaving", "pending"); return; }
+    const markdown = easymde.value();
+    if (!markdown.trim() && !slugField.value) return;   // nothing worth creating
+    saving = true;
+    show("Saving…", "pending");
+    try {
+      // Pin the wiki explicitly — otherwise this resolves via the cookie and a
+      // page opened with ?wiki=X could be autosaved into a different wiki.
+      const url = "/api/autosave" + (CFG.wiki ? "?wiki=" + encodeURIComponent(CFG.wiki) : "");
+      const res = await fetch(url, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug: slugField.value, title, markdown }),
+      }).then((r) => r.json());
+      if (res.ok) {
+        slugField.value = res.slug;      // first save creates; later ones update
+        dirty = false; lastSaved = Date.now();
+        show("Saved " + ago(), "ok");
+      } else {
+        show(res.error || "Not saved", "err");
+      }
+    } catch (e) {
+      show("Offline — not saved", "err");
+    } finally {
+      saving = false;
+    }
+  }
+
+  function touch() {
+    dirty = true;
+    show("Unsaved changes…", "pending");
+    clearTimeout(timer);
+    timer = setTimeout(save, 1500);      // debounce: save shortly after you pause
+  }
+  easymde.codemirror.on("change", touch);
+  if (titleField) titleField.addEventListener("input", touch);
+
+  // A manual Save is a normal form post; don't warn about it.
+  form.addEventListener("submit", () => { dirty = false; });
+  window.addEventListener("beforeunload", (e) => {
+    if (!dirty && !saving) return;
+    e.preventDefault();
+    e.returnValue = "";                  // browser shows its own confirm dialog
+  });
 }
 
 // --- Metadata tab: edit frontmatter properties as fields ---

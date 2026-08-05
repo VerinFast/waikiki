@@ -80,3 +80,27 @@ def test_rest_and_collab_flow(wiki):
         assert "mcpServers" in connect_html and "WAIKIKI_DATA" in connect_html
         # --- /help redirects into the Help wiki ---
         assert c.get("/help", follow_redirects=False).status_code in (303, 307)
+
+
+def test_autosave_creates_then_updates(wiki):
+    """New pages had no CRDT room, so unsaved text died with the tab."""
+    from fastapi.testclient import TestClient
+
+    from waikiki.api import app
+    with TestClient(app, client=("127.0.0.1", 1)) as c:
+        r = c.post("/api/autosave", json={"slug": "", "title": "Draft",
+                                          "markdown": "first words"})
+        body = r.json()
+        assert body["ok"] and body["slug"] == "draft"
+
+        # a second autosave updates the same page rather than creating another
+        r2 = c.post("/api/autosave", json={"slug": "draft", "title": "Draft",
+                                           "markdown": "first words, then more"})
+        assert r2.json()["slug"] == "draft"
+        assert "then more" in c.get("/api/pages/draft").json()["markdown"]
+        assert len([p for p in c.get("/api/pages").json()
+                    if p["slug"].startswith("draft")]) == 1
+
+        # a title is required — we can't create a page without one
+        assert c.post("/api/autosave", json={"title": "  ",
+                                             "markdown": "x"}).json()["ok"] is False

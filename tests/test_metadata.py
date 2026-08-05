@@ -49,6 +49,11 @@ def test_metadata_reports_trashed(wiki):
 
 def test_get_page_exposes_freshness_and_properties(wiki, monkeypatch):
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    # Isolate from any dev server on the default port: get_page asks the web app
+    # for live CRDT text, and without this the test would read a *different*
+    # database and report a spurious `live`.
+    monkeypatch.setattr(mcp_server.httpx, "get",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
     store.create_page("Meru", _fm(tags="character", HitPoints="42"))
     out = mcp_server.get_page("meru")
     assert out["updated_at"]                    # staleness signal present
@@ -60,6 +65,8 @@ def test_get_page_exposes_freshness_and_properties(wiki, monkeypatch):
 
 def test_get_page_flags_a_trashed_page(wiki, monkeypatch):
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    monkeypatch.setattr(mcp_server.httpx, "get",     # don't touch a live dev server
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
     store.create_page("Gone", "bye")
     store.soft_delete("gone")
     out = mcp_server.get_page("gone")

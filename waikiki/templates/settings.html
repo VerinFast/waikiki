@@ -215,6 +215,52 @@
 
   <section class="settings">
     <details class="settings-sec" open>
+      <summary>Backups <span class="muted">(all wikis)</span></summary>
+      <form method="post" action="/settings/backups" class="settings">
+        <label class="rag-toggle">
+          <input type="checkbox" name="enabled" value="1" {{ 'checked' if backup_enabled }}>
+          Back up automatically
+        </label>
+        <label>Every N hours
+          <input type="number" name="interval_hours" min="1" value="{{ backup_interval }}">
+        </label>
+        <label>Keep the last N backups
+          <input type="number" name="keep" min="1" value="{{ backup_keep }}">
+        </label>
+        <button class="btn primary" type="submit">Save backup settings</button>
+      </form>
+      <form method="post" action="/settings/backups/run" style="margin-top:.6rem">
+        <button class="btn" type="submit">Back up now</button>
+      </form>
+
+      {% if backup_list %}
+        <table class="modeltable" style="margin-top:.8rem">
+          <tbody>
+            {% for b in backup_list %}
+              <tr>
+                <td class="mono">{{ b.when }}</td>
+                <td class="muted">{{ b.wikis | length }} wiki(s)</td>
+                <td class="muted">{{ (b.bytes / 1048576) | round(1) }} MB</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="muted">No backups yet — one runs automatically, or take one now.</p>
+      {% endif %}
+      <p class="muted note">Snapshots of every wiki, taken safely while the app is
+        running. Images live inside each wiki's database, so a snapshot is a
+        complete copy. They're written to <code>{{ backup_dir }}</code>.</p>
+      <p class="muted note"><strong>To restore:</strong> quit Waikiki, then use
+        <em>Manage wikis → Open</em> on a <code>.db</code> file from a backup
+        folder — it opens as a separate wiki, so you can compare before replacing
+        anything. These are local copies: they protect against corruption and
+        mistakes, not against losing the machine. Keep a copy elsewhere too.</p>
+    </details>
+  </section>
+
+  <section class="settings">
+    <details class="settings-sec" open>
       <summary>Share with someone remote <span class="muted">(temporary public link)</span></summary>
       {% if tunnel_url %}
         <p>🔗 <strong>Live now:</strong>

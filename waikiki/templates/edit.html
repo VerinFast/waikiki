@@ -12,7 +12,10 @@
     </div>
   {% endif %}
 
-  <form id="editform" method="post" action="/wiki/save">
+  {# Pin the target wiki explicitly. Without it these writes resolve via the
+     cookie, so opening this editor with ?wiki=X while the cookie says Y would
+     silently save your work into Y. #}
+  <form id="editform" method="post" action="/wiki/save?wiki={{ current_wiki }}">
     <input type="hidden" name="slug" value="{{ page.slug }}">
     <input class="title-input" type="text" name="title" placeholder="Page title"
            value="{{ page.title }}" required>
@@ -46,6 +49,7 @@
     <div class="editor-actions">
       <button class="btn primary" type="submit">Save</button>
       {% if not is_new %}<a class="btn" href="/wiki/{{ page.slug }}">Done</a>{% endif %}
+      <span id="save-status" class="savestatus" aria-live="polite"></span>
     </div>
   </form>
 {% endblock %}
@@ -66,6 +70,7 @@
     window.WAIKIKI = {
       collab: {{ 'true' if collab else 'false' }},
       slug: {{ page.slug | tojson }},
+      wiki: {{ current_wiki | tojson }},
       wsBase: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host
               + '/collab/' + {{ current_wiki | tojson }}
     };

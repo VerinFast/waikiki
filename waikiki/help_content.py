@@ -220,9 +220,10 @@ def _about(version: str) -> str:
         "| | |\n|---|---|\n"
         f"| Version | {version} |\n"
         "| Repository | https://github.com/VerinFast/waikiki |\n"
-        "| License | To be determined (not yet released open source) |\n\n"
-        "If we open-source Waikiki, license and contribution details will live "
-        "here.\n"
+        "| License | Creative Commons Attribution-NonCommercial 4.0 |\n\n"
+        "Waikiki is released under **CC BY-NC 4.0** — free to use, share and adapt "
+        "for non-commercial purposes, with attribution. Same licence as "
+        "VerinFast.\n"
     )
 
 

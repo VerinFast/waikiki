@@ -19,8 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import (accesslog, ai, appconfig, auth, bonjour, chat, collab, config,
-               db, debuglog, edits, elements, embeddings, help_content,
+from . import (accesslog, ai, appconfig, auth, backups, bonjour, chat, collab,
+               config, db, debuglog, edits, elements, embeddings, help_content,
                imagegen, pdfgen, rag, render, store, tunnel, wikis)
 
 
@@ -94,6 +94,13 @@ async def lifespan(app: FastAPI):
                 await anyio.to_thread.run_sync(accesslog.sweep)
             except Exception as exc:
                 print(f"[waikiki] access-log sweep failed: {exc}")
+            try:
+                res = await anyio.to_thread.run_sync(backups.maybe_run)
+                if res and res.get("ok"):
+                    accesslog.record("BACKUP ok", status=200,
+                                     detail=f"{res['name']} ({len(res['wikis'])} wikis)")
+            except Exception as exc:
+                print(f"[waikiki] scheduled backup failed: {exc}")
             await asyncio.sleep(3600)
 
     async with collab.server:                       # start the CRDT websocket server
@@ -894,6 +901,34 @@ async def edit_page(request: Request, slug: str):
     )
 
 
+class AutosaveIn(BaseModel):
+    slug: str = ""
+    title: str
+    markdown: str = ""
+
+
+@app.post("/api/autosave")
+def api_autosave(body: AutosaveIn):
+    """Persist an in-progress edit without leaving the editor.
+
+    New pages have no CRDT room (one only exists once a page exists), so until
+    the first save their text lives solely in the browser — closing the tab lost
+    it. The editor calls this on a debounce: the first call creates the page, and
+    later calls update it. Existing pages are already persisted by the collab
+    flusher and don't use this path."""
+    title = (body.title or "").strip()
+    if not title:
+        return {"ok": False, "error": "needs a title"}
+    if body.slug:
+        page = store.update_page(body.slug, title, body.markdown, author="human")
+        if not page:
+            return {"ok": False, "error": "page not found"}
+    else:
+        page = store.create_page(title, body.markdown, author="human")
+    return {"ok": True, "slug": page["slug"], "title": page["title"],
+            "version": store.content_version(body.markdown)}
+
+
 @app.post("/wiki/save", response_class=HTMLResponse)
 def save_page(slug: str = Form(""), title: str = Form(...), markdown: str = Form("")):
     if slug:
@@ -1019,6 +1054,10 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
              bonjour_available=bonjour.available(),
              tunnel_url=tunnel.url(),
              tunnel_available=tunnel.available(),
+             backup_enabled=backups.enabled(), backup_keep=backups.keep(),
+             backup_interval=backups.interval_hours(),
+             backup_list=backups.list_backups()[:10],
+             backup_dir=str(config.DATA_DIR / "backups"),
              msg=msg, error=error),
     )
 
@@ -1046,6 +1085,30 @@ def serve_style_ref(filename: str):
     if not path.exists():
         raise HTTPException(404, "Not found")
     return FileResponse(str(path))
+
+
+@app.post("/settings/backups/run")
+async def backups_run_now(request: Request):
+    """Take a snapshot now (owner-only — guests can't reach /settings/*)."""
+    import anyio
+    res = await anyio.to_thread.run_sync(backups.run_backup)
+    if not res.get("ok"):
+        return RedirectResponse(f"/settings?error={quote(res.get('error', 'failed'))}",
+                                status_code=303)
+    return RedirectResponse(
+        f"/settings?msg=Backed+up+{len(res['wikis'])}+wiki(s)", status_code=303)
+
+
+@app.post("/settings/backups")
+def backups_save(enabled: str = Form(""), keep: str = Form("7"),
+                 interval_hours: str = Form("24")):
+    appconfig.set("backup_enabled", bool(enabled))
+    try:
+        appconfig.set("backup_keep", max(1, int(keep)))
+        appconfig.set("backup_interval_hours", max(1, int(interval_hours)))
+    except ValueError:
+        pass
+    return RedirectResponse("/settings?msg=Backup+settings+saved", status_code=303)
 
 
 @app.post("/settings/tunnel/start")

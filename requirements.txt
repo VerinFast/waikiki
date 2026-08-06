@@ -29,7 +29,9 @@ xhtml2pdf>=0.2.11
 anthropic>=0.120.2
 
 # --- MCP server (Human/LLM collaboration) ---
-fastmcp>=2.0
+# Floor is 3.x deliberately: 2.x -> 3.x was a breaking change, and a `>=2.0`
+# floor is satisfied by anything, so Dependabot never proposes a bump for it.
+fastmcp>=3.4
 
 # --- Real-time collaborative editing (CRDT) ---
 pycrdt>=0.10               # Yjs/Yrs bindings — the shared document engine

@@ -26,7 +26,7 @@ httpx>=0.27
 xhtml2pdf>=0.2.11
 
 # --- AI streaming into the wiki ---
-anthropic>=0.40
+anthropic>=0.120.2
 
 # --- MCP server (Human/LLM collaboration) ---
 fastmcp>=2.0

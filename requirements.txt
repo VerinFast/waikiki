@@ -33,4 +33,4 @@ fastmcp>=2.0
 
 # --- Real-time collaborative editing (CRDT) ---
 pycrdt>=0.10               # Yjs/Yrs bindings — the shared document engine
-pycrdt-websocket>=0.15     # y-websocket-compatible server for browser sync
+pycrdt-websocket>=0.16.4     # y-websocket-compatible server for browser sync

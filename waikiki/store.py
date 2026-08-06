@@ -865,7 +865,13 @@ def import_snapshot(raw: bytes, author: str = "import") -> dict:
     sync stays incremental. Matching is by ``slug`` (falling back to title)."""
     imp = ydoc.decode_snapshot(raw)
     title = imp.title or (imp.slug or "Untitled")
-    page = upsert_page(title, imp.content, slug=imp.slug, author=author)
+    # A snapshot is the sender's whole state, so it is the later write for every
+    # field. Project its tags into the frontmatter when they only live in the
+    # doc's `tags` root, or the local tag index would silently disagree with the
+    # canonical doc it was just handed.
+    content = ydoc.reconcile_tags(imp.doc, before_root=imp.tags,
+                                  before_frontmatter=[])
+    page = upsert_page(title, content, slug=imp.slug, author=author)
     ydoc.persist(page["id"], imp.doc)   # keep the sender's lineage authoritative
     return get_page(page["slug"])
 
@@ -879,8 +885,18 @@ def import_changelog(slug: str, raw: bytes, author: str = "import") -> Optional[
     page = get_page(slug)
     if not page:
         return None
+    # Snapshot both tag homes *before* the merge, so we can tell which one the
+    # incoming update actually moved and let that side win (see reconcile_tags).
+    before = ydoc.canonical_doc(page)
+    before_root = ydoc.tags_of(before)
+    _m, before_fm, _b = structure.parse_frontmatter(page["markdown"])
+
     doc = ydoc.apply_changelog(page, raw)   # version gate + CRDT merge
-    _set_body(slug, page["title"], ydoc.content_of(doc), author=author)
+    content = ydoc.reconcile_tags(doc, before_root, list(before_fm))
+    # Project the MERGED doc, not the local row: the doc is the source of truth,
+    # and reading the old title here dropped remote renames on the floor.
+    title = ydoc.title_of(doc) or page["title"]
+    _set_body(slug, title, content, author=author)
     ydoc.persist(page["id"], doc)           # keep the merged lineage authoritative
     return get_page(slug)
 

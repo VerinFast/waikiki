@@ -246,3 +246,64 @@ def test_image_ref_pattern_does_not_match_partial_ids():
     assert ydoc._IMG_REF.findall("/image/12abc") == []
     assert ydoc._remap_image_ids("/image/12abc", {12: 99}) == "/image/12abc"
     assert ydoc._remap_image_ids("/image/12/p.png", {12: 99}) == "/image/99/p.png"
+
+
+# --- Projection must follow the merged doc (last write wins) ------------------
+
+def test_remote_rename_reaches_the_projection(wiki):
+    """import_changelog re-projected with the LOCAL title, so a remote rename
+    landed in the canonical doc but never in pages.title — the doc and the UI
+    disagreed permanently."""
+    from waikiki import db, store, ydoc
+
+    store.create_page("Gear Golem", "# Gear Golem\n\nbody")
+    page = store.get_page("gear-golem")
+    sv = store.page_state_vector("gear-golem")
+
+    # A peer renames the page in its copy of the doc, then sends a changelog.
+    doc = ydoc.canonical_doc(page)
+    ydoc._apply_meta(doc, "Gearwyrm", "gear-golem")
+    from waikiki.vendor import wiki_interchange as wi
+    raw = wi.produce_changelog(doc, sv).serialize()
+
+    store.import_changelog("gear-golem", raw)
+    assert store.get_page("gear-golem")["title"] == "Gearwyrm"
+
+
+def test_remote_tags_reach_the_tag_index(wiki):
+    """Tags that live only in the doc's `tags` root were dropped by _index_meta,
+    so the tag index diverged from the canonical doc."""
+    from waikiki import store, ydoc
+    from waikiki.vendor import wiki_interchange as wi
+
+    store.create_page("Meru", "# Meru\n\nbody")          # no frontmatter at all
+    page = store.get_page("meru")
+    sv = store.page_state_vector("meru")
+
+    doc = ydoc.canonical_doc(page)
+    ydoc._apply_tags(doc, ["character", "spirit"])       # tags root only
+    raw = wi.produce_changelog(doc, sv).serialize()
+
+    store.import_changelog("meru", raw)
+    assert store.tags_of("meru") == ["character", "spirit"]
+    assert "tags: character, spirit" in store.get_page("meru")["markdown"]
+
+
+def test_frontmatter_change_wins_when_it_is_the_one_that_moved(wiki):
+    """Last-in wins on either side: if the incoming update moved the frontmatter
+    and not the tags root, the frontmatter is canonical."""
+    from waikiki import store, ydoc
+    from waikiki.vendor import wiki_interchange as wi
+
+    store.create_page("Bram", "---\ntags: guard\n---\n# Bram\n\nbody")
+    page = store.get_page("bram")
+    sv = store.page_state_vector("bram")
+
+    doc = ydoc.canonical_doc(page)
+    ydoc._apply_content(doc, "---\ntags: guard, captain\n---\n# Bram\n\nbody")
+    raw = wi.produce_changelog(doc, sv).serialize()
+
+    store.import_changelog("bram", raw)
+    assert store.tags_of("bram") == ["captain", "guard"]     # stored sorted
+    assert ydoc.tags_of(ydoc.canonical_doc(store.get_page("bram"))) == [
+        "guard", "captain"]                                   # root followed suit

@@ -119,6 +119,56 @@ def content_of(doc: Doc) -> str:
 
 # --- Keeping the canonical doc in step with a projection write ----------------
 
+def title_of(doc: Doc) -> Optional[str]:
+    """The title carried by a doc's ``meta`` Map (None if it carries none)."""
+    val = dict(doc.get(ROOT_META, type=Map)).get("title")
+    return str(val) if val is not None else None
+
+
+def tags_of(doc: Doc) -> list[str]:
+    """Tags from a doc's ``tags`` root (the interchange's canonical home)."""
+    return [str(t) for t in list(doc.get(ROOT_TAGS, type=Array))]
+
+
+def reconcile_tags(doc: Doc, before_root: list[str],
+                   before_frontmatter: list[str]) -> str:
+    """Make a merged doc's two tag representations agree, last write winning.
+
+    Tags live twice over: the ``tags`` root (what the interchange schema syncs)
+    and the ``tags:`` line of the frontmatter inside ``content`` (what Waikiki
+    renders and indexes). A merge can advance either one, and whichever the
+    incoming update actually moved is the newer intent — so that side wins and is
+    written into the other. If both moved, or neither did, the ``tags`` root wins,
+    since that is the field the format defines for the purpose.
+
+    Returns the reconciled markdown (frontmatter rewritten when needed).
+    """
+    from . import structure
+
+    content = content_of(doc)
+    meta, fm_tags, body = structure.parse_frontmatter(content)
+    root_tags = tags_of(doc)
+
+    root_moved = root_tags != list(before_root or [])
+    fm_moved = fm_tags != list(before_frontmatter or [])
+
+    if fm_moved and not root_moved:
+        _apply_tags(doc, fm_tags)                    # frontmatter came in last
+        return content
+    if root_tags == fm_tags:
+        return content                               # already agree
+
+    # The tags root is newer (or it's a tie) — project it into the frontmatter so
+    # the render/index projection sees what the canonical doc actually says.
+    lines = [f"{k}: {v}" for k, v in meta.items()]
+    if root_tags:
+        lines.insert(0, "tags: " + ", ".join(root_tags))
+    rebuilt = (("---\n" + "\n".join(lines) + "\n---\n") if lines else "") \
+        + body.lstrip("\n")
+    _apply_content(doc, rebuilt)
+    return rebuilt
+
+
 def _apply_content(doc: Doc, markdown: str) -> None:
     txt = doc.get(ROOT_CONTENT, type=Text)
     if str(txt) == (markdown or ""):

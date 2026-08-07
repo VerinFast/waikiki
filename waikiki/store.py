@@ -869,8 +869,15 @@ def import_snapshot(raw: bytes, author: str = "import") -> dict:
     # field. Project its tags into the frontmatter when they only live in the
     # doc's `tags` root, or the local tag index would silently disagree with the
     # canonical doc it was just handed.
-    content = ydoc.reconcile_tags(imp.doc, before_root=imp.tags,
-                                  before_frontmatter=[])
+    #
+    # Both "before" values are empty because there is no prior local state to
+    # compare against — everything here arrived in this envelope. Passing the
+    # decoded root as `before_root` would compare it against itself, making
+    # root_moved always false, so a disagreeing frontmatter would overwrite the
+    # peer's canonical tags. Empty makes ties resolve to the `tags` root (which
+    # the schema defines as canonical) and lets frontmatter win only when it is
+    # the sole source of tags.
+    content = ydoc.reconcile_tags(imp.doc, before_root=[], before_frontmatter=[])
     page = upsert_page(title, content, slug=imp.slug, author=author)
     ydoc.persist(page["id"], imp.doc)   # keep the sender's lineage authoritative
     return get_page(page["slug"])

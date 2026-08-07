@@ -307,3 +307,36 @@ def test_frontmatter_change_wins_when_it_is_the_one_that_moved(wiki):
     assert store.tags_of("bram") == ["captain", "guard"]     # stored sorted
     assert ydoc.tags_of(ydoc.canonical_doc(store.get_page("bram"))) == [
         "guard", "captain"]                                   # root followed suit
+
+
+def test_snapshot_tags_root_wins_over_disagreeing_frontmatter(wiki):
+    """A snapshot is the sender's whole state, so its canonical `tags` root wins.
+    Comparing the decoded root against itself made root_moved always false, so a
+    disagreeing frontmatter silently overwrote the peer's tags."""
+    from waikiki import store, ydoc
+    from waikiki.vendor import wiki_interchange as wi
+
+    # A peer's page whose canonical root and frontmatter disagree.
+    doc = wi.build_page_doc(
+        content="---\ntags: stale\n---\n# Meru\n\nbody",
+        title="Meru", slug="meru", tags=["character", "spirit"])
+    raw = wi.encode_snapshot(doc, []).serialize()
+
+    store.import_snapshot(raw)
+    assert store.tags_of("meru") == ["character", "spirit"]   # root won
+    assert "tags: character, spirit" in store.get_page("meru")["markdown"]
+
+
+def test_snapshot_frontmatter_used_when_it_is_the_only_source(wiki):
+    """With an empty tags root, the frontmatter is the sole source and is kept."""
+    from waikiki import store, ydoc
+    from waikiki.vendor import wiki_interchange as wi
+
+    doc = wi.build_page_doc(
+        content="---\ntags: solo\n---\n# Bram\n\nbody",
+        title="Bram", slug="bram", tags=[])
+    raw = wi.encode_snapshot(doc, []).serialize()
+
+    store.import_snapshot(raw)
+    assert store.tags_of("bram") == ["solo"]
+    assert ydoc.tags_of(ydoc.canonical_doc(store.get_page("bram"))) == ["solo"]

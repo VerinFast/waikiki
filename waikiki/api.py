@@ -82,6 +82,7 @@ async def lifespan(app: FastAPI):
     async def _retention():
         # Enforce the trash + access-log retention policies, hourly.
         import anyio
+        first_pass = True
         while True:
             for w in wikis.list_wikis():
                 db.current_wiki.set(w["slug"])
@@ -108,7 +109,14 @@ async def lifespan(app: FastAPI):
                 # Check only — never install unattended. Swapping the bundle
                 # restarts the app, and doing that under someone mid-edit is
                 # not a decision to make on their behalf.
-                res = await anyio.to_thread.run_sync(updater.maybe_check)
+                #
+                # Skipped on the first pass: this is a network call, and firing
+                # it in the first seconds of every launch buys nothing (the
+                # interval is measured in hours, and Settings has "Check now").
+                # It also kept the loop reaching out during process startup,
+                # including under the test suite.
+                res = None if first_pass else await anyio.to_thread.run_sync(
+                    updater.maybe_check)
                 if res and res.get("available"):
                     # Label says UPGRADE because the chokepoint guard greps this
                     # module for SQL verbs — a log string shouldn't blunt it.
@@ -116,6 +124,7 @@ async def lifespan(app: FastAPI):
                                      detail=f"{res.get('latest')} (running {res['current']})")
             except Exception as exc:
                 print(f"[waikiki] update check failed: {exc}")
+            first_pass = False
             await asyncio.sleep(3600)
 
     async with collab.server:                       # start the CRDT websocket server

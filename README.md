@@ -196,19 +196,21 @@ the trust model, key handling, and failure modes.
 different port (which an `http://127.0.0.1:8787` link doesn't):
 
 ```
-waikiki://open/beaconlight/meru            # a page
-waikiki://open/beaconlight/meru#abilities  # a section
-waikiki://open/beaconlight                 # a wiki's front page
-waikiki://search?q=clockwork&wiki=beaconlight
-waikiki://home
+waikiki://beaconlight/meru            # a page
+waikiki://beaconlight/meru#abilities  # a section
+waikiki://beaconlight                 # a wiki's front page
+waikiki://beaconlight?q=clockwork     # search, inside that wiki
+waikiki://                            # the front page
 ```
 
 **Page options → Copy link** copies one, and MCP `get_page` returns the same
 thing as `link` — so an agent can hand you something you can actually open.
 
-A URL scheme is an input anything on the machine can fire, and the app window has
-owner rights, so the scheme is a strict **allow-list**: three verbs, every slug
-validated, paths constructed rather than echoed. See
+The wiki is the authority, so there are no reserved verbs to shadow a wiki named
+`search` or `home`. A URL scheme is an input anything on the machine can fire, and
+the app window has owner rights, so parsing is a strict **allow-list**: every slug
+validated, paths constructed rather than echoed, search always scoped to the
+validated wiki. See
 **[docs/deep-links.md](docs/deep-links.md)**. Deep links work in the packaged
 `.app` only — a source run has no `Info.plist` for macOS to route through.
 

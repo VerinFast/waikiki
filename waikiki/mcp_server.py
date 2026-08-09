@@ -188,10 +188,10 @@ def get_page(slug: str) -> dict:
     the bin and edits to it are probably unwanted. Compare `updated_at` against
     what you saw last to tell whether your copy is stale.
 
-    `link` is a `waikiki://` deep link that opens this page in the desktop app.
-    Give that to a human rather than an http:// URL — the app picks a free port at
-    startup, so its http address can change between runs. Append `#section` (an
-    entry's slug from `outline`) to land on a heading."""
+    `link` is a `waikiki://<wiki>/<page>` deep link that opens this page in the
+    desktop app. Give that to a human rather than an http:// URL — the app picks a
+    free port at startup, so its http address can change between runs. Append
+    `#section` (an entry's slug from `outline`) to land on a heading."""
     wiki = _require_wiki()
     page = store.get_page(slug)
     if not page:

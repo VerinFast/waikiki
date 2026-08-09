@@ -1,16 +1,25 @@
 """``waikiki://`` deep links — external URL to in-app destination.
 
-Lets anything outside the app hand out a stable link to a page:
+Lets anything outside the app hand out a stable link to a page. The wiki is the
+authority, mirroring how a wiki is the outermost unit of isolation everywhere
+else in the app:
 
-    waikiki://open/beaconlight/meru
-    waikiki://open/beaconlight/meru#abilities
-    waikiki://open/beaconlight                 (the wiki's front page)
-    waikiki://search?q=clockwork&wiki=beaconlight
-    waikiki://home
+    waikiki://beaconlight/meru
+    waikiki://beaconlight/meru#abilities
+    waikiki://beaconlight                (the wiki's front page)
+    waikiki://beaconlight?q=clockwork    (search, inside that wiki)
+    waikiki://                           (the front page)
 
 A stable link matters because the HTTP URL isn't stable: ``waikiki_app`` scans
 for a free port (``_pick_port``), so today's ``127.0.0.1:8787`` can be 8788
 tomorrow. The scheme doesn't care.
+
+There are deliberately **no verbs**. Putting the wiki in the authority position
+means a reserved word like ``search`` or ``home`` would shadow any wiki actually
+named that, so search is a query on a wiki instead, and the bare ``waikiki://``
+(empty authority — a slug can never be empty) is the front page. Search being
+wiki-scoped also matches the isolation rule: a search never spans wikis, so
+there is no such thing as an unscoped one.
 
 Why this is an allow-list and not a path passthrough
 ----------------------------------------------------
@@ -21,11 +30,11 @@ loopback callers **owner** rights -- so a design that forwarded the URL's path
 straight to ``load_url`` would let any website drive owner-level routes in
 someone's wiki (open Settings, hit an export, trip anything that mutates on GET).
 
-So this module translates a small, fixed set of verbs into paths it constructs
+So this module translates a small, fixed set of shapes into paths it constructs
 itself, and refuses everything else. It never echoes a caller-supplied path, and
 never a caller-supplied host -- the host is always our own loopback base, added
-by the caller of ``resolve()``. Adding a verb here widens what the whole internet
-can ask this app to do; treat it that way.
+by the caller of ``resolve()``. Widening what this accepts widens what the whole
+internet can ask this app to do; treat it that way.
 """
 from __future__ import annotations
 
@@ -59,57 +68,62 @@ def resolve(url: str) -> str | None:
     """
     if not url or not isinstance(url, str):
         return None
+    text = url.strip()
     try:
-        parts = urlparse(url.strip())
+        parts = urlparse(text)
     except Exception:
         return None
     if (parts.scheme or "").lower() != SCHEME:
         return None
+    # Require the authority form. The wiki lives in the authority, so "waikiki:"
+    # with no "//" is malformed rather than a shorthand -- keep the shape exact.
+    if not text[len(parts.scheme):].startswith("://"):
+        return None
 
-    action = (parts.netloc or "").lower()
-    # urlparse keeps the leading "/" on the path; drop empty segments so both
-    # waikiki://open/a/b and waikiki://open/a/b/ behave the same.
+    wiki = parts.netloc or ""
+    # urlparse keeps the leading "/" on the path; dropping empty segments makes
+    # waikiki://w/p and waikiki://w/p/ equivalent.
     segments = [s for s in (parts.path or "").split("/") if s]
 
-    if action == "home":
-        return "/" if not segments else None
+    if not wiki:
+        # waikiki:// -- the front page. No slug is empty, so this can't collide
+        # with a wiki. Anything hung off it is malformed.
+        return "/" if not segments and not parts.query else None
 
-    if action == "open":
-        return _resolve_open(segments, parts.fragment)
-
-    if action == "search":
-        return _resolve_search(parts.query)
-
-    return None                     # unknown verb -- refuse
-
-
-def _resolve_open(segments: list[str], fragment: str) -> str | None:
-    """waikiki://open/<wiki>[/<page>][#section]"""
-    if not segments or len(segments) > 2:
-        return None
-    wiki = segments[0]
     if not _ok_slug(wiki):
         return None
 
-    if len(segments) == 1:          # a wiki, no page: its front page
-        return f"/?wiki={quote(wiki)}"
+    if segments:
+        return _resolve_page(wiki, segments, parts.fragment)
 
-    page = segments[1]
+    if parts.query:
+        return _resolve_search(wiki, parts.query)
+
+    return f"/?wiki={quote(wiki)}"       # the wiki's front page
+
+
+def _resolve_page(wiki: str, segments: list[str], fragment: str) -> str | None:
+    """waikiki://<wiki>/<page>[#section]"""
+    if len(segments) != 1:              # exactly one page segment, never a path
+        return None
+    page = segments[0]
     if not _ok_slug(page):
         return None
+    # A page link ignores any query: the destination is fully determined by the
+    # wiki and slug, and echoing caller params would widen the surface.
     path = f"/wiki/{quote(page)}?wiki={quote(wiki)}"
 
     if fragment:
         frag = unquote(fragment).lower()
         if not _FRAGMENT.match(frag):
-            return None             # a bad anchor refuses the whole link
+            return None                 # a bad anchor refuses the whole link
         path += f"#{quote(frag)}"
     return path
 
 
-def _resolve_search(query: str) -> str | None:
-    """waikiki://search?q=<terms>[&wiki=<wiki>]"""
-    if not query or len(query) > MAX_QUERY:
+def _resolve_search(wiki: str, query: str) -> str | None:
+    """waikiki://<wiki>?q=<terms> -- search is always scoped to one wiki."""
+    if len(query) > MAX_QUERY:
         return None
     try:
         params = parse_qs(query, keep_blank_values=False)
@@ -118,24 +132,22 @@ def _resolve_search(query: str) -> str | None:
     terms = (params.get("q") or [""])[0].strip()
     if not terms:
         return None
-    path = f"/search?q={quote(terms)}"
-    wiki = (params.get("wiki") or [""])[0].strip().lower()
-    if wiki:
-        if not _ok_slug(wiki):
-            return None
-        path += f"&wiki={quote(wiki)}"
-    return path
+    return f"/search?q={quote(terms)}&wiki={quote(wiki)}"
 
 
 # --- Link construction --------------------------------------------------------
 
 def for_page(wiki: str, page: str, section: str | None = None) -> str:
     """The ``waikiki://`` link that opens a page. Inverse of ``resolve``."""
-    link = f"{SCHEME}://open/{quote(wiki)}/{quote(page)}"
+    link = f"{SCHEME}://{quote(wiki)}/{quote(page)}"
     if section:
         link += f"#{quote(section)}"
     return link
 
 
 def for_wiki(wiki: str) -> str:
-    return f"{SCHEME}://open/{quote(wiki)}"
+    return f"{SCHEME}://{quote(wiki)}"
+
+
+def for_search(wiki: str, terms: str) -> str:
+    return f"{SCHEME}://{quote(wiki)}?q={quote(terms)}"

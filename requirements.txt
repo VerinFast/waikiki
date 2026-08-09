@@ -33,6 +33,15 @@ anthropic>=0.120.2
 # floor is satisfied by anything, so Dependabot never proposes a bump for it.
 fastmcp>=3.4
 
-# --- Real-time collaborative editing (CRDT) ---
-pycrdt>=0.10               # Yjs/Yrs bindings — the shared document engine
-pycrdt-websocket>=0.16.4     # y-websocket-compatible server for browser sync
+# --- Real-time collaborative editing (CRDT) + canonical Y.Doc persistence ---
+# The Y.Doc is Waikiki's canonical persisted page state (see waikiki/ydoc.py),
+# not just a live editing buffer. The upper cap keeps us on the same 0.1x Yjs v1
+# update-format line as the vendored wiki-interchange lib (below), so snapshots
+# and changelogs stay mergeable across the Kahala <-> Waikiki round-trip.
+pycrdt>=0.10,<0.15         # Yjs/Yrs bindings — the shared document engine
+pycrdt-websocket>=0.16.4   # y-websocket-compatible server for browser sync
+
+# --- Interchange format (VENDORED, not on PyPI) ---
+# wiki-interchange is vendored at waikiki/vendor/wiki_interchange/, pinned to
+# version 0.1.0 (spec v1). It is NOT pip-installable; re-sync it from upstream
+# per docs/vendoring.md. Its own dep is pycrdt>=0.10,<0.15, satisfied above.

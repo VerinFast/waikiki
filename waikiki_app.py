@@ -34,6 +34,59 @@ def _pick_port(host: str, start: int) -> int:
     return start
 
 
+def _install_deeplink_handler(base: str) -> None:
+    """Route ``waikiki://`` URLs from macOS into the window.
+
+    macOS delivers a URL-scheme open as the ``GURL`` Apple Event, so we register
+    a handler with NSAppleEventManager. Every failure here is swallowed: deep
+    links are a convenience, and a missing pyobjc symbol or an odd macOS build
+    must never stop the app from starting.
+
+    Only ``deeplink.resolve``'s output is ever navigated to -- see that module for
+    why the URL is not passed through.
+    """
+    try:
+        import objc
+        from Foundation import NSAppleEventManager, NSObject
+
+        import webview
+        from waikiki import deeplink
+
+        # Four-char codes: 'GURL'/'GURL' is the internet-event class and the
+        # get-url event id; '----' is the direct-object keyword holding the URL.
+        k_internet_class = k_get_url = 0x4755524C
+        k_direct_object = 0x2D2D2D2D
+
+        class _DeepLinkHandler(NSObject):
+            def handleEvent_withReplyEvent_(self, event, reply):
+                try:
+                    desc = event.paramDescriptorForKeyword_(k_direct_object)
+                    url = desc.stringValue() if desc else None
+                    path = deeplink.resolve(url or "")
+                    if not path:
+                        print(f"[waikiki] deep link refused: {url!r}",
+                              file=sys.stderr)
+                        return
+                    if webview.windows:
+                        webview.windows[0].load_url(base + path)
+                except Exception as exc:
+                    print(f"[waikiki] deep link failed: {exc}", file=sys.stderr)
+
+        # Kept on the module so the ObjC runtime doesn't collect our handler --
+        # NSAppleEventManager holds only a weak reference to the target.
+        global _DEEPLINK_HANDLER
+        _DEEPLINK_HANDLER = _DeepLinkHandler.alloc().init()
+        NSAppleEventManager.sharedAppleEventManager() \
+            .setEventHandler_andSelector_forEventClass_andEventID_(
+                _DEEPLINK_HANDLER, b"handleEvent:withReplyEvent:",
+                k_internet_class, k_get_url)
+    except Exception as exc:
+        print(f"[waikiki] deep links unavailable: {exc}", file=sys.stderr)
+
+
+_DEEPLINK_HANDLER = None    # see _install_deeplink_handler
+
+
 def main() -> None:
     # MCP mode: run the stdio MCP server instead of the window. Lets Claude
     # Desktop launch the packaged .app directly as an MCP server (no source
@@ -157,7 +210,10 @@ def main() -> None:
         "Waikiki", f"http://{host}:{port}/", width=1200, height=820,
         min_size=(800, 600), js_api=DesktopApi(), text_select=True,
     )
-    webview.start(menu=menu)  # blocks until the window is closed
+    # waikiki:// deep links. Registered after the window exists so the handler
+    # always has something to navigate; links that arrive during launch are
+    # queued by _install_deeplink_handler and flushed once we're up.
+    webview.start(_install_deeplink_handler, (base,), menu=menu)  # blocks
 
     server.should_exit = True  # ask uvicorn to stop; daemon thread exits with us
 

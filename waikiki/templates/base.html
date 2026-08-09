@@ -157,6 +157,18 @@
       if (text) _copyText(text);
       return !!text;
     };
+    // Copy a page's waikiki:// deep link (Page options -> Copy link). Uses the
+    // scheme rather than the http URL because the app picks a free port at
+    // startup, so an http link can go stale between runs.
+    window.wkCopyLink = function (btn) {
+      var link = btn && btn.getAttribute('data-link');
+      if (!link) return false;
+      _copyText(link);
+      var was = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = was; }, 1200);
+      return true;
+    };
     window.wkPaste = function () {
       var ae = document.activeElement;
       if (!_isEditable(ae) || !navigator.clipboard || !navigator.clipboard.readText)

@@ -22,8 +22,9 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from . import (accesslog, ai, appconfig, auth, backups, bonjour, chat, collab,
-               config, db, debuglog, edits, elements, embeddings, help_content,
-               imagegen, pdfgen, rag, render, store, tunnel, updater, wikis)
+               config, db, debuglog, deeplink, edits, elements, embeddings,
+               help_content, imagegen, pdfgen, rag, render, store, tunnel,
+               updater, wikis)
 
 
 @asynccontextmanager
@@ -389,6 +390,11 @@ def _ctx(request: Request, **extra) -> dict:
         "role": request.scope.get("waikiki_role", "owner"),
     }
     base.update(extra)
+    # A waikiki:// link for whichever page this view is showing, so "Copy link"
+    # hands out something that survives the app picking a different port.
+    page = base.get("page") or {}
+    if page.get("slug"):
+        base.setdefault("page_link", deeplink.for_page(wiki, page["slug"]))
     return base
 
 

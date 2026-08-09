@@ -24,8 +24,8 @@ import httpx
 from fastmcp import FastMCP
 from mcp.types import Icon
 
-from . import (accesslog, config, db, edits, elements, imagegen, rag, render,
-               store, structure, wikis)
+from . import (accesslog, config, db, deeplink, edits, elements, imagegen, rag,
+               render, store, structure, wikis)
 
 WEB = config.WEB_URL
 _ACTIVE_FILE = config.DATA_DIR / "mcp_active_wiki"
@@ -186,7 +186,12 @@ def get_page(slug: str) -> dict:
     can be NEWER than `updated_at` (which is the last saved revision) — `live`
     tells you which you got. Check `trashed` before writing: a trashed page is in
     the bin and edits to it are probably unwanted. Compare `updated_at` against
-    what you saw last to tell whether your copy is stale."""
+    what you saw last to tell whether your copy is stale.
+
+    `link` is a `waikiki://` deep link that opens this page in the desktop app.
+    Give that to a human rather than an http:// URL — the app picks a free port at
+    startup, so its http address can change between runs. Append `#section` (an
+    entry's slug from `outline`) to land on a heading."""
     wiki = _require_wiki()
     page = store.get_page(slug)
     if not page:
@@ -203,6 +208,7 @@ def get_page(slug: str) -> dict:
     store.log_activity("ai", "read")
     meta, tags, _ = structure.parse_frontmatter(markdown)
     return {"wiki": wiki, "slug": page["slug"], "title": page["title"],
+            "link": deeplink.for_page(wiki, page["slug"]),
             "markdown": markdown, "outline": render.extract_toc(markdown),
             "properties": meta, "tags": tags,
             "updated_at": page.get("updated_at"),

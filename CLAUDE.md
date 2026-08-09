@@ -22,12 +22,15 @@ two in parity (same substance, different voice) whenever you change either.
   produce/consume round-trip. Sits below `store`, like `rag`.
 - `waikiki/vendor/wiki_interchange/` — vendored, version-pinned interchange
   format (see `docs/vendoring.md`).
+- `waikiki/deeplink.py` — `waikiki://` deep links: the allow-list that turns an
+  external URL into an in-app destination (see `docs/deep-links.md`).
 - `waikiki/updater.py` — self-update for the packaged `.app`: signature-verified
   download, staging, and the detached bundle swap (see `docs/updates.md`).
 - `docs/rfc/0001-multi-tenant-waikiki.md` — the port-to-multi-tenant RFC.
 - `docs/repository-layer.md` — the layering spec (RFC 0001, Phase 0).
 - `docs/vendoring.md` — vendored packages, pins, and re-sync steps.
 - `docs/updates.md` — the auto-update trust model and release procedure.
+- `docs/deep-links.md` — the `waikiki://` scheme and why it is an allow-list.
 
 ## Architectural rules (load-bearing)
 

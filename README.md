@@ -190,6 +190,28 @@ since the swap restarts the app. Cutting a signed release is
 `./scripts/release.sh v0.14.0` — see **[docs/updates.md](docs/updates.md)** for
 the trust model, key handling, and failure modes.
 
+### Deep links
+
+`waikiki://` URLs open the app at a specific place, and survive the app picking a
+different port (which an `http://127.0.0.1:8787` link doesn't):
+
+```
+waikiki://open/beaconlight/meru            # a page
+waikiki://open/beaconlight/meru#abilities  # a section
+waikiki://open/beaconlight                 # a wiki's front page
+waikiki://search?q=clockwork&wiki=beaconlight
+waikiki://home
+```
+
+**Page options → Copy link** copies one, and MCP `get_page` returns the same
+thing as `link` — so an agent can hand you something you can actually open.
+
+A URL scheme is an input anything on the machine can fire, and the app window has
+owner rights, so the scheme is a strict **allow-list**: three verbs, every slug
+validated, paths constructed rather than echoed. See
+**[docs/deep-links.md](docs/deep-links.md)**. Deep links work in the packaged
+`.app` only — a source run has no `Info.plist` for macOS to route through.
+
 ## Connect Claude Desktop (MCP)
 
 **Easiest:** open Waikiki and click **Connect Claude** in the header (or visit

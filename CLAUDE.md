@@ -22,9 +22,12 @@ two in parity (same substance, different voice) whenever you change either.
   produce/consume round-trip. Sits below `store`, like `rag`.
 - `waikiki/vendor/wiki_interchange/` — vendored, version-pinned interchange
   format (see `docs/vendoring.md`).
+- `waikiki/updater.py` — self-update for the packaged `.app`: signature-verified
+  download, staging, and the detached bundle swap (see `docs/updates.md`).
 - `docs/rfc/0001-multi-tenant-waikiki.md` — the port-to-multi-tenant RFC.
 - `docs/repository-layer.md` — the layering spec (RFC 0001, Phase 0).
 - `docs/vendoring.md` — vendored packages, pins, and re-sync steps.
+- `docs/updates.md` — the auto-update trust model and release procedure.
 
 ## Architectural rules (load-bearing)
 
@@ -61,6 +64,14 @@ two in parity (same substance, different voice) whenever you change either.
    those server-side); local embeddings are regenerated on import, never shipped.
    An incompatible spec/Yjs version is **rejected**, never merged. Re-sync the
    vendored lib per `docs/vendoring.md` and keep its pin in lockstep.
+8. **The updater fails closed, and its trust root is pinned at build time.**
+   `updater.py` downloads a bundle and then *executes* it, so it is the highest-
+   privilege path in the app. Every release zip must Ed25519-verify against
+   `PUBLIC_KEY_HEX` **before** it is expanded; no pinned key means updating is
+   disabled, never "trust the download". Never source that key from the network,
+   `app_config.json`, or any other writable place — a replaceable pinned key is
+   not a trust root. The bundle's ad-hoc `codesign --sign -` proves nothing about
+   origin; it is not a substitute. See `docs/updates.md`.
 
 ## Before committing
 

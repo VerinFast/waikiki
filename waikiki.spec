@@ -8,6 +8,12 @@ from PyInstaller.utils.hooks import collect_all
 import glob
 import sqlite_vec
 
+# Stamp the real release into the bundle. The updater compares a downloaded
+# bundle's CFBundleShortVersionString against the release tag before installing
+# it, so a hardcoded version here would make every genuine update look like a
+# mismatch (and Finder's Get Info would lie too).
+from waikiki import __version__ as WAIKIKI_VERSION
+
 datas = [
     ("waikiki/templates", "waikiki/templates"),
     ("waikiki/static", "waikiki/static"),
@@ -78,6 +84,7 @@ app = BUNDLE(
     info_plist={
         "NSHighResolutionCapable": True,
         "LSBackgroundOnly": False,
-        "CFBundleShortVersionString": "0.0.1",
+        "CFBundleShortVersionString": WAIKIKI_VERSION,
+        "CFBundleVersion": WAIKIKI_VERSION,
     },
 )

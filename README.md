@@ -172,6 +172,24 @@ The packaged app stores its data in **`~/Library/Application Support/Waikiki`**
 (not inside the bundle), so it survives moving/replacing the app. Override with
 `WAIKIKI_DATA`.
 
+### Updates
+
+**Settings → Updates** checks GitHub for a newer release and can install it: the
+app backs up every wiki, downloads the release, verifies it, then quits and
+relaunches itself to finish. Your content lives outside the bundle, so an update
+replaces code only.
+
+Because the app carries no Apple identity, it can't rely on macOS to tell a real
+release from a tampered one — so every release zip is **Ed25519-signed** and the
+app verifies it against a public key pinned at build time, *before* unpacking.
+Anything unsigned, wrongly signed, or modified is refused, and a build with no
+pinned key disables updating rather than trusting the download.
+
+Checks are check-only and hourly at most; installing is always an explicit click,
+since the swap restarts the app. Cutting a signed release is
+`./scripts/release.sh v0.14.0` — see **[docs/updates.md](docs/updates.md)** for
+the trust model, key handling, and failure modes.
+
 ## Connect Claude Desktop (MCP)
 
 **Easiest:** open Waikiki and click **Connect Claude** in the header (or visit

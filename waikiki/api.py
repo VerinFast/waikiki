@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import difflib
 import json
+import os
+import signal
 import sys
 import tempfile
 from urllib.parse import quote
@@ -21,7 +23,7 @@ from pydantic import BaseModel
 
 from . import (accesslog, ai, appconfig, auth, backups, bonjour, chat, collab,
                config, db, debuglog, edits, elements, embeddings, help_content,
-               imagegen, pdfgen, rag, render, store, tunnel, wikis)
+               imagegen, pdfgen, rag, render, store, tunnel, updater, wikis)
 
 
 @asynccontextmanager
@@ -101,6 +103,18 @@ async def lifespan(app: FastAPI):
                                      detail=f"{res['name']} ({len(res['wikis'])} wikis)")
             except Exception as exc:
                 print(f"[waikiki] scheduled backup failed: {exc}")
+            try:
+                # Check only — never install unattended. Swapping the bundle
+                # restarts the app, and doing that under someone mid-edit is
+                # not a decision to make on their behalf.
+                res = await anyio.to_thread.run_sync(updater.maybe_check)
+                if res and res.get("available"):
+                    # Label says UPGRADE because the chokepoint guard greps this
+                    # module for SQL verbs — a log string shouldn't blunt it.
+                    accesslog.record("UPGRADE available", status=200,
+                                     detail=f"{res.get('latest')} (running {res['current']})")
+            except Exception as exc:
+                print(f"[waikiki] update check failed: {exc}")
             await asyncio.sleep(3600)
 
     async with collab.server:                       # start the CRDT websocket server
@@ -1079,6 +1093,7 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
              backup_interval=backups.interval_hours(),
              backup_list=backups.list_backups()[:10],
              backup_dir=str(config.DATA_DIR / "backups"),
+             update=updater.status(),
              msg=msg, error=error),
     )
 
@@ -1130,6 +1145,58 @@ def backups_save(enabled: str = Form(""), keep: str = Form("7"),
     except ValueError:
         pass
     return RedirectResponse("/settings?msg=Backup+settings+saved", status_code=303)
+
+
+@app.post("/settings/updates")
+def updates_save(auto_check: str = Form(""), interval_hours: str = Form("24")):
+    appconfig.set("update_auto_check", bool(auto_check))
+    try:
+        appconfig.set("update_interval_hours", max(1, int(interval_hours)))
+    except ValueError:
+        pass
+    return RedirectResponse("/settings?msg=Update+settings+saved", status_code=303)
+
+
+@app.post("/settings/updates/check")
+async def updates_check_now(request: Request):
+    """Ask GitHub for the latest release (owner-only — guests can't reach /settings/*)."""
+    import anyio
+    res = await anyio.to_thread.run_sync(updater.check)
+    if not res.get("ok"):
+        return RedirectResponse(f"/settings?error={quote(res.get('error', 'check failed'))}",
+                                status_code=303)
+    if res.get("error"):            # newer release exists but isn't installable
+        return RedirectResponse(f"/settings?error={quote(res['error'])}", status_code=303)
+    if not res.get("available"):
+        return RedirectResponse(
+            f"/settings?msg=Up+to+date+({quote(res['current'])})", status_code=303)
+    return RedirectResponse(
+        f"/settings?msg={quote(res['latest'])}+is+available", status_code=303)
+
+
+@app.post("/settings/updates/install")
+async def updates_install(request: Request):
+    """Download, verify, and stage an update, then quit so the helper can swap.
+
+    The swap itself happens in a detached helper that waits for this process to
+    exit — see waikiki/updater.py. We only get to schedule it and shut down.
+    """
+    import anyio
+    res = await anyio.to_thread.run_sync(updater.download_and_apply)
+    if not res.get("ok"):
+        return RedirectResponse(f"/settings?error={quote(res.get('error', 'update failed'))}",
+                                status_code=303)
+
+    async def _quit_soon():
+        # Give the redirect time to reach the window, then exit so the waiting
+        # helper can swap the bundle and relaunch. The lifespan shutdown runs on
+        # the way out, which is what flushes collab.py's pending snapshots.
+        await asyncio.sleep(1.5)
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    asyncio.create_task(_quit_soon())
+    return RedirectResponse("/settings?msg=Updating+—+Waikiki+will+restart",
+                            status_code=303)
 
 
 @app.post("/settings/tunnel/start")

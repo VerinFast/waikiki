@@ -33,10 +33,14 @@ active wiki's own database, so contamination is structurally impossible.
 - **Claude** has a *separate* active wiki, changed only with the MCP
   `switch_wiki` tool. Every content tool refuses to run until a wiki is chosen
   and **echoes the wiki it acted on**, so the AI can never silently cross wikis.
+- **Each agent** gets its own active wiki, scoped to its MCP session. Two agents
+  can work in two different wikis at once without moving each other, and the
+  choice is never written to disk — so a restarted server leaves an agent with no
+  active wiki rather than inheriting whichever one another agent last picked.
 
-The two are independent by design — the human browsing Crosslake doesn't move
-Claude, and vice-versa. To co-edit, ask Claude to `switch_wiki` to the one you're
-in.
+These are all independent by design — the human browsing Crosslake doesn't move
+Claude, one agent doesn't move another, and vice-versa. To co-edit, ask Claude to
+`switch_wiki` to the one you're in.
 
 ### Save / Open wikis to files
 

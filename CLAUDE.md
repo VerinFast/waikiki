@@ -48,7 +48,13 @@ two in parity (same substance, different voice) whenever you change either.
    without touching a route. Isolation is the reason, not tidiness.
 4. **Wikis are fully isolated.** Pages, search, and `[[links]]` never cross
    wikis. The active wiki is a per-request contextvar (`db.current_wiki`); the
-   MCP server's active wiki is independent of the browser's.
+   MCP server's active wiki is independent of the browser's **and of every other
+   agent's** — it is keyed per MCP session (`mcp_server._ACTIVE_BY_SESSION`) and
+   deliberately **not persisted**. Never store it in a module global or on disk:
+   a shared pointer meant a respawned agent inherited another agent's wiki and
+   wrote pages into it (issue #11). A fresh session has no active wiki and must
+   call `switch_wiki`; refusing is correct, silently inheriting is not.
+   `tests/test_cross_wiki_isolation.py` guards this end to end.
 5. **One code path for Human and LLM.** REST, HTML views, and MCP tools all go
    through `store`/`rag` so both callers get identical render + version + index.
 6. **The Y.Doc is the canonical persisted state; markdown is a projection.** Each

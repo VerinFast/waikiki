@@ -36,11 +36,15 @@ def _no_update_checks(monkeypatch):
     request during startup, but that is a timing property -- this makes it
     structural, so a future change to that loop can't quietly put a network call
     back into the suite.
+
+    Patched at the HTTP boundary rather than at ``check()``: that blocks the
+    network while leaving check()'s own logic (which release counts as
+    installable) testable by overriding ``_get_json`` per test.
     """
-    monkeypatch.setattr(
-        updater, "check",
-        lambda: {"ok": False, "current": config.VERSION, "available": False,
-                 "error": "network disabled in tests"})
+    def _no_network(*a, **k):
+        raise RuntimeError("network disabled in tests")
+
+    monkeypatch.setattr(updater, "_get_json", _no_network)
 
 
 @pytest.fixture

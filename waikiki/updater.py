@@ -27,6 +27,7 @@ getting this wrong is arbitrary code execution on every install.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import plistlib
@@ -189,11 +190,19 @@ def check() -> dict:
         })
         # An update with no signed asset is not installable. Say so plainly
         # rather than offering a button that will fail at verification.
-        if result["available"] and not (result["zip_url"] and result["sig_url"]):
+        installable = bool(result["available"]
+                           and result["zip_url"] and result["sig_url"])
+        if result["available"] and not installable:
             result["error"] = (f"release {tag} has no signed .zip asset "
                               "(needs both the zip and its .sig)")
+        result["installable"] = installable
         appconfig.set("update_last_check", time.time())
         appconfig.set("update_last_seen", tag)
+        # Persist "installable upgrade" separately from "tag we saw". Settings
+        # must not derive the offer from last_seen != current: that is true when
+        # this build is NEWER than the latest release (offering a downgrade) and
+        # when the release has no signature (offering an install that must fail).
+        appconfig.set("update_last_available", tag if installable else None)
     except Exception as exc:
         result["error"] = str(exc)
     return result
@@ -254,6 +263,32 @@ def _parse_signature(raw: bytes) -> bytes:
         return bytes.fromhex(raw.decode("ascii").strip())
     except Exception:
         return b""
+
+
+def file_digest(path: Path, chunk: int = 1 << 20) -> bytes:
+    """Streamed SHA-256 of a file.
+
+    Release zips are ~100MB+, so the signature covers this digest rather than
+    the archive bytes -- verification then costs constant memory instead of
+    holding the whole download in RAM. Signing a hash is the normal
+    construction; substituting content would require a SHA-256 collision.
+
+    scripts/release.sh signs exactly this value; the two must not drift.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h.update(block)
+    return h.digest()
+
+
+def verify_file(path: Path, signature: bytes) -> bool:
+    """Ed25519-verify a file against the pinned key, without loading it all."""
+    try:
+        digest = file_digest(path)
+    except Exception:
+        return False
+    return verify_signature(digest, signature)
 
 
 # --- Download + stage ---------------------------------------------------------
@@ -388,7 +423,11 @@ def apply_update(staged_app: Path) -> dict:
         pid=os.getpid(),
         new=shlex.quote(str(staged_app)),
         target=shlex.quote(str(target)),
-        bak=shlex.quote(str(d / f"{target.stem}-previous.app")),
+        # Sibling of the bundle, not under DATA_DIR: `mv` across filesystems
+        # fails with EXDEV, and an app on another volume (or an external drive)
+        # would abort an otherwise valid update. can_update() already requires
+        # the parent directory be writable, which is what makes this safe.
+        bak=shlex.quote(str(target.parent / f"{target.name}.previous")),
         log=shlex.quote(str(d / "swap.log")),
     ))
     script.chmod(0o755)
@@ -432,7 +471,7 @@ def download_and_apply(info: dict | None = None) -> dict:
 
         # Verify BEFORE expanding: never let an unverified archive write files.
         sig = _parse_signature(sig_path.read_bytes())
-        if not verify_signature(zip_path.read_bytes(), sig):
+        if not verify_file(zip_path, sig):
             zip_path.unlink(missing_ok=True)
             sig_path.unlink(missing_ok=True)
             return {"ok": False,
@@ -455,5 +494,8 @@ def status() -> dict:
         "interval_hours": interval_hours(),
         "last_check": appconfig.get("update_last_check"),
         "last_seen": appconfig.get("update_last_seen"),
+        # The only field Settings may gate the install offer on: set when the
+        # last check found a release that is both newer AND signed.
+        "last_available": appconfig.get("update_last_available"),
         "signing_key_pinned": _pinned_key() is not None,
     }

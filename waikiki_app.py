@@ -210,9 +210,11 @@ def main() -> None:
         "Waikiki", f"http://{host}:{port}/", width=1200, height=820,
         min_size=(800, 600), js_api=DesktopApi(), text_select=True,
     )
-    # waikiki:// deep links. Registered after the window exists so the handler
-    # always has something to navigate; links that arrive during launch are
-    # queued by _install_deeplink_handler and flushed once we're up.
+    # waikiki:// deep links. webview.start runs this once the GUI is up, so the
+    # handler always has a window to navigate. Nothing is queued: a link that
+    # arrives before the handler is registered (a cold launch *via* a link) is
+    # LaunchServices' to redeliver, and if it doesn't, the app simply opens on
+    # the front page. See docs/deep-links.md.
     webview.start(_install_deeplink_handler, (base,), menu=menu)  # blocks
 
     server.should_exit = True  # ask uvicorn to stop; daemon thread exits with us

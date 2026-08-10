@@ -278,10 +278,13 @@
         <form method="post" action="/settings/updates/check" style="margin-top:.6rem">
           <button class="btn" type="submit">Check now</button>
         </form>
-        {% if update.last_seen and update.last_seen != update.current %}
+        {# last_available, not last_seen: an offer only when the release is both
+           newer and signed, so this can't propose a downgrade or an install
+           that would fail verification. #}
+        {% if update.last_available %}
           <form method="post" action="/settings/updates/install" style="margin-top:.6rem">
             <button class="btn primary" type="submit">
-              Download and install {{ update.last_seen }}
+              Download and install {{ update.last_available }}
             </button>
             <p class="muted note">Waikiki will back up every wiki, then quit and
               restart itself to finish. Save anything you're mid-way through

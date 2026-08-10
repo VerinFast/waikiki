@@ -203,3 +203,122 @@ def test_status_reports_an_unpinned_build(wiki, monkeypatch):
     st = updater.status()
     assert st["signing_key_pinned"] is False and st["updatable"] is False
     assert st["current"]
+
+
+# --- Streamed verification (signature covers the digest, not the bytes) --------
+
+def test_verify_file_accepts_a_correctly_signed_file(signing_key, tmp_path):
+    blob = tmp_path / "Waikiki-macos.zip"
+    blob.write_bytes(b"x" * (3 << 20))          # spans multiple read chunks
+    sig = signing_key.sign(updater.file_digest(blob))
+    assert updater.verify_file(blob, sig) is True
+
+
+def test_verify_file_refuses_a_modified_file(signing_key, tmp_path):
+    blob = tmp_path / "Waikiki-macos.zip"
+    blob.write_bytes(b"x" * 1024)
+    sig = signing_key.sign(updater.file_digest(blob))
+    blob.write_bytes(b"x" * 1023 + b"y")        # same length, one byte changed
+    assert updater.verify_file(blob, sig) is False
+
+
+def test_verify_file_refuses_a_signature_over_the_raw_bytes(signing_key, tmp_path):
+    """Guards the release.sh <-> updater contract.
+
+    If the signer ever goes back to signing archive bytes while the client
+    verifies the digest, every release would be refused. Pin the mismatch.
+    """
+    blob = tmp_path / "Waikiki-macos.zip"
+    blob.write_bytes(b"payload bytes")
+    assert updater.verify_file(blob, signing_key.sign(blob.read_bytes())) is False
+
+
+def test_file_digest_matches_hashlib(tmp_path):
+    import hashlib
+    blob = tmp_path / "f.bin"
+    blob.write_bytes(b"abc" * 100000)
+    assert updater.file_digest(blob) == hashlib.sha256(blob.read_bytes()).digest()
+
+
+def test_verify_file_refuses_a_missing_file(signing_key, tmp_path):
+    assert updater.verify_file(tmp_path / "nope.zip", b"\x00" * 64) is False
+
+
+# --- The install offer --------------------------------------------------------
+
+def _fake_release(tag, assets):
+    return {"tag_name": tag, "body": "notes",
+            "assets": [{"name": n, "browser_download_url": f"https://x/{n}"}
+                       for n in assets]}
+
+
+def _run_check(monkeypatch, tag, assets):
+    monkeypatch.setattr(updater, "_get_json",
+                        lambda *a, **k: _fake_release(tag, assets))
+    return updater.check()
+
+
+def test_a_newer_signed_release_is_offered(wiki, monkeypatch):
+    res = _run_check(monkeypatch, "v99.0.0",
+                     ["Waikiki-macos.zip", "Waikiki-macos.zip.sig"])
+    assert res["available"] and res["installable"]
+    assert updater.status()["last_available"] == "v99.0.0"
+
+
+def test_a_newer_release_without_a_signature_is_not_offered(wiki, monkeypatch):
+    """Seen, but not installable — Settings must not offer a doomed install."""
+    res = _run_check(monkeypatch, "v99.0.0", ["Waikiki-macos.zip"])
+    assert res["available"] is True and res["installable"] is False
+    assert "no signed .zip asset" in res["error"]
+    st = updater.status()
+    assert st["last_seen"] == "v99.0.0"
+    assert st["last_available"] is None
+
+
+def test_an_older_release_is_not_offered(wiki, monkeypatch):
+    """A local build newer than the latest release must not offer a downgrade."""
+    res = _run_check(monkeypatch, "v0.0.1",
+                     ["Waikiki-macos.zip", "Waikiki-macos.zip.sig"])
+    assert res["available"] is False and res["installable"] is False
+    st = updater.status()
+    assert st["last_seen"] == "v0.0.1"          # we did see it...
+    assert st["last_available"] is None          # ...but it is not an upgrade
+
+
+def test_last_available_is_cleared_when_a_release_is_pulled(wiki, monkeypatch):
+    """A stale offer must not survive a later check that finds nothing."""
+    _run_check(monkeypatch, "v99.0.0",
+               ["Waikiki-macos.zip", "Waikiki-macos.zip.sig"])
+    assert updater.status()["last_available"] == "v99.0.0"
+    _run_check(monkeypatch, "v0.0.1",
+               ["Waikiki-macos.zip", "Waikiki-macos.zip.sig"])
+    assert updater.status()["last_available"] is None
+
+
+# --- Swap helper --------------------------------------------------------------
+
+def test_the_backup_stays_on_the_bundles_own_volume(signing_key, wiki, tmp_path,
+                                                    monkeypatch):
+    """`mv` across filesystems fails with EXDEV, aborting a valid update.
+
+    The backup must be a sibling of the bundle, not under DATA_DIR (which can be
+    on a different volume when the app lives on an external drive).
+    """
+    target = tmp_path / "Applications" / "Waikiki.app"
+    (target / "Contents" / "MacOS").mkdir(parents=True)
+    staged = updater._updates_dir() / "Waikiki.app"
+    (staged / "Contents" / "MacOS").mkdir(parents=True)
+
+    monkeypatch.setattr(updater, "can_update", lambda: (True, ""))
+    monkeypatch.setattr(updater, "bundle_path", lambda: target)
+    monkeypatch.setattr(updater.subprocess, "Popen",
+                        lambda *a, **k: None)      # don't actually detach
+    res = updater.apply_update(staged)
+    assert res["ok"], res
+
+    script = (updater._updates_dir() / "swap.sh").read_text()
+    bak_line = next(ln for ln in script.splitlines() if ln.startswith("BAK="))
+    assert str(target.parent) in bak_line, \
+        f"backup is not beside the bundle: {bak_line}"
+    assert str(updater._updates_dir()) not in bak_line, \
+        f"backup lives under DATA_DIR and can cross filesystems: {bak_line}"

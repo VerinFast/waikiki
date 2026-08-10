@@ -50,7 +50,11 @@ misconfigured mirror all produce a perfectly valid TLS download.
 
 So Waikiki carries its own trust root:
 
-- Every release zip is signed with an **Ed25519** key.
+- Every release zip is signed with an **Ed25519** key, over the zip's streamed
+  **SHA-256 digest** rather than the archive bytes — so a ~100 MB download is
+  verified in constant memory. `updater.file_digest` and `scripts/release.sh`
+  must stay in lockstep; signing a hash is the standard construction, and
+  substituting content would require a SHA-256 collision.
 - The **public** half is pinned in `updater.PUBLIC_KEY_HEX`, compiled into the app.
 - The **private** half never enters this repo. `release.sh` reads it from
   `WAIKIKI_UPDATE_KEY` (default `~/.waikiki/update-key.pem`) and refuses to use
@@ -130,7 +134,13 @@ App-global settings live in `app_config.json` via `appconfig`, not per-wiki:
 | `update_auto_check` | `true` | Check automatically |
 | `update_interval_hours` | `24` | Minimum hours between checks |
 | `update_last_check` | — | Unix time of the last check |
-| `update_last_seen` | — | Tag seen by that check |
+| `update_last_seen` | — | Tag seen by that check, installable or not |
+| `update_last_available` | — | Tag of the last **newer and signed** release |
+
+`update_last_available` is the only one Settings may gate the install offer on.
+Deriving it from `last_seen != current` would offer a **downgrade** when a local
+build is newer than the latest release, and would offer an install for a release
+with no `.sig` — one that must fail at verification.
 
 ## Known limits
 

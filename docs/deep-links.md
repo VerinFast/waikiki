@@ -99,6 +99,11 @@ missing pyobjc symbol must never stop the app from launching.
 - **Packaged app only.** A `python waikiki_app.py` source run has no `Info.plist`,
   so macOS has no scheme registration to route. The parsing layer is fully
   testable without a build; the delivery layer isn't.
+- **Cold launch via a link is not guaranteed.** The Apple Event handler is
+  registered once the GUI is up, so a link that arrives *before* that is
+  LaunchServices' to redeliver. Nothing is queued on our side; if it isn't
+  redelivered the app just opens on the front page rather than the target. Links
+  fired at an already-running app are the reliable path.
 - **One registration wins.** If several Waikiki builds exist on the machine,
   LaunchServices picks one — usually the most recently registered. Testing a dev
   build while a released app is installed can open the wrong one.

@@ -81,14 +81,21 @@ bash "$REPO_ROOT/scripts/build_macos.sh"
 [ -f "$ZIP" ] || die "build produced no $ZIP"
 
 say "signing"
+# Signs the zip's streamed SHA-256, NOT the archive bytes — updater.verify_file
+# checks exactly that, so the two must stay in lockstep. Signing the digest lets
+# a ~100MB download be verified in constant memory.
 "$PY" - "$KEY_PATH" "$ZIP" "$SIG" <<'PYCODE'
 import pathlib, sys
 from cryptography.hazmat.primitives import serialization as ser
 
+from waikiki import updater
+
 key_path, zip_path, sig_path = (pathlib.Path(p) for p in sys.argv[1:4])
 priv = ser.load_pem_private_key(key_path.read_bytes(), password=None)
-sig = priv.sign(zip_path.read_bytes())
+digest = updater.file_digest(zip_path)          # the value the client verifies
+sig = priv.sign(digest)
 sig_path.write_text(sig.hex() + "\n")
+print(f"    sha256:    {digest.hex()}")
 print(f"    signature: {sig_path} ({len(sig)} bytes, hex-encoded)")
 PYCODE
 
@@ -105,7 +112,7 @@ if updater._pinned_key() is None:
     sys.exit("PUBLIC_KEY_HEX is empty in waikiki/updater.py — this build cannot\n"
              "verify updates. Paste the public half from --genkey and rebuild.")
 sig = updater._parse_signature(sig_path.read_bytes())
-if not updater.verify_signature(zip_path.read_bytes(), sig):
+if not updater.verify_file(zip_path, sig):
     sys.exit("signature does NOT verify against the pinned public key.\n"
              "The private key used here doesn't match PUBLIC_KEY_HEX — clients\n"
              "would refuse this update. Not publishing.")

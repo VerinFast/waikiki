@@ -11,7 +11,7 @@ linkify-it-py>=2.0             # GFM autolinking (bare URLs)
 pygments>=2.18                  # optional fenced-code highlighting
 
 # --- Hybrid RAG ---
-sqlite-vec>=0.1.6               # vector search inside the same sqlite file (FTS5/bm25 is built in)
+sqlite-vec>=0.1.9               # vector search inside the same sqlite file (FTS5/bm25 is built in)
 apsw>=3.47                      # SQLite with loadable-extension support (needed for sqlite-vec)
 
 # --- Pluggable embeddings ---

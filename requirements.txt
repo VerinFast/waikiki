@@ -6,7 +6,7 @@ python-multipart>=0.0.32        # form / file uploads
 
 # --- Markdown -> HTML (GFM tables, etc.) ---
 markdown-it-py>=3.0
-mdit-py-plugins>=0.4
+mdit-py-plugins>=0.6.1
 linkify-it-py>=2.0             # GFM autolinking (bare URLs)
 pygments>=2.18                  # optional fenced-code highlighting
 

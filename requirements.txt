@@ -31,7 +31,7 @@ anthropic>=0.120.2
 # --- MCP server (Human/LLM collaboration) ---
 # Floor is 3.x deliberately: 2.x -> 3.x was a breaking change, and a `>=2.0`
 # floor is satisfied by anything, so Dependabot never proposes a bump for it.
-fastmcp>=3.4
+fastmcp>=3.4.6
 
 # --- Real-time collaborative editing (CRDT) + canonical Y.Doc persistence ---
 # The Y.Doc is Waikiki's canonical persisted page state (see waikiki/ydoc.py),

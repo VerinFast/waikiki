@@ -8,6 +8,23 @@ from PyInstaller.utils.hooks import collect_all
 import glob
 import sqlite_vec
 
+# Stamp the real release into the bundle. The updater compares a downloaded
+# bundle's CFBundleShortVersionString against the release tag before installing
+# it, so a hardcoded version here would make every genuine update look like a
+# mismatch (and Finder's Get Info would lie too).
+#
+# Read by parsing, not importing: PyInstaller exec's this spec without the repo
+# root on sys.path, and importing the package here would drag its dependencies
+# into the spec's own namespace.
+import pathlib
+import re as _re
+
+WAIKIKI_VERSION = _re.search(
+    r'^__version__\s*=\s*"([^"]+)"',
+    pathlib.Path("waikiki/__init__.py").read_text(),
+    _re.M,
+).group(1)
+
 datas = [
     ("waikiki/templates", "waikiki/templates"),
     ("waikiki/static", "waikiki/static"),
@@ -78,6 +95,15 @@ app = BUNDLE(
     info_plist={
         "NSHighResolutionCapable": True,
         "LSBackgroundOnly": False,
-        "CFBundleShortVersionString": "0.0.1",
+        "CFBundleShortVersionString": WAIKIKI_VERSION,
+        "CFBundleVersion": WAIKIKI_VERSION,
+        # waikiki:// deep links. Registering the scheme is what makes macOS
+        # deliver a GURL Apple Event to us; waikiki_app._install_deeplink_handler
+        # receives it and waikiki/deeplink.py decides what it's allowed to mean.
+        "CFBundleURLTypes": [{
+            "CFBundleURLName": "com.verinfast.waikiki.deeplink",
+            "CFBundleTypeRole": "Viewer",
+            "CFBundleURLSchemes": ["waikiki"],
+        }],
     },
 )

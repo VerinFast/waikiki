@@ -420,3 +420,43 @@ a.linkstat:hover .lbl{color:var(--accent)}
 .results .score{font-size:.76rem}
 
 @media(max-width:720px){.layout{grid-template-columns:1fr}.sidebar{display:none}}
+
+/* --- Breadcrumbs ------------------------------------------------------------ */
+.crumbs{display:flex;flex-wrap:wrap;align-items:center;gap:.35rem;
+  margin:0 0 .35rem;font-size:.85rem;color:var(--muted)}
+.crumbs a{color:var(--muted);text-decoration:none}
+.crumbs a:hover{color:var(--accent);text-decoration:underline}
+.crumb-sep{opacity:.55;user-select:none}
+.crumb-here{color:var(--text);font-weight:600}
+
+/* --- Resizable left rail ----------------------------------------------------
+   The width lives in --rail-w so the grid and the drag handle stay in step; JS
+   persists it. The handle is positioned against .layout rather than inside
+   .sidebar, which scrolls its own content. */
+.layout{position:relative;grid-template-columns:var(--rail-w,240px) 1fr}
+.rail-resize{position:absolute;top:0;bottom:0;left:var(--rail-w,240px);
+  width:9px;margin-left:-4px;cursor:col-resize;z-index:15;
+  background:transparent;touch-action:none}
+.rail-resize:hover,.rail-resize.dragging{background:var(--accent);opacity:.25}
+body.rail-dragging{cursor:col-resize;user-select:none}
+
+/* --- Find in page ----------------------------------------------------------- */
+.wk-find{position:fixed;top:.6rem;right:.9rem;z-index:60;display:none;
+  align-items:center;gap:.4rem;padding:.4rem .5rem;background:var(--surface);
+  border:1px solid var(--border);border-radius:10px;
+  box-shadow:0 6px 24px rgba(0,0,0,.18)}
+.wk-find.open{display:flex}
+.wk-find input{width:190px;padding:.35rem .5rem;border:1px solid var(--border);
+  border-radius:7px;background:var(--bg);color:var(--text)}
+.wk-find .wk-find-count{min-width:5.5em;text-align:center;font-size:.82rem;
+  color:var(--muted);font-variant-numeric:tabular-nums}
+.wk-find button{padding:.25rem .5rem;border:1px solid var(--border);border-radius:7px;
+  background:var(--bg);color:var(--text);cursor:pointer;line-height:1}
+.wk-find button:hover{border-color:var(--accent);color:var(--accent)}
+mark.wk-hit{background:#ffe08a;color:#1f2328;border-radius:2px}
+mark.wk-hit.on{background:var(--accent);color:var(--accent-contrast)}
+
+@media(max-width:720px){
+  .rail-resize{display:none}
+  .layout{grid-template-columns:1fr}
+}

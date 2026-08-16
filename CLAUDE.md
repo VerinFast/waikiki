@@ -22,9 +22,15 @@ two in parity (same substance, different voice) whenever you change either.
   produce/consume round-trip. Sits below `store`, like `rag`.
 - `waikiki/vendor/wiki_interchange/` — vendored, version-pinned interchange
   format (see `docs/vendoring.md`).
+- `waikiki/deeplink.py` — `waikiki://` deep links: the allow-list that turns an
+  external URL into an in-app destination (see `docs/deep-links.md`).
+- `waikiki/updater.py` — self-update for the packaged `.app`: signature-verified
+  download, staging, and the detached bundle swap (see `docs/updates.md`).
 - `docs/rfc/0001-multi-tenant-waikiki.md` — the port-to-multi-tenant RFC.
 - `docs/repository-layer.md` — the layering spec (RFC 0001, Phase 0).
 - `docs/vendoring.md` — vendored packages, pins, and re-sync steps.
+- `docs/updates.md` — the auto-update trust model and release procedure.
+- `docs/deep-links.md` — the `waikiki://` scheme and why it is an allow-list.
 
 ## Architectural rules (load-bearing)
 
@@ -42,7 +48,13 @@ two in parity (same substance, different voice) whenever you change either.
    without touching a route. Isolation is the reason, not tidiness.
 4. **Wikis are fully isolated.** Pages, search, and `[[links]]` never cross
    wikis. The active wiki is a per-request contextvar (`db.current_wiki`); the
-   MCP server's active wiki is independent of the browser's.
+   MCP server's active wiki is independent of the browser's **and of every other
+   agent's** — it is keyed per MCP session (`mcp_server._ACTIVE_BY_SESSION`) and
+   deliberately **not persisted**. Never store it in a module global or on disk:
+   a shared pointer meant a respawned agent inherited another agent's wiki and
+   wrote pages into it (issue #11). A fresh session has no active wiki and must
+   call `switch_wiki`; refusing is correct, silently inheriting is not.
+   `tests/test_cross_wiki_isolation.py` guards this end to end.
 5. **One code path for Human and LLM.** REST, HTML views, and MCP tools all go
    through `store`/`rag` so both callers get identical render + version + index.
 6. **The Y.Doc is the canonical persisted state; markdown is a projection.** Each
@@ -61,6 +73,14 @@ two in parity (same substance, different voice) whenever you change either.
    those server-side); local embeddings are regenerated on import, never shipped.
    An incompatible spec/Yjs version is **rejected**, never merged. Re-sync the
    vendored lib per `docs/vendoring.md` and keep its pin in lockstep.
+8. **The updater fails closed, and its trust root is pinned at build time.**
+   `updater.py` downloads a bundle and then *executes* it, so it is the highest-
+   privilege path in the app. Every release zip must Ed25519-verify against
+   `PUBLIC_KEY_HEX` **before** it is expanded; no pinned key means updating is
+   disabled, never "trust the download". Never source that key from the network,
+   `app_config.json`, or any other writable place — a replaceable pinned key is
+   not a trust root. The bundle's ad-hoc `codesign --sign -` proves nothing about
+   origin; it is not a substitute. See `docs/updates.md`.
 
 ## Before committing
 

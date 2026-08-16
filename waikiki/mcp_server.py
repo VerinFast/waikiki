@@ -1,10 +1,15 @@
 """MCP server for Waikiki — lets Claude edit the wiki, with strict wiki isolation.
 
 Waikiki hosts several fully-isolated wikis (e.g. Beaconlight, Crosslake,
-StartupOS). To prevent cross-wiki contamination, this server keeps its OWN
-active-wiki pointer, separate from whatever the human is viewing in the browser.
-Every content tool refuses to run until you pick a wiki with `switch_wiki`, and
-every result echoes the wiki it acted on.
+StartupOS). To prevent cross-wiki contamination, the active wiki is scoped to a
+single agent's **session** — separate from whatever the human is viewing in the
+browser, and separate from every other agent connected to the same wikis. Every
+content tool refuses to run until you pick a wiki with `switch_wiki`, and every
+result echoes the wiki it acted on.
+
+It is held in memory and never persisted, so a restart of this server leaves you
+with no active wiki rather than inheriting one. That is deliberate: see
+`_ACTIVE_BY_SESSION` below and issue #11.
 
     Typical flow: list_wikis() → switch_wiki("beaconlight") → search()/get_page()/
     append_to_page() … then switch_wiki("crosslake") to move deliberately.
@@ -15,6 +20,7 @@ X-Waikiki-Wiki header; read/search tools open the wiki's SQLite file directly.
 """
 from __future__ import annotations
 
+import contextvars
 import os
 import sys
 from pathlib import Path
@@ -24,11 +30,14 @@ import httpx
 from fastmcp import FastMCP
 from mcp.types import Icon
 
-from . import (accesslog, config, db, edits, elements, imagegen, rag, render,
-               store, structure, wikis)
+from . import (accesslog, config, db, deeplink, edits, elements, imagegen, rag,
+               render, store, structure, wikis)
 
 WEB = config.WEB_URL
-_ACTIVE_FILE = config.DATA_DIR / "mcp_active_wiki"
+# NOTE: there is deliberately no on-disk active-wiki file. One existed here and
+# it was shared by every MCP process on the machine, which is how two agents
+# ended up writing into each other's wikis (issue #11). A stale
+# DATA_DIR/mcp_active_wiki from an older build is unused and safe to delete.
 
 # Connector-list logo: a 🌺 drawn as text inside a tiny SVG, inlined as a data
 # URI so no asset needs hosting. Clients render it with the system emoji font,
@@ -53,6 +62,11 @@ mcp = FastMCP(
         "never share content — switching is the only way to cross between them. "
         "Every result includes the 'wiki' it acted on; check it to avoid mixing "
         "contexts.\n\n"
+        "Your active wiki is yours alone — no other agent can move you, and you "
+        "cannot move them. It is NOT remembered if this server restarts. So if a "
+        "content tool suddenly reports 'No active wiki', that is what happened: "
+        "call switch_wiki again rather than assuming you are still where you "
+        "were, and check the 'wiki' in each result against the wiki you meant.\n\n"
         "To CHANGE an existing page, prefer edit_page (a targeted find/replace) or "
         "append_to_page — these apply as surgical live edits that merge with a "
         "human editing the same page. Use replace_page ONLY to rewrite a page from "
@@ -70,14 +84,6 @@ mcp = FastMCP(
         "page is in the bin: do not edit it without asking."
     ),
 )
-
-
-def _load_active() -> str | None:
-    try:
-        val = _ACTIVE_FILE.read_text().strip()
-        return val if val and wikis.exists(val) else None
-    except Exception:
-        return None
 
 
 def _install_access_log() -> None:
@@ -109,28 +115,88 @@ def _install_access_log() -> None:
         print(f"[waikiki] MCP access-log middleware skipped: {exc}", file=sys.stderr)
 
 
-def _save_active(slug: str) -> None:
-    try:
-        _ACTIVE_FILE.write_text(slug)
-    except Exception:
-        pass
+# --- Active wiki: per session, never shared -----------------------------------
+#
+# The active wiki belongs to ONE agent's session and nothing else. It used to be
+# a module global persisted to a single file in DATA_DIR, which meant every MCP
+# process on the machine shared it: a respawned server silently adopted whichever
+# wiki some other agent had last chosen, and kept writing there while its own
+# context still believed it was somewhere else. Two agents in two wikis
+# overwrote each other and filed pages into the wrong wiki. See issue #11 and
+# tests/test_cross_wiki_isolation.py.
+#
+# So: keyed by session, held in memory, and deliberately NOT persisted. There is
+# nothing to inherit across a restart. An agent whose server respawned gets a
+# clear "no active wiki" error instead of silently writing into someone else's —
+# an error the agent can see and recover from is strictly better than corruption
+# it cannot.
+_ACTIVE_BY_SESSION: dict[str, str] = {}
 
-
+# Fallback for callers with no session identity: the test suite, and anything
+# embedding these functions directly. With stdio one process serves one client,
+# so a process-local value is already per-agent there.
 _ACTIVE: str | None = None
+
+# The session identity, overridable so tests (and embedders) can act as distinct
+# agents without a live MCP connection.
+_SESSION_OVERRIDE: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "waikiki_mcp_session", default=None)
+
+# Sessions are few; this only bounds a pathological reconnect loop. Evicting
+# costs an agent one switch_wiki call, never a wrong-wiki write.
+MAX_TRACKED_SESSIONS = 64
+
+
+def _session_key() -> str | None:
+    """Identity of the calling agent's session, or None if there isn't one."""
+    override = _SESSION_OVERRIDE.get()
+    if override:
+        return override
+    try:
+        from fastmcp.server.dependencies import get_context
+
+        ctx = get_context()
+    except Exception:
+        return None                     # no live request: fall back
+    for attr in ("session_id", "client_id"):
+        val = getattr(ctx, attr, None)
+        if val:
+            return str(val)
+    return None
+
+
+def _active_wiki() -> str | None:
+    key = _session_key()
+    return _ACTIVE if key is None else _ACTIVE_BY_SESSION.get(key)
+
+
+def _set_active_wiki(slug: str) -> None:
+    global _ACTIVE
+    key = _session_key()
+    if key is None:
+        _ACTIVE = slug
+        return
+    if key not in _ACTIVE_BY_SESSION and len(_ACTIVE_BY_SESSION) >= MAX_TRACKED_SESSIONS:
+        del _ACTIVE_BY_SESSION[next(iter(_ACTIVE_BY_SESSION))]   # oldest first
+    _ACTIVE_BY_SESSION[key] = slug
 
 
 def _require_wiki() -> str:
-    if _ACTIVE is None:
+    active = _active_wiki()
+    if active is None:
         raise RuntimeError(
             "No active wiki. Call list_wikis() then switch_wiki(slug) before "
-            "reading or writing pages."
+            "reading or writing pages. Your choice is per-session and is not "
+            "restored automatically, so if this server restarted mid-task you "
+            "must switch again — do not assume you are where you started."
         )
-    db.current_wiki.set(_ACTIVE)  # scope direct DB access to this wiki
-    return _ACTIVE
+    db.current_wiki.set(active)  # scope direct DB access to this wiki
+    return active
 
 
 def _headers() -> dict:
-    return {"X-Waikiki-Wiki": _ACTIVE} if _ACTIVE else {}
+    active = _active_wiki()
+    return {"X-Waikiki-Wiki": active} if active else {}
 
 
 # --- Wiki selection -----------------------------------------------------------
@@ -138,34 +204,39 @@ def _headers() -> dict:
 @mcp.tool
 def list_wikis() -> dict:
     """List the available isolated wikis and which one is currently active."""
-    return {"active": _ACTIVE, "wikis": wikis.list_wikis()}
+    return {"active": _active_wiki(), "wikis": wikis.list_wikis()}
 
 
 @mcp.tool
 def current_wiki() -> dict:
-    """Which wiki is active for you right now (None until you switch_wiki)."""
-    return {"active": _ACTIVE}
+    """Which wiki is active for you right now (None until you switch_wiki).
+
+    This is yours alone: another agent switching wikis cannot move you, and you
+    cannot move them. It is also not remembered across a restart of this server —
+    if this returns None mid-task, that is why. Switch again rather than assuming
+    you are still where you were."""
+    return {"active": _active_wiki()}
 
 
 @mcp.tool
 def switch_wiki(slug: str) -> dict:
-    """Switch your active wiki. Required before any page read/write. This does
-    NOT change what the human sees in their browser."""
-    global _ACTIVE
+    """Switch your active wiki. Required before any page read/write.
+
+    Scoped to your session: it does NOT change what the human sees in their
+    browser, and it does NOT affect any other agent connected to this wiki. It is
+    not persisted, so a restart of this server leaves you with no active wiki
+    rather than inheriting one."""
     if not wikis.exists(slug):
         return {"error": f"no wiki '{slug}'", "wikis": [w["slug"] for w in wikis.list_wikis()]}
-    _ACTIVE = slug
-    _save_active(slug)
-    return {"active": _ACTIVE, "name": wikis.name_of(slug)}
+    _set_active_wiki(slug)
+    return {"active": slug, "name": wikis.name_of(slug)}
 
 
 @mcp.tool
 def create_wiki(name: str) -> dict:
-    """Create a new isolated wiki and switch to it."""
-    global _ACTIVE
+    """Create a new isolated wiki and switch to it (for you only)."""
     slug = wikis.create_wiki(name)
-    _ACTIVE = slug
-    _save_active(slug)
+    _set_active_wiki(slug)
     return {"active": slug, "name": name}
 
 
@@ -186,7 +257,12 @@ def get_page(slug: str) -> dict:
     can be NEWER than `updated_at` (which is the last saved revision) — `live`
     tells you which you got. Check `trashed` before writing: a trashed page is in
     the bin and edits to it are probably unwanted. Compare `updated_at` against
-    what you saw last to tell whether your copy is stale."""
+    what you saw last to tell whether your copy is stale.
+
+    `link` is a `waikiki://<wiki>/<page>` deep link that opens this page in the
+    desktop app. Give that to a human rather than an http:// URL — the app picks a
+    free port at startup, so its http address can change between runs. Append
+    `#section` (an entry's slug from `outline`) to land on a heading."""
     wiki = _require_wiki()
     page = store.get_page(slug)
     if not page:
@@ -203,6 +279,7 @@ def get_page(slug: str) -> dict:
     store.log_activity("ai", "read")
     meta, tags, _ = structure.parse_frontmatter(markdown)
     return {"wiki": wiki, "slug": page["slug"], "title": page["title"],
+            "link": deeplink.for_page(wiki, page["slug"]),
             "markdown": markdown, "outline": render.extract_toc(markdown),
             "properties": meta, "tags": tags,
             "updated_at": page.get("updated_at"),
@@ -918,12 +995,12 @@ def _silence_stdout_noise() -> None:
 
 
 def main() -> None:
-    global _ACTIVE
     _silence_stdout_noise()
     db.init_db()
     accesslog.setup()
     _install_access_log()
-    _ACTIVE = _load_active()
+    # No active wiki on startup, by design: the agent must choose one. Restoring
+    # a previous choice is what let one agent inherit another's wiki (issue #11).
     mcp.run()
 
 

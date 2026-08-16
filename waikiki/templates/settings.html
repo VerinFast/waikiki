@@ -260,6 +260,55 @@
   </section>
 
   <section class="settings">
+    <details class="settings-sec">
+      <summary>Updates <span class="muted">(version {{ update.current }})</span></summary>
+      {% if update.updatable %}
+        <form method="post" action="/settings/updates" class="settings">
+          <label class="rag-toggle">
+            <input type="checkbox" name="auto_check" value="1"
+                   {{ 'checked' if update.auto_check }}>
+            Check for updates automatically
+          </label>
+          <label>Check every N hours
+            <input type="number" name="interval_hours" min="1"
+                   value="{{ update.interval_hours }}">
+          </label>
+          <button class="btn primary" type="submit">Save update settings</button>
+        </form>
+        <form method="post" action="/settings/updates/check" style="margin-top:.6rem">
+          <button class="btn" type="submit">Check now</button>
+        </form>
+        {# last_available, not last_seen: an offer only when the release is both
+           newer and signed, so this can't propose a downgrade or an install
+           that would fail verification. #}
+        {% if update.last_available %}
+          <form method="post" action="/settings/updates/install" style="margin-top:.6rem">
+            <button class="btn primary" type="submit">
+              Download and install {{ update.last_available }}
+            </button>
+            <p class="muted note">Waikiki will back up every wiki, then quit and
+              restart itself to finish. Save anything you're mid-way through
+              first.</p>
+          </form>
+        {% endif %}
+      {% else %}
+        <p class="muted">Automatic updates are unavailable for this install:
+          {{ update.reason }}.</p>
+        {% if not update.signing_key_pinned %}
+          <p class="muted note">This build has no update signing key pinned, so it
+            can't verify that a download really came from you. Updating is
+            disabled rather than trusting an unverified download — see
+            <code>waikiki/updater.py</code>.</p>
+        {% endif %}
+      {% endif %}
+      <p class="muted note">Your wikis live outside the app bundle, so an update
+        replaces code only and never touches your content. A backup runs first
+        anyway: a newer version can migrate a wiki forward, but an older one
+        can't read it back.</p>
+    </details>
+  </section>
+
+  <section class="settings">
     <details class="settings-sec" open>
       <summary>Share with someone remote <span class="muted">(temporary public link)</span></summary>
       {% if tunnel_url %}

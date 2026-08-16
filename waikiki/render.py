@@ -161,6 +161,21 @@ def render_value(text: str, resolver=None) -> str:
     return linkify_wikilinks(_esc(str(text if text is not None else "")), resolver)
 
 
+def wikilink_map(values, resolver=None) -> dict:
+    """{"[[Meru]]": "<a href=...>Meru</a>"} for every wikilink in `values`.
+
+    Lets the browser substitute links into text a component wrote itself, while
+    the *resolution* stays here: link-by-title and red-link detection need the
+    page index, which a component in a shadow root has no access to.
+    """
+    out: dict[str, str] = {}
+    for value in values:
+        for m in _WIKILINK.finditer(str(value if value is not None else "")):
+            out.setdefault(m.group(0),
+                           wikilink_anchor(m.group(1), m.group(2), resolver))
+    return out
+
+
 def linkify_wikilinks(html: str, resolver=None) -> str:
     """Turn [[Page]] into anchors in already-rendered HTML.
 

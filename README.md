@@ -33,10 +33,14 @@ active wiki's own database, so contamination is structurally impossible.
 - **Claude** has a *separate* active wiki, changed only with the MCP
   `switch_wiki` tool. Every content tool refuses to run until a wiki is chosen
   and **echoes the wiki it acted on**, so the AI can never silently cross wikis.
+- **Each agent** gets its own active wiki, scoped to its MCP session. Two agents
+  can work in two different wikis at once without moving each other, and the
+  choice is never written to disk — so a restarted server leaves an agent with no
+  active wiki rather than inheriting whichever one another agent last picked.
 
-The two are independent by design — the human browsing Crosslake doesn't move
-Claude, and vice-versa. To co-edit, ask Claude to `switch_wiki` to the one you're
-in.
+These are all independent by design — the human browsing Crosslake doesn't move
+Claude, one agent doesn't move another, and vice-versa. To co-edit, ask Claude to
+`switch_wiki` to the one you're in.
 
 ### Save / Open wikis to files
 
@@ -171,6 +175,48 @@ is a later step.
 The packaged app stores its data in **`~/Library/Application Support/Waikiki`**
 (not inside the bundle), so it survives moving/replacing the app. Override with
 `WAIKIKI_DATA`.
+
+### Updates
+
+**Settings → Updates** checks GitHub for a newer release and can install it: the
+app backs up every wiki, downloads the release, verifies it, then quits and
+relaunches itself to finish. Your content lives outside the bundle, so an update
+replaces code only.
+
+Because the app carries no Apple identity, it can't rely on macOS to tell a real
+release from a tampered one — so every release zip is **Ed25519-signed** and the
+app verifies it against a public key pinned at build time, *before* unpacking.
+Anything unsigned, wrongly signed, or modified is refused, and a build with no
+pinned key disables updating rather than trusting the download.
+
+Checks are check-only and hourly at most; installing is always an explicit click,
+since the swap restarts the app. Cutting a signed release is
+`./scripts/release.sh v0.14.0` — see **[docs/updates.md](docs/updates.md)** for
+the trust model, key handling, and failure modes.
+
+### Deep links
+
+`waikiki://` URLs open the app at a specific place, and survive the app picking a
+different port (which an `http://127.0.0.1:8787` link doesn't):
+
+```
+waikiki://beaconlight/meru            # a page
+waikiki://beaconlight/meru#abilities  # a section
+waikiki://beaconlight                 # a wiki's front page
+waikiki://beaconlight?q=clockwork     # search, inside that wiki
+waikiki://                            # the front page
+```
+
+**Page options → Copy link** copies one, and MCP `get_page` returns the same
+thing as `link` — so an agent can hand you something you can actually open.
+
+The wiki is the authority, so there are no reserved verbs to shadow a wiki named
+`search` or `home`. A URL scheme is an input anything on the machine can fire, and
+the app window has owner rights, so parsing is a strict **allow-list**: every slug
+validated, paths constructed rather than echoed, search always scoped to the
+validated wiki. See
+**[docs/deep-links.md](docs/deep-links.md)**. Deep links work in the packaged
+`.app` only — a source run has no `Info.plist` for macOS to route through.
 
 ## Connect Claude Desktop (MCP)
 

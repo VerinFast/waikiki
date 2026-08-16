@@ -11,7 +11,7 @@ import threading
 
 import pytest
 
-from waikiki import config, db, embeddings, wikis
+from waikiki import config, db, embeddings, updater, wikis
 
 
 class FakeEmbedder:
@@ -25,6 +25,26 @@ class FakeEmbedder:
             h = hashlib.sha256(t.encode("utf-8")).digest()
             out.append([b / 255.0 for b in h[: self.dim]])
         return out
+
+
+@pytest.fixture(autouse=True)
+def _no_update_checks(monkeypatch):
+    """Never let the test suite reach GitHub.
+
+    The app's maintenance loop checks for updates, and it starts with every
+    TestClient lifespan. It skips its first pass so a normal run doesn't fire a
+    request during startup, but that is a timing property -- this makes it
+    structural, so a future change to that loop can't quietly put a network call
+    back into the suite.
+
+    Patched at the HTTP boundary rather than at ``check()``: that blocks the
+    network while leaving check()'s own logic (which release counts as
+    installable) testable by overriding ``_get_json`` per test.
+    """
+    def _no_network(*a, **k):
+        raise RuntimeError("network disabled in tests")
+
+    monkeypatch.setattr(updater, "_get_json", _no_network)
 
 
 @pytest.fixture

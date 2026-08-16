@@ -4,6 +4,9 @@
   <div class="menu-items page-actions">
     <a href="/wiki/{{ page.slug }}/edit">Edit</a>
     <button type="button" onclick="window.print()">Print</button>
+    {# A waikiki:// link survives a port change; the http one doesn't. #}
+    <button type="button" data-link="{{ page_link }}"
+            onclick="wkCopyLink(this)">Copy link</button>
     <form method="post" action="/wiki/{{ page.slug }}/clone">
       <button type="submit">Clone</button>
     </form>

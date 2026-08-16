@@ -144,9 +144,40 @@
     // Clipboard support: a pywebview window has no Edit menu, so ⌘C/⌘V/⌘A and the
     // right-click menu never reach native handlers. We implement them ourselves.
     // These are also invoked from the native app menu via evaluate_js.
+    // CodeMirror 5 hangs its instance off the wrapper element, so the editor can
+    // be reached from any node inside it without app.js having to export it.
+    function _cmFor(el) {
+      for (var p = el; p; p = p.parentNode) {
+        if (p.classList && p.classList.contains('CodeMirror') && p.CodeMirror) {
+          return p.CodeMirror;
+        }
+      }
+      return null;
+    }
     function _isEditable(el) {
-      return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
-                    || el.isContentEditable);
+      // The editor counts: what you right-click there is a rendered <span>, not
+      // a textarea, so without this Paste never appeared in the context menu.
+      return !!(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
+                       || el.isContentEditable || _cmFor(el)));
+    }
+    // Insert at the caret. CodeMirror must go through its own API — assigning to
+    // the hidden textarea it uses for input changes nothing on screen.
+    function _insertText(target, text) {
+      var cm = _cmFor(target);
+      if (cm) {
+        cm.replaceSelection(text);
+        cm.focus();
+        return true;
+      }
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        var s = target.selectionStart || 0, e = target.selectionEnd || 0;
+        target.value = target.value.slice(0, s) + text + target.value.slice(e);
+        target.selectionStart = target.selectionEnd = s + text.length;
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }
+      try { return document.execCommand('insertText', false, text); }
+      catch (e2) { return false; }
     }
     function _copyText(text) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -400,22 +431,29 @@
       setTimeout(function () { btn.textContent = was; }, 1200);
       return true;
     };
-    window.wkPaste = function () {
-      var ae = document.activeElement;
-      if (!_isEditable(ae) || !navigator.clipboard || !navigator.clipboard.readText)
-        return false;
-      navigator.clipboard.readText().then(function (text) {
-        if (!text) return;
-        if (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') {
-          var s = ae.selectionStart || 0, e = ae.selectionEnd || 0;
-          ae.value = ae.value.slice(0, s) + text + ae.value.slice(e);
-          ae.selectionStart = ae.selectionEnd = s + text.length;
-          ae.dispatchEvent(new Event('input', { bubbles: true }));
-        } else {
-          document.execCommand('insertText', false, text);
-        }
-      }).catch(function () {});
-      return true;
+    // `target` lets the context menu name the element that was right-clicked:
+    // by the time its Paste button is clicked, focus has moved to that button.
+    window.wkPaste = function (target) {
+      var el = target || document.activeElement;
+      if (!_isEditable(el)) return false;
+      function put(text) { if (text) _insertText(el, text); }
+
+      // WKWebView does not expose navigator.clipboard.readText() to the page, so
+      // in the desktop app this was the whole bug: ⌘V and the menu's Paste had
+      // no way to reach the clipboard and silently did nothing. Ask the native
+      // side for the pasteboard instead; a plain browser keeps the standard path.
+      var api = window.pywebview && window.pywebview.api;
+      if (api && api.read_clipboard) {
+        try {
+          Promise.resolve(api.read_clipboard()).then(put).catch(function () {});
+          return true;
+        } catch (e) { /* fall through to the web API */ }
+      }
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then(put).catch(function () {});
+        return true;
+      }
+      return false;
     };
     window.wkSelectAll = function () {
       var ae = document.activeElement;
@@ -463,7 +501,8 @@
         var selText = _fieldSel(e.target) || _selectionText();
         var items = [];
         if (selText) items.push(['Copy', function () { _copyText(selText); }]);
-        if (editable) items.push(['Paste', function () { window.wkPaste(); }]);
+        // Pass the clicked element: clicking the menu button moves focus off it.
+        if (editable) items.push(['Paste', function () { window.wkPaste(e.target); }]);
         items.push(['Select All', function () { window.wkSelectAll(); }]);
         if (!items.length) return;
         e.preventDefault();

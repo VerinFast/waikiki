@@ -51,7 +51,7 @@ LATEST_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 # it from WAIKIKI_UPDATE_KEY). Empty means "updates disabled" -- see
 # _pinned_key(). Never populate this from the network or from app config: a
 # pinned key an attacker can rewrite is not a trust root.
-PUBLIC_KEY_HEX = ""
+PUBLIC_KEY_HEX = "1e2c9d83ba11d5af155d6e0bb71f8a22d4da2146400a2fd5f0d872c285076937"
 
 DEFAULT_INTERVAL_HOURS = 24
 _lock = threading.Lock()
@@ -106,9 +106,13 @@ def _pinned_key() -> bytes | None:
     """The pinned Ed25519 public key, or None if updates are disabled.
 
     WAIKIKI_UPDATE_PUBKEY overrides the constant so tests (and a private build)
-    can supply their own key without editing the source.
+    can supply their own key without editing the source. Setting it to an empty
+    value is a deliberate override too — it means "no key", which disables
+    updating rather than falling back to the pinned one. That keeps the
+    fail-closed direction: an override can only ever remove trust, never grant it.
     """
-    raw = (os.environ.get("WAIKIKI_UPDATE_PUBKEY") or PUBLIC_KEY_HEX or "").strip()
+    env = os.environ.get("WAIKIKI_UPDATE_PUBKEY")
+    raw = (PUBLIC_KEY_HEX if env is None else env).strip()
     if not raw:
         return None
     try:

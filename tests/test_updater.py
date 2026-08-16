@@ -322,3 +322,22 @@ def test_the_backup_stays_on_the_bundles_own_volume(signing_key, wiki, tmp_path,
         f"backup is not beside the bundle: {bak_line}"
     assert str(updater._updates_dir()) not in bak_line, \
         f"backup lives under DATA_DIR and can cross filesystems: {bak_line}"
+
+
+def test_an_empty_env_override_disables_a_pinned_build(monkeypatch):
+    """Setting WAIKIKI_UPDATE_PUBKEY="" must disable updating, not fall back.
+
+    Once a real key is pinned in the source, an override that resolved to the
+    constant when empty would make it impossible to run a build with updates
+    off — and would silently re-enable trust the operator meant to remove.
+    """
+    assert updater.PUBLIC_KEY_HEX, "this test is meaningless without a pinned key"
+    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", "")
+    assert updater._pinned_key() is None
+    ok, why = updater.can_update()
+    assert ok is False and "signing key" in why
+
+
+def test_the_pinned_key_is_used_when_no_override_is_set(monkeypatch):
+    monkeypatch.delenv("WAIKIKI_UPDATE_PUBKEY", raising=False)
+    assert updater._pinned_key() == bytes.fromhex(updater.PUBLIC_KEY_HEX)

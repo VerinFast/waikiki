@@ -129,6 +129,23 @@ def main() -> None:
             webbrowser.open(url)
             return {"ok": True}
 
+        def read_clipboard(self):
+            """Text currently on the system pasteboard, or "".
+
+            WKWebView does not expose ``navigator.clipboard.readText()`` to the
+            page, so the browser has no way to reach the clipboard and ⌘V did
+            nothing at all. Reading NSPasteboard natively is the only reliable
+            path. Read-only, and only ever called from our own paste handler.
+            """
+            try:
+                from AppKit import NSPasteboard, NSPasteboardTypeString
+
+                pb = NSPasteboard.generalPasteboard()
+                return pb.stringForType_(NSPasteboardTypeString) or ""
+            except Exception as exc:
+                print(f"[waikiki] clipboard read failed: {exc}", file=sys.stderr)
+                return ""
+
         def save_wiki(self, slug):
             from waikiki import wikis
             win = webview.windows[0]

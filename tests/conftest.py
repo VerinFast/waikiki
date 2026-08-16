@@ -8,10 +8,55 @@ from __future__ import annotations
 
 import hashlib
 import threading
+import time
 
 import pytest
 
 from waikiki import config, db, embeddings, updater, wikis
+
+
+def _drain_worker_threads(timeout: float = 10.0) -> int:
+    """Wait for anyio worker threads to finish. Returns how many were left.
+
+    The app's lifespan does startup work — seeding the Help wiki, the one-time
+    html migration — through ``anyio.to_thread.run_sync``. Cancelling those tasks
+    when the lifespan exits does **not** stop the thread: instrumenting
+    ``db.get_conn`` showed 175 calls arriving *after* a TestClient context
+    exited, from a thread named "AnyIO worker thread". Awaiting the cancelled
+    tasks does not help either, because the event loop that would wait for the
+    thread is being torn down with it.
+
+    In the app that is harmless — nothing swaps its data directory underneath it.
+    Under test it is issue #10: those late calls resolve ``config.DATA_DIR`` and
+    ``db._local`` while this file's fixtures are restoring them, which surfaces as
+    ``apsw.BusyError`` or ``no such table: pages`` in whatever test runs next.
+
+    So: let the work finish before the config moves. Measured at ~180ms for the
+    first TestClient in a session and ~0ms thereafter.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        alive = [t for t in threading.enumerate()
+                 if t.is_alive() and "worker" in t.name.lower()]
+        if not alive or time.monotonic() >= deadline:
+            return len(alive)
+        time.sleep(0.005)
+
+
+@pytest.fixture(autouse=True)
+def _quiesce_background_work(monkeypatch):
+    """Drain lifespan background work before any fixture restores global config.
+
+    Requesting ``monkeypatch`` is load-bearing: a fixture is finalized before the
+    fixtures it depends on, so this runs *before* ``monkeypatch`` undoes the
+    ``config.DATA_DIR`` / ``db._local`` patches — which is the whole point.
+    """
+    yield
+    left = _drain_worker_threads()
+    if left:
+        # Don't fail the test for it, but don't hide it either: a stuck worker
+        # means the next test is running against a moving target.
+        print(f"\n[tests] {left} worker thread(s) still running at teardown")
 
 
 class FakeEmbedder:

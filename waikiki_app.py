@@ -198,6 +198,9 @@ def main() -> None:
             MenuAction("Copy", _js("window.wkCopy && window.wkCopy()")),
             MenuAction("Paste", _js("window.wkPaste && window.wkPaste()")),
             MenuAction("Select All", _js("window.wkSelectAll && window.wkSelectAll()")),
+            # The native menu item is what makes Cmd+F dependable in the packaged
+            # app — same reason Copy/Paste need real menu items in WKWebView.
+            MenuAction("Find…", _js("window.wkFind && window.wkFind.open()")),
         ]),
         Menu("Help", [
             MenuAction("Help Contents", _go("/help")),

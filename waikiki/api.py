@@ -787,6 +787,7 @@ def view_page(request: Request, slug: str):
                           trashed=bool(page.get("deleted_at")),
                           toc=render.extract_toc(page["markdown"]),
                           children=store.children(slug), parent=parent,
+                          crumbs=store.ancestors(page),
                           tags=store.tags_of(slug),
                           comment_count=len(store.comments_list(slug)))
     )
@@ -812,6 +813,7 @@ def details_view(request: Request, slug: str):
                           trashed=bool(page.get("deleted_at")),
                           versions=store.page_versions(slug),
                           backlinks=store.backlinks(slug), parent=store.parent_of(page),
+                          crumbs=store.ancestors(page),
                           all_pages=all_pages, tags=store.tags_of(slug),
                           comments=store.comments_list(slug),
                           suggestions=suggestions)

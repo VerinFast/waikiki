@@ -155,6 +155,7 @@ def expand(body: str, reg: dict, resolver=None):
                    if f.get("required") and not (props.get(f["name"]) or "").strip()]
         rendered = {k: render.render_value(v, resolver) for k, v in props.items()}
         slots.append({"el": el, "props": props, "html": rendered,
+                      "links": render.wikilink_map(props.values(), resolver),
                       "missing": missing})
         return f"\n\nWKELSLOT{len(slots) - 1}ENDWKEL\n\n"
 
@@ -175,9 +176,14 @@ def fill(html: str, slots: list):
         used[el["slug"]] = el
         data = _html.escape(json.dumps(slot["props"]), quote=True)
         rich = _html.escape(json.dumps(slot.get("html") or {}), quote=True)
+        # Raw [[link]] -> server-rendered anchor. The runtime sweeps the shadow
+        # DOM with this after the element's own JS has run, so an element that
+        # assigns props via textContent still gets working links instead of
+        # having to ship its own wikilink parser.
+        links = _html.escape(json.dumps(slot.get("links") or {}), quote=True)
         tag = "wk-" + el["slug"]
         return (f'<div class="wk-element-host"><{tag} data-props="{data}" '
-                f'data-html="{rich}"></{tag}></div>')
+                f'data-html="{rich}" data-links="{links}"></{tag}></div>')
 
     return _SLOT.sub(repl, html), used
 

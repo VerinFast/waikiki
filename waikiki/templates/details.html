@@ -4,6 +4,18 @@
 {% block content %}
   <script>window.WAIKIKI_PAGE = {slug: {{ page.slug | tojson }}, wiki: {{ current_wiki | tojson }}};</script>
   <article class="article">
+    {% if crumbs %}
+      <nav class="crumbs" aria-label="Breadcrumb">
+        {% for c in crumbs %}
+          <a href="/wiki/{{ c.slug }}">{{ c.title }}</a>
+          <span class="crumb-sep" aria-hidden="true">›</span>
+        {% endfor %}
+        <a href="/wiki/{{ page.slug }}">{{ page.title }}</a>
+        <span class="crumb-sep" aria-hidden="true">›</span>
+        <span class="crumb-here">Details</span>
+      </nav>
+    {% endif %}
+
     <div class="article-head">
       <h1>{{ page.title }} <span class="muted">— Details</span></h1>
     </div>

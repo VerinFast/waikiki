@@ -17,6 +17,16 @@
   </script>
 </head>
 <body>
+  {# Find in page. WKWebView has no built-in find UI, so Cmd+F is ours to
+     implement — see wkFind in the script block below. #}
+  <div class="wk-find" id="wk-find" role="search">
+    <input type="search" id="wk-find-input" placeholder="Find in page"
+           autocomplete="off" spellcheck="false" aria-label="Find in page">
+    <span class="wk-find-count" id="wk-find-count"></span>
+    <button type="button" id="wk-find-prev" title="Previous (Shift+Enter)">↑</button>
+    <button type="button" id="wk-find-next" title="Next (Enter)">↓</button>
+    <button type="button" id="wk-find-close" title="Close (Esc)">✕</button>
+  </div>
   <header class="topbar">
     <div class="histnav" role="group" aria-label="History">
       <button type="button" class="histbtn" onclick="history.back()"
@@ -115,6 +125,10 @@
       {% endif %}
       <a class="sidebar-pin {{ 'on' if current_path == '/index' }}" href="/index">📑 Index</a>
     </aside>
+    {# Drag to resize the rail. Sits against .layout, not inside .sidebar, which
+       scrolls its own content. #}
+    <div class="rail-resize" role="separator" aria-orientation="vertical"
+         aria-label="Resize sidebar" tabindex="-1"></div>
     <main class="content">
       <div class="content-inner">
         {% block content %}{% endblock %}
@@ -157,6 +171,184 @@
       if (text) _copyText(text);
       return !!text;
     };
+    // --- Find in page ------------------------------------------------------
+    // WKWebView gives us no find UI and no window.find, so this walks the text
+    // nodes of .content and wraps hits in <mark>. Kept off the editor: EasyMDE
+    // has its own search and rewriting a textarea's DOM would corrupt it.
+    window.wkFind = (function () {
+      var bar, input, count, hits = [], at = -1, lastTerm = null;
+      function els() {
+        bar = bar || document.getElementById('wk-find');
+        input = input || document.getElementById('wk-find-input');
+        count = count || document.getElementById('wk-find-count');
+        return bar && input && count;
+      }
+      function scope() { return document.querySelector('.content') || document.body; }
+      // Custom elements render into a shadow root, which a TreeWalker over the
+      // light DOM cannot see — and on a wiki that leans on elements (infoboxes,
+      // timelines) that is most of the page. Search every root, not just the top.
+      function roots() {
+        var found = [scope()];
+        for (var i = 0; i < found.length; i++) {
+          var host = found[i].querySelectorAll ? found[i].querySelectorAll('*') : [];
+          for (var j = 0; j < host.length; j++) {
+            if (host[j].shadowRoot) found.push(host[j].shadowRoot);
+          }
+        }
+        return found;
+      }
+      function clear() {
+        var touched = [];
+        hits.forEach(function (m) {
+          var t = document.createTextNode(m.textContent);
+          if (m.parentNode) {
+            if (touched.indexOf(m.parentNode) < 0) touched.push(m.parentNode);
+            m.parentNode.replaceChild(t, m);
+          }
+        });
+        // Re-join the text nodes we split, or repeated searches fragment the DOM.
+        // Normalize the parents we actually touched: normalizing only the top
+        // scope would miss anything inside a shadow root.
+        touched.forEach(function (p) { p.normalize(); });
+        hits = []; at = -1; lastTerm = null;
+      }
+      function mark(term) {
+        clear();
+        if (!term) { count.textContent = ''; return; }
+        var needle = term.toLowerCase();
+        var nodes = [];
+        roots().forEach(function (root) {
+          var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+            acceptNode: function (n) {
+              for (var p = n.parentNode; p && p !== root; p = p.parentNode) {
+                var nm = p.nodeName;
+                if (nm === 'SCRIPT' || nm === 'STYLE' || nm === 'TEXTAREA' ||
+                    nm === 'MARK' || (p.classList && p.classList.contains('CodeMirror'))) {
+                  return NodeFilter.FILTER_REJECT;
+                }
+              }
+              return n.nodeValue.toLowerCase().indexOf(needle) >= 0
+                ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+            }
+          });
+          var n;
+          while ((n = walker.nextNode())) nodes.push(n);  // collect before mutating
+        });
+        nodes.forEach(function (node) {
+          var text = node.nodeValue, lower = text.toLowerCase();
+          var frag = document.createDocumentFragment(), last = 0, i;
+          while ((i = lower.indexOf(needle, last)) >= 0) {
+            if (i > last) frag.appendChild(document.createTextNode(text.slice(last, i)));
+            var m = document.createElement('mark');
+            m.className = 'wk-hit';
+            m.textContent = text.slice(i, i + needle.length);
+            frag.appendChild(m);
+            hits.push(m);
+            last = i + needle.length;
+          }
+          if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+          node.parentNode.replaceChild(frag, node);
+        });
+        lastTerm = term;
+        if (hits.length) { at = -1; step(1); } else { count.textContent = '0/0'; }
+      }
+      function step(dir) {
+        if (!hits.length) { count.textContent = '0/0'; return; }
+        if (at >= 0 && hits[at]) hits[at].classList.remove('on');
+        at = (at + dir + hits.length) % hits.length;
+        var cur = hits[at];
+        cur.classList.add('on');
+        // Collapsed <details> would otherwise scroll to a hidden match.
+        for (var p = cur.parentNode; p; p = p.parentNode) {
+          if (p.nodeName === 'DETAILS') p.open = true;
+        }
+        if (cur.scrollIntoView) cur.scrollIntoView({ block: 'center' });
+        count.textContent = (at + 1) + '/' + hits.length;
+      }
+      function open() {
+        if (!els()) return;
+        bar.classList.add('open');
+        input.focus();
+        input.select();
+        if (input.value && input.value !== lastTerm) mark(input.value);
+      }
+      function close() {
+        if (!els()) return;
+        bar.classList.remove('open');
+        clear();
+        count.textContent = '';
+      }
+      function init() {
+        if (!els()) return;
+        var t = null;
+        input.addEventListener('input', function () {
+          clearTimeout(t);
+          t = setTimeout(function () { mark(input.value); }, 120);
+        });
+        input.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
+          else if (e.key === 'Escape') { e.preventDefault(); close(); }
+        });
+        document.getElementById('wk-find-next').onclick = function () { step(1); };
+        document.getElementById('wk-find-prev').onclick = function () { step(-1); };
+        document.getElementById('wk-find-close').onclick = close;
+      }
+      if (document.readyState !== 'loading') init();
+      else document.addEventListener('DOMContentLoaded', init);
+      return { open: open, close: close, toggle: function () {
+        if (!els()) return;
+        bar.classList.contains('open') ? close() : open();
+      } };
+    })();
+
+    // --- Resizable left rail -----------------------------------------------
+    // Pointer events, not HTML5 drag: native drag-and-drop proved unreliable in
+    // WKWebView when the custom sort order was built.
+    (function () {
+      var MIN = 150, MAX = 560, KEY = 'waikiki_rail_w';
+      function apply(px) {
+        document.documentElement.style.setProperty('--rail-w', px + 'px');
+      }
+      try {
+        var saved = parseInt(localStorage.getItem(KEY), 10);
+        if (saved >= MIN && saved <= MAX) apply(saved);
+      } catch (e) {}
+      function init() {
+        var handle = document.querySelector('.rail-resize');
+        if (!handle) return;
+        handle.addEventListener('pointerdown', function (e) {
+          e.preventDefault();
+          handle.setPointerCapture(e.pointerId);
+          handle.classList.add('dragging');
+          document.body.classList.add('rail-dragging');
+          function move(ev) {
+            var w = Math.max(MIN, Math.min(MAX, Math.round(ev.clientX)));
+            apply(w);
+          }
+          function up(ev) {
+            handle.classList.remove('dragging');
+            document.body.classList.remove('rail-dragging');
+            handle.releasePointerCapture(e.pointerId);
+            handle.removeEventListener('pointermove', move);
+            handle.removeEventListener('pointerup', up);
+            handle.removeEventListener('pointercancel', up);
+            var w = Math.max(MIN, Math.min(MAX, Math.round(ev.clientX)));
+            try { localStorage.setItem(KEY, String(w)); } catch (e2) {}
+          }
+          handle.addEventListener('pointermove', move);
+          handle.addEventListener('pointerup', up);
+          handle.addEventListener('pointercancel', up);
+        });
+        // Double-click restores the default.
+        handle.addEventListener('dblclick', function () {
+          document.documentElement.style.removeProperty('--rail-w');
+          try { localStorage.removeItem(KEY); } catch (e) {}
+        });
+      }
+      if (document.readyState !== 'loading') init();
+      else document.addEventListener('DOMContentLoaded', init);
+    })();
+
     // Copy a page's waikiki:// deep link (Page options -> Copy link). Uses the
     // scheme rather than the http URL because the app picks a free port at
     // startup, so an http link can go stale between runs.
@@ -205,6 +397,16 @@
       if (k === 'c') { if (window.wkCopy()) e.preventDefault(); }
       else if (k === 'v') { if (_isEditable(document.activeElement) && window.wkPaste()) e.preventDefault(); }
       else if (k === 'a' && !_isEditable(document.activeElement)) { window.wkSelectAll(); e.preventDefault(); }
+      else if (k === 'f' && window.wkFind) { e.preventDefault(); window.wkFind.open(); }
+      else if (k === 'g' && window.wkFind) {   // Cmd+G / Cmd+Shift+G, macOS habit
+        e.preventDefault();
+        window.wkFind.open();
+        document.getElementById(e.shiftKey ? 'wk-find-prev' : 'wk-find-next').click();
+      }
+    });
+    // Esc closes the find bar from anywhere on the page, not just the input.
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && window.wkFind) window.wkFind.close();
     });
 
     // Right-click context menu with Copy / Paste / Select All (WKWebView shows

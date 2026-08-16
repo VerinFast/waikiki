@@ -72,6 +72,33 @@ def parent_of(page: Optional[dict]) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def ancestors(page: Optional[dict], limit: int = 32) -> List[dict]:
+    """The parent chain above `page`, outermost first, for breadcrumbs.
+
+    `limit` and the seen-set are not paranoia: `set_parent` lets a page be
+    reparented under its own descendant, and a cycle here would hang the request
+    that renders it. A truncated trail is better than a hung page.
+    """
+    trail: List[dict] = []
+    seen = {page.get("id")} if page else set()
+    current = page
+    while len(trail) < limit:
+        parent_id = current.get("parent_id") if current else None
+        if not parent_id or parent_id in seen:
+            break
+        seen.add(parent_id)
+        row = db.get_conn().execute(
+            "SELECT id, slug, title, parent_id FROM pages "
+            "WHERE id=? AND deleted_at IS NULL", (parent_id,)
+        ).fetchone()
+        if not row:
+            break
+        current = dict(row)
+        trail.append({"slug": current["slug"], "title": current["title"]})
+    trail.reverse()
+    return trail
+
+
 def set_parent(slug: str, parent_slug: Optional[str]) -> Optional[dict]:
     """Make `slug` a child of `parent_slug` (or top-level if None). Re-indexes so
     its vectors move between the main and partitioned (child) indices."""

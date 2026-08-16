@@ -20,8 +20,6 @@ a:hover{text-decoration:underline}
 .wiki-switch{margin:0}
 .wiki-switch select{padding:.4rem .6rem;border:1px solid var(--border);border-radius:8px;
   background:var(--bg);color:var(--text);font-weight:600;max-width:180px}
-.wiki-manage{font-size:1.1rem;text-decoration:none;opacity:.7}
-.wiki-manage:hover{opacity:1;text-decoration:none}
 .topbar .search{flex:1}
 .topbar .search input{width:100%;max-width:520px;padding:.45rem .7rem;border:1px solid var(--border);
   border-radius:8px;background:var(--bg);color:var(--text)}

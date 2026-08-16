@@ -198,9 +198,17 @@ def main() -> None:
             MenuAction("Copy", _js("window.wkCopy && window.wkCopy()")),
             MenuAction("Paste", _js("window.wkPaste && window.wkPaste()")),
             MenuAction("Select All", _js("window.wkSelectAll && window.wkSelectAll()")),
-            # The native menu item is what makes Cmd+F dependable in the packaged
-            # app — same reason Copy/Paste need real menu items in WKWebView.
-            MenuAction("Find…", _js("window.wkFind && window.wkFind.open()")),
+            # The native menu items are what make these dependable in the
+            # packaged app — same reason Copy/Paste need real menu items in
+            # WKWebView. Both kinds of searching live here: within the page, and
+            # across the wiki.
+            MenuAction("Find in Page…", _js("window.wkFind && window.wkFind.open()")),
+            MenuAction("Search Wiki…", _js("window.wkFocusSearch && window.wkFocusSearch()")),
+        ]),
+        Menu("View", [
+            MenuAction("Zoom In", _js("wkTextScale && wkTextScale.bump(1)")),
+            MenuAction("Zoom Out", _js("wkTextScale && wkTextScale.bump(-1)")),
+            MenuAction("Actual Size", _js("wkTextScale && wkTextScale.reset()")),
         ]),
         Menu("Help", [
             MenuAction("Help Contents", _go("/help")),

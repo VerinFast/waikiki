@@ -27,21 +27,9 @@
     <button type="button" id="wk-find-next" title="Next (Enter)">↓</button>
     <button type="button" id="wk-find-close" title="Close (Esc)">✕</button>
   </div>
+  {# Order is deliberate: identity (logo, wiki), navigation (history, search),
+     then actions from most to least frequent, ending in Help. #}
   <header class="topbar">
-    <div class="histnav" role="group" aria-label="History">
-      <button type="button" class="histbtn" onclick="history.back()"
-              title="Back" aria-label="Back">‹</button>
-      <button type="button" class="histbtn" onclick="history.forward()"
-              title="Forward" aria-label="Forward">›</button>
-    </div>
-    <div class="textzoom" role="group" aria-label="Text size">
-      <button type="button" class="histbtn" onclick="wkTextScale.bump(-1)"
-              title="Smaller text" aria-label="Smaller text">A−</button>
-      <button type="button" class="histbtn azero" onclick="wkTextScale.reset()"
-              title="Reset text size" aria-label="Reset text size">A</button>
-      <button type="button" class="histbtn" onclick="wkTextScale.bump(1)"
-              title="Larger text" aria-label="Larger text">A+</button>
-    </div>
     <a class="brand" href="/">🌺 Waikiki <span class="ver" title="Version">v{{ version }}</span></a>
     <form class="wiki-switch" method="post" action="/switch-wiki">
       <select name="wiki" onchange="this.form.submit()" title="Active wiki">
@@ -50,15 +38,21 @@
         {% endfor %}
       </select>
     </form>
-    <a class="wiki-manage" href="/wikis" title="Manage wikis">⚙</a>
+    <div class="histnav" role="group" aria-label="History">
+      <button type="button" class="histbtn" onclick="history.back()"
+              title="Back" aria-label="Back">‹</button>
+      <button type="button" class="histbtn" onclick="history.forward()"
+              title="Forward" aria-label="Forward">›</button>
+    </div>
     <form class="search" action="/search" method="get">
-      <input type="search" name="q" placeholder="Search {{ current_wiki_name }}…" value="{{ q or '' }}">
+      <input type="search" id="wk-wiki-search" name="q"
+             placeholder="Search {{ current_wiki_name }}…" value="{{ q or '' }}">
     </form>
     <nav class="actions">
-      {% block topbar_actions %}{% endblock %}
       <a class="btn" href="/new">+ New</a>
+      {% block topbar_actions %}{% endblock %}
       <details class="menu">
-        <summary class="btn">Settings</summary>
+        <summary class="btn">Wiki options</summary>
         <div class="menu-items">
           {% if role != 'guest' %}
             <a href="/settings">Settings</a>
@@ -68,8 +62,19 @@
           <a href="/tags">Tags</a>
           <a href="/changes">Changes</a>
           <a href="/trash">Trash</a>
+          {# Was a bare ⚙ in the top row; it belongs with the other wiki-scoped
+             actions rather than as its own icon. #}
+          <a href="/wikis">Manage wikis</a>
         </div>
       </details>
+      <div class="textzoom" role="group" aria-label="Text size">
+        <button type="button" class="histbtn" onclick="wkTextScale.bump(-1)"
+                title="Smaller text" aria-label="Smaller text">A−</button>
+        <button type="button" class="histbtn azero" onclick="wkTextScale.reset()"
+                title="Reset text size" aria-label="Reset text size">A</button>
+        <button type="button" class="histbtn" onclick="wkTextScale.bump(1)"
+                title="Larger text" aria-label="Larger text">A+</button>
+      </div>
       <details class="menu">
         <summary class="btn">Help</summary>
         <div class="menu-items">
@@ -171,6 +176,40 @@
       if (text) _copyText(text);
       return !!text;
     };
+    // --- Dropdowns ---------------------------------------------------------
+    // <details> stays open until its own summary is clicked again, so opening
+    // one menu and clicking anywhere else left it hanging over the page. Close
+    // any open menu on an outside click, on Escape, and when another one opens.
+    (function () {
+      function menus() { return document.querySelectorAll('details.menu[open]'); }
+      document.addEventListener('click', function (e) {
+        menus().forEach(function (d) {
+          if (!d.contains(e.target)) d.removeAttribute('open');
+        });
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        menus().forEach(function (d) { d.removeAttribute('open'); });
+      });
+      // Opening one closes the others, so two menus are never open at once.
+      document.addEventListener('toggle', function (e) {
+        var d = e.target;
+        if (!d.open || !d.classList || !d.classList.contains('menu')) return;
+        document.querySelectorAll('details.menu[open]').forEach(function (o) {
+          if (o !== d) o.removeAttribute('open');
+        });
+      }, true);   // capture: toggle does not bubble
+    })();
+
+    // Focus the wiki search box — used by the native Edit > Search Wiki item.
+    window.wkFocusSearch = function () {
+      var el = document.getElementById('wk-wiki-search');
+      if (!el) return false;
+      el.focus();
+      el.select();
+      return true;
+    };
+
     // --- Find in page ------------------------------------------------------
     // WKWebView gives us no find UI and no window.find, so this walks the text
     // nodes of .content and wraps hits in <mark>. Kept off the editor: EasyMDE

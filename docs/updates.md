@@ -21,6 +21,14 @@ The app quits by sending itself `SIGTERM`, so FastAPI's lifespan shutdown runs o
 the way out — that's what flushes `collab.py`'s pending CRDT snapshots. A hard
 `os._exit` here would lose the tail of any live editing session.
 
+That flush is explicit: the shutdown calls `collab.flush_all()` **before**
+cancelling the flusher task. Cancelling alone is not enough and used to lose
+data — `collab.flusher` only persists text that has been idle for
+`_FLUSH_IDLE`, so anything typed in the last couple of seconds had never been
+written, and cancelling simply stopped the loop rather than draining it. See
+issue #19 and `tests/test_collab_shutdown.py`, which fails if the final flush is
+removed.
+
 Rollback is built into the helper: if `ditto` fails, it restores the bundle it
 moved aside and relaunches that instead. The old bundle is only deleted after the
 new one is in place.

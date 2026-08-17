@@ -138,6 +138,15 @@ async def lifespan(app: FastAPI):
         finally:
             bonjour.stop()
             tunnel.stop()
+            # Persist any edit the debounce has not written yet, BEFORE the
+            # flusher is cancelled — cancelling only stops its loop, it does not
+            # flush, so the tail of whatever someone was editing was being
+            # dropped on quit. Matters most on the updater's path, which quits
+            # the app on purpose. See issue #19.
+            try:
+                await collab.flush_all()
+            except Exception as exc:
+                print(f"[waikiki] final collab flush failed: {exc}", file=sys.stderr)
             warm_task.cancel()
             seed_task.cancel()
             html_task.cancel()

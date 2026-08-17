@@ -464,26 +464,10 @@ def home(request: Request):
 
 
 def _claude_config(request: Request) -> dict:
-    """Build the exact Claude Desktop MCP config for THIS install, with real
-    paths auto-filled — so the Help page is copy-paste ready."""
-    web_url = f"{request.url.scheme}://{request.url.netloc}"
-    data_dir = str(config.DATA_DIR)
-    if getattr(sys, "frozen", False):
-        # Packaged .app: Claude Desktop launches the binary itself in MCP mode.
-        server = {
-            "command": sys.executable,
-            "env": {"WAIKIKI_MCP": "1", "WAIKIKI_DATA": data_dir,
-                    "WAIKIKI_WEB_URL": web_url},
-        }
-    else:
-        # Running from source: launch the venv Python with the package.
-        server = {
-            "command": sys.executable,
-            "args": ["-m", "waikiki.mcp_server"],
-            "env": {"PYTHONPATH": str(config.ROOT), "WAIKIKI_DATA": data_dir,
-                    "WAIKIKI_WEB_URL": web_url},
-        }
-    return {"mcpServers": {"waikiki": server}}
+    """The MCP config for THIS install, with real paths filled in — so the
+    Connect page is copy-paste ready. Shared with chat, which hands the same
+    definition to the CLI so the agent can read the wiki (see config)."""
+    return config.mcp_server_config(f"{request.url.scheme}://{request.url.netloc}")
 
 
 def _help_cookie(resp):

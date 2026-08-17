@@ -57,3 +57,62 @@ def test_answer_reports_missing_cli(wiki):
     # gemini isn't installed; should fail gracefully with guidance.
     assert out["ok"] is False
     assert "gemini" in out["error"].lower()
+
+
+# --- MCP access (#30) ---------------------------------------------------------
+
+def test_claude_gets_an_mcp_config_and_read_only_tools():
+    args = chat._cli_args("claude", "claude", "", "PROMPT")
+    assert "--mcp-config" in args
+    assert "--strict-mcp-config" in args, "the user's own MCP setup is not ours to use"
+    tools = [a for a in args if a.startswith("mcp__waikiki__")]
+    assert tools, "no tools granted — the agent would be blind again"
+    assert "mcp__waikiki__switch_wiki" in tools, (
+        "a fresh MCP session has no active wiki, so without switch_wiki every "
+        "content tool refuses and chat cannot read anything")
+
+
+def test_no_write_tools_are_granted():
+    """A chat session looks things up; it does not edit the wiki."""
+    args = chat._cli_args("claude", "claude", "", "PROMPT")
+    granted = {a.removeprefix("mcp__waikiki__") for a in args
+               if a.startswith("mcp__waikiki__")}
+    forbidden = {"create_page", "edit_page", "replace_page", "append_to_page",
+                 "delete_page", "set_metadata", "set_property", "upload_asset",
+                 "create_wiki", "generate_image", "set_setting"}
+    assert not (granted & forbidden), f"write tools granted: {granted & forbidden}"
+
+
+def test_gemini_is_left_alone():
+    """Gemini's CLI takes a different MCP shape; don't hand it Claude's flags."""
+    args = chat._cli_args("gemini", "gemini", "", "PROMPT")
+    assert "--mcp-config" not in args and not any(
+        a.startswith("mcp__") for a in args)
+
+
+def test_the_prompt_tells_the_agent_which_wiki_to_switch_to():
+    p = chat.build_prompt("Meru", "body", "", [], "q?", "SYS", wiki="beaconlight")
+    assert "switch_wiki" in p and "beaconlight" in p
+
+
+def test_the_prompt_no_longer_carries_pre_retrieved_excerpts(wiki):
+    """Retrieval was a stand-in for the agent being unable to search. It can now."""
+    from waikiki import store
+
+    store.create_page("Meru", "body")
+    captured = {}
+
+    def fake_run(tag, argv, timeout):
+        captured["prompt"] = argv[argv.index("-p") + 1]
+
+        class R:
+            returncode, stdout, stderr = 0, "answer", ""
+        return R()
+
+    import waikiki.clirun as clirun
+    real, clirun.run = clirun.run, fake_run
+    try:
+        chat.answer("meru", "anything", provider="claude")
+    finally:
+        clirun.run = real
+    assert "Other relevant excerpts" not in captured["prompt"]

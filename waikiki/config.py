@@ -140,3 +140,25 @@ CHUNK_CHARS = 1000
 CHUNK_OVERLAP = 150
 RAG_TOP_K = 6
 RRF_K = 60  # reciprocal-rank-fusion constant
+
+
+def mcp_server_config(web_url: str | None = None) -> dict:
+    """The MCP server definition for *this* install, ready to hand to a client.
+
+    Shared by the Connect-Claude page (copy-paste into Claude Desktop) and by the
+    chat feature, which passes it to the CLI with --mcp-config so the agent can
+    read the wiki it is answering about instead of only seeing what we pasted
+    into its prompt.
+
+    Handles both shapes of install: the packaged .app relaunches its own binary
+    in MCP mode, while a source checkout runs the module.
+    """
+    import sys
+
+    env = {"WAIKIKI_DATA": str(DATA_DIR), "WAIKIKI_WEB_URL": web_url or WEB_URL}
+    if getattr(sys, "frozen", False):
+        server = {"command": sys.executable, "env": {**env, "WAIKIKI_MCP": "1"}}
+    else:
+        server = {"command": sys.executable, "args": ["-m", "waikiki.mcp_server"],
+                  "env": {**env, "PYTHONPATH": str(ROOT)}}
+    return {"mcpServers": {"waikiki": server}}

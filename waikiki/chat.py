@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 
-from . import clirun, config, db, rag, shellenv, store
+from . import clirun, config, db, shellenv, store
 
 DEFAULT_CHAT_SYSTEM = (
     "You are a helpful assistant answering questions about a single wiki article. "
@@ -48,7 +49,13 @@ def build_prompt(title: str, article_md: str, excerpts: str,
     """
     parts = [system]
     if wiki:
-        parts.append(f"# Wiki\n\nYou are answering about the '{wiki}' wiki.")
+        parts.append(
+            f"# Wiki\n\nYou are answering about the '{wiki}' wiki.\n\n"
+            f"You have Waikiki's own tools available and can read the wiki "
+            f"directly — search it, open pages, follow [[links]], check "
+            f"backlinks — rather than relying only on what is quoted below.\n\n"
+            f"Call `switch_wiki(\"{wiki}\")` first: a fresh session has no "
+            f"active wiki and every content tool will refuse until you do.")
     if title:
         parts.append(f"# Article: {title}\n\n{article_md.strip()}")
     if excerpts.strip():
@@ -65,9 +72,39 @@ def build_prompt(title: str, article_md: str, excerpts: str,
     return "\n\n---\n\n".join(parts)
 
 
+# Read-only MCP tools the chat agent may call. Deliberately a whitelist rather
+# than "everything": a chat session should be able to look things up, not edit
+# the wiki. switch_wiki is in here because it MUST be — a fresh MCP session has
+# no active wiki by design (issue #11), so without it every content call errors.
+CHAT_TOOLS = [
+    "switch_wiki", "current_wiki", "list_wikis",
+    "get_page", "get_metadata", "get_property", "check_pages",
+    "search", "search_subpages", "list_pages", "list_children",
+    "backlinks", "broken_links", "list_tags", "pages_by_tag",
+    "list_docs", "read_doc", "list_templates", "list_elements", "get_element",
+    "list_comments", "list_suggestions", "changes_since",
+]
+
+
+def _mcp_config_path() -> str:
+    """Write this install's MCP config where the CLI can read it.
+
+    Lives in DATA_DIR rather than a temp file so it survives for the life of the
+    subprocess and is inspectable when chat misbehaves. Contains no secrets —
+    just how to launch our own server.
+    """
+    import json
+
+    path = config.DATA_DIR / "mcp-chat.json"
+    path.write_text(json.dumps(config.mcp_server_config(), indent=2))
+    return str(path)
+
+
 def _cli_args(provider: str, cli: str, model: str, prompt: str) -> list[str]:
     """Argv for one-shot print mode. Claude Code: `-p`; Gemini: `-p`, `-m`."""
     if provider == "gemini":
+        # Gemini's CLI takes a different MCP configuration; until that is wired
+        # it runs without wiki access, on the prompt alone.
         args = [cli, "-p", prompt]
         if model:
             args += ["-m", model]
@@ -75,17 +112,17 @@ def _cli_args(provider: str, cli: str, model: str, prompt: str) -> list[str]:
         args = [cli, "-p", prompt]
         if model:
             args += ["--model", model]
+        try:
+            args += [
+                "--mcp-config", _mcp_config_path(),
+                # Only our server: the user's own MCP setup is theirs, and a
+                # chat about a wiki page has no business reaching into it.
+                "--strict-mcp-config",
+                "--allowedTools", *[f"mcp__waikiki__{t}" for t in CHAT_TOOLS],
+            ]
+        except Exception as exc:   # never let this break plain chat
+            print(f"[waikiki] chat MCP config unavailable: {exc}", file=sys.stderr)
     return args
-
-
-def _excerpts(question: str, exclude_slug: str) -> str:
-    try:
-        hits = rag.search_chunks(question, k=config.RAG_TOP_K)
-    except Exception:
-        return ""
-    blocks = [f"[from '{h['title']}']\n{h['text']}"
-              for h in hits if h.get("slug") != exclude_slug]
-    return "\n\n---\n\n".join(blocks[:5])
 
 
 def answer(slug: str | None, question: str, provider: str = "claude",
@@ -110,10 +147,13 @@ def answer(slug: str | None, question: str, provider: str = "claude",
                 "error": f"`{binary}` CLI not found on this machine. {hint}, "
                          f"then reopen Waikiki."}
 
+    # No pre-retrieved excerpts: the agent has the wiki's own search and page
+    # tools, and five chunks guessed in advance are strictly worse than letting
+    # it look up what it actually needs. See issue #30.
     prompt = build_prompt(
         page["title"] if page else "",
         page["markdown"] if page else "",
-        _excerpts(question, slug) if page else "",
+        "",
         history or [], question, chat_system_prompt(),
         wiki=db.active_wiki())
     try:

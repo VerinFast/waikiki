@@ -188,3 +188,36 @@ def test_lead_section_round_trips_through_the_edit_route(wiki):
     assert "Rewritten opening." in md and "Original opening." not in md
     assert md.startswith("---\ntags: city\n---\n"), "frontmatter was damaged"
     assert "## Later" in md and "tail" in md, "the rest of the page was damaged"
+
+
+# --- Jump to article (#29) ----------------------------------------------------
+
+def test_the_pages_api_can_include_children(wiki):
+    """The palette must reach child pages; the sidebar hides them."""
+    parent = store.create_page("Meru", "x")
+    child = store.create_page("Sub Page", "y")
+    store.set_parent(child["slug"], parent["slug"])
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        top = client.get("/api/pages").json()
+        every = client.get("/api/pages?children=1").json()
+    assert child["slug"] not in [p["slug"] for p in top]
+    assert child["slug"] in [p["slug"] for p in every]
+
+
+def test_the_jump_palette_is_present_and_closed(wiki):
+    store.create_page("Meru", "x")
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        body = client.get("/wiki/meru").text
+    assert 'id="wk-jump"' in body
+    assert 'id="wk-jump" hidden' in body, "the palette must start closed"
+
+
+def test_the_jump_markup_has_no_unrendered_escapes(wiki):
+    """A literal \\uXXXX in markup shows as backslash-u to the reader."""
+    import re
+
+    store.create_page("Meru", "x")
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        body = client.get("/wiki/meru").text
+    box = body.split('class="jump-box"', 1)[1].split("</div>", 1)[0]
+    assert not re.search(r"\\u[0-9a-fA-F]{4}", box), "unrendered escape in the palette"

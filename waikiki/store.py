@@ -571,6 +571,36 @@ def replace_properties(slug: str, props: dict,
     return update_page(slug, page["title"], fm + body.lstrip("\n"), author=author)
 
 
+def set_tags(slug: str, tags: List[str], author: str = "human") -> Optional[dict]:
+    """Replace a page's tags by rewriting the frontmatter `tags:` line.
+
+    The markdown is the source of truth: writing `page_tags` directly would leave
+    the page's own text disagreeing with its tags, and the next save from the
+    editor would silently revert it. Going through `update_page` re-parses,
+    re-indexes and advances the canonical Y.Doc like any other content write.
+
+    Tags are normalised the way `parse_frontmatter` reads them back — lowercased,
+    de-duplicated, and with the `,`/`;` separators stripped out of each tag so a
+    value cannot smuggle in an extra one.
+    """
+    page = get_page(slug)
+    if not page:
+        return None
+    meta, _old, body = structure.parse_frontmatter(page["markdown"])
+    clean: List[str] = []
+    seen = set()
+    for tag in tags or []:
+        norm = " ".join(re.sub(r"[,;]", " ", str(tag)).split()).lower()
+        if norm and norm not in seen:
+            seen.add(norm)
+            clean.append(norm)
+    lines = [f"{k}: {v}" for k, v in meta.items()]
+    if clean:
+        lines.insert(0, "tags: " + ", ".join(clean))
+    fm = ("---\n" + "\n".join(lines) + "\n---\n") if lines else ""
+    return update_page(slug, page["title"], fm + body.lstrip("\n"), author=author)
+
+
 def content_version(markdown: str) -> str:
     """Short stable fingerprint of a page's text.
 

@@ -511,3 +511,30 @@ mark.wk-hit.on{background:var(--accent);color:var(--accent-contrast)}
 .chat-panel .chatform select{max-width:6.5rem}
 @media print{.chat-launch,.chat-panel{display:none !important}}
 .metatags .taglist{display:flex;flex-wrap:wrap;gap:.4rem;margin:.4rem 0}
+.tagedit{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;
+  padding:.45rem .5rem;border:1px solid var(--border);border-radius:9px;
+  background:var(--bg);margin:.4rem 0}
+.tagedit #tagnew{flex:1;min-width:9rem;border:none;outline:none;
+  background:transparent;color:var(--text);padding:.2rem}
+.tagchip.editable{display:inline-flex;align-items:center;gap:.35rem}
+.tagx{border:none;background:none;color:var(--muted);cursor:pointer;
+  font-size:.75rem;line-height:1;padding:0}
+.tagx:hover{color:var(--accent)}
+
+/* --- Jump to article (⌘J) --------------------------------------------------- */
+.jump{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.32);
+  display:flex;align-items:flex-start;justify-content:center;padding-top:12vh}
+.jump[hidden]{display:none}
+.jump-box{width:min(34rem,calc(100vw - 2rem));background:var(--surface);
+  border:1px solid var(--border);border-radius:12px;
+  box-shadow:0 18px 50px rgba(0,0,0,.35);overflow:hidden}
+.jump-box input{width:100%;box-sizing:border-box;padding:.75rem .9rem;border:none;
+  border-bottom:1px solid var(--border);background:transparent;color:var(--text);
+  font-size:1rem;outline:none}
+.jump-list{list-style:none;margin:0;padding:.3rem;max-height:22rem;overflow-y:auto}
+.jump-item{padding:.45rem .6rem;border-radius:7px;cursor:pointer}
+.jump-item.on{background:var(--accent);color:var(--accent-contrast)}
+.jump-empty{padding:.6rem}
+.jump-hint{padding:.4rem .9rem;border-top:1px solid var(--border);margin:0;
+  font-size:.78rem}
+@media print{.jump{display:none !important}}

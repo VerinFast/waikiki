@@ -464,26 +464,10 @@ def home(request: Request):
 
 
 def _claude_config(request: Request) -> dict:
-    """Build the exact Claude Desktop MCP config for THIS install, with real
-    paths auto-filled — so the Help page is copy-paste ready."""
-    web_url = f"{request.url.scheme}://{request.url.netloc}"
-    data_dir = str(config.DATA_DIR)
-    if getattr(sys, "frozen", False):
-        # Packaged .app: Claude Desktop launches the binary itself in MCP mode.
-        server = {
-            "command": sys.executable,
-            "env": {"WAIKIKI_MCP": "1", "WAIKIKI_DATA": data_dir,
-                    "WAIKIKI_WEB_URL": web_url},
-        }
-    else:
-        # Running from source: launch the venv Python with the package.
-        server = {
-            "command": sys.executable,
-            "args": ["-m", "waikiki.mcp_server"],
-            "env": {"PYTHONPATH": str(config.ROOT), "WAIKIKI_DATA": data_dir,
-                    "WAIKIKI_WEB_URL": web_url},
-        }
-    return {"mcpServers": {"waikiki": server}}
+    """The MCP config for THIS install, with real paths filled in — so the
+    Connect page is copy-paste ready. Shared with chat, which hands the same
+    definition to the CLI so the agent can read the wiki (see config)."""
+    return config.mcp_server_config(f"{request.url.scheme}://{request.url.netloc}")
 
 
 def _help_cookie(resp):
@@ -838,6 +822,7 @@ def metadata_view(request: Request, slug: str, msg: str = "", error: str = ""):
         "metadata.html", _ctx(request, page=page,
                           trashed=bool(page.get("deleted_at")),
                           properties=meta, tags=store.tags_of(slug),
+                          all_tags=[t["tag"] for t in store.all_tags()],
                           parent=store.parent_of(page),
                           crumbs=store.ancestors(page),
                           comment_count=len(store.comments_list(slug)),
@@ -873,6 +858,22 @@ async def metadata_save(request: Request, slug: str):
             + quote("'tags' is managed separately — use the tag controls"),
             status_code=303)
     return RedirectResponse(f"/wiki/{quote(slug)}/metadata?msg=Saved",
+                            status_code=303)
+
+
+@app.post("/wiki/{slug}/tags")
+async def tags_save(request: Request, slug: str):
+    """Replace a page's tags from the Metadata tab.
+
+    Goes through the repository so the frontmatter is rewritten too — updating
+    only the index would leave the page's own text disagreeing with its tags,
+    and the next editor save would quietly revert it.
+    """
+    form = await request.form()
+    tags = [str(t) for t in form.getlist("tag")]
+    if store.set_tags(slug, tags, author="human") is None:
+        raise HTTPException(404, "Page not found")
+    return RedirectResponse(f"/wiki/{quote(slug)}/metadata?msg=Tags+saved",
                             status_code=303)
 
 
@@ -1414,8 +1415,11 @@ class PageIn(BaseModel):
 
 
 @app.get("/api/pages")
-def api_list_pages():
-    return store.list_pages()
+def api_list_pages(children: bool = False):
+    """Pages in the active wiki. `children=1` includes child pages, which the
+    sidebar hides but the jump-to-article palette needs — you should be able to
+    jump to any article, not just top-level ones."""
+    return store.list_pages(include_children=children)
 
 
 @app.post("/api/pages")

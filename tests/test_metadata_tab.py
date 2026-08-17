@@ -99,3 +99,59 @@ def test_the_tab_is_linked_from_article_and_details(wiki):
 def test_metadata_of_a_missing_page_is_404(wiki):
     with _client() as c:
         assert c.get("/wiki/nope/metadata").status_code == 404
+
+
+# --- Chat launcher (#20) ------------------------------------------------------
+
+def test_chat_launcher_is_on_an_article_page(wiki):
+    store.create_page("Meru", "body")
+    with _client() as c:
+        body = c.get("/wiki/meru").text
+    assert 'id="wk-chat-launch"' in body
+
+
+def test_chat_launcher_is_on_a_page_with_no_article(wiki):
+    """The launcher is everywhere; without a page it chats about the wiki."""
+    with _client() as c:
+        body = c.get("/index").text
+    assert 'id="wk-chat-launch"' in body
+
+
+def test_chat_is_gone_from_the_details_page(wiki):
+    store.create_page("Meru", "body")
+    with _client() as c:
+        body = c.get("/wiki/meru/details").text
+    # The old inline section's own ids/classes — the launcher in base.html
+    # reuses the chatform/chatlog *classes*, so match on what was unique to it.
+    assert 'class="chatpanel"' not in body
+    assert 'id="chatform"' not in body and 'id="chatlog"' not in body
+    assert 'id="chatq"' not in body
+    # ...and the launcher is there instead.
+    assert 'id="wk-chat-launch"' in body
+
+
+def test_the_wiki_scoped_chat_route_exists(wiki, monkeypatch):
+    """Posting with no page must reach chat.answer with slug=None."""
+    from waikiki import chat as chat_mod
+
+    seen = {}
+
+    def fake(slug, question, provider="claude", model="", history=None, timeout=180):
+        seen["slug"] = slug
+        return {"ok": True, "answer": "hi", "provider": provider}
+
+    monkeypatch.setattr(chat_mod, "answer", fake)
+    with _client() as c:
+        r = c.post("/chat", json={"question": "what is this wiki about?"})
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert seen["slug"] is None
+
+
+def test_wiki_scoped_prompt_has_no_article_and_no_excerpts(wiki):
+    """No retrieval stand-in: the agent is meant to use MCP (issue #30)."""
+    from waikiki import chat as chat_mod
+
+    prompt = chat_mod.build_prompt("", "", "", [], "a question", "SYS", wiki="main")
+    assert "# Article" not in prompt
+    assert "Other relevant excerpts" not in prompt
+    assert "'main' wiki" in prompt

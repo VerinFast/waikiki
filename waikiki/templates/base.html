@@ -17,6 +17,7 @@
   </script>
 </head>
 <body>
+  <script>window.WAIKIKI_WIKI_NAME = {{ current_wiki_name | tojson }};</script>
   {# Find in page. WKWebView has no built-in find UI, so Cmd+F is ours to
      implement — see wkFind in the script block below. #}
   <div class="wk-find" id="wk-find" role="search">
@@ -29,6 +30,32 @@
   </div>
   {# Order is deliberate: identity (logo, wiki), navigation (history, search),
      then actions from most to least frequent, ending in Help. #}
+  {# Chat. A launcher rather than a section on the Details page: the question is
+     usually about what you are reading, so it should be reachable while you read
+     it. Present everywhere; page-scoped where there is a page, wiki-scoped
+     otherwise. Hidden for guests, who cannot run local CLIs (auth.guest_may). #}
+  {% if role != 'guest' %}
+  <button type="button" class="chat-launch" id="wk-chat-launch"
+          title="Chat" aria-label="Chat" aria-expanded="false">💬</button>
+  <section class="chat-panel" id="wk-chat-panel" aria-label="Chat" hidden>
+    <header class="chat-head">
+      <span class="chat-scope" id="wk-chat-scope"></span>
+      <button type="button" class="chat-close" id="wk-chat-close"
+              title="Close (Esc)" aria-label="Close">✕</button>
+    </header>
+    <div class="chatlog" id="wk-chat-log"></div>
+    <form class="chatform" id="wk-chat-form">
+      <input type="text" id="wk-chat-q" placeholder="Ask a question…"
+             autocomplete="off" required>
+      <select id="wk-chat-provider" title="Which CLI">
+        <option value="">Default</option>
+        <option value="claude">Claude</option>
+        <option value="gemini">Gemini</option>
+      </select>
+      <button class="btn primary" type="submit">Ask</button>
+    </form>
+  </section>
+  {% endif %}
   <header class="topbar">
     <a class="brand" href="/">🌺 Waikiki <span class="ver" title="Version">v{{ version }}</span></a>
     <form class="wiki-switch" method="post" action="/switch-wiki">
@@ -207,6 +234,84 @@
       if (text) _copyText(text);
       return !!text;
     };
+    // --- Chat launcher -----------------------------------------------------
+    // Page-scoped where a page is in context, wiki-scoped otherwise. No
+    // retrieval is done for the wiki-scoped case on purpose: the agent should
+    // look things up through Waikiki's MCP tools rather than be fed guesses.
+    (function () {
+      var launch = document.getElementById('wk-chat-launch');
+      var panel = document.getElementById('wk-chat-panel');
+      if (!launch || !panel) return;
+      var log = document.getElementById('wk-chat-log');
+      var form = document.getElementById('wk-chat-form');
+      var q = document.getElementById('wk-chat-q');
+      var prov = document.getElementById('wk-chat-provider');
+      var scope = document.getElementById('wk-chat-scope');
+      var history = [];
+      var page = window.WAIKIKI_PAGE || null;
+
+      scope.textContent = page ? ('\uD83D\uDCAC ' + (document.title.split(' \u2014 ')[0] || 'this page'))
+                               : '\uD83D\uDCAC ' + (window.WAIKIKI_WIKI_NAME || 'this wiki');
+      q.placeholder = page ? 'Ask about this page\u2026' : 'Ask about this wiki\u2026';
+
+      function open() {
+        panel.hidden = false;
+        launch.setAttribute('aria-expanded', 'true');
+        q.focus();
+      }
+      function close() {
+        panel.hidden = true;
+        launch.setAttribute('aria-expanded', 'false');
+      }
+      launch.addEventListener('click', function () {
+        panel.hidden ? open() : close();
+      });
+      document.getElementById('wk-chat-close').addEventListener('click', close);
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !panel.hidden) close();
+      });
+      document.addEventListener('click', function (e) {
+        if (panel.hidden) return;
+        if (!panel.contains(e.target) && e.target !== launch) close();
+      });
+
+      function bubble(role, text, cls) {
+        var d = document.createElement('div');
+        d.className = 'chatmsg ' + role + (cls ? ' ' + cls : '');
+        d.textContent = text;
+        log.appendChild(d);
+        log.scrollTop = log.scrollHeight;
+        return d;
+      }
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var question = q.value.trim();
+        if (!question) return;
+        bubble('user', question);
+        q.value = ''; q.disabled = true;
+        var thinking = bubble('assistant', 'Thinking\u2026', 'thinking');
+        var url = page ? ('/wiki/' + page.slug + '/chat') : '/chat';
+        fetch(url, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: question, provider: prov.value || null, history: history
+          })
+        }).then(function (r) { return r.json(); }).then(function (res) {
+          thinking.remove(); q.disabled = false; q.focus();
+          if (res.ok) {
+            bubble('assistant', res.answer);
+            history.push({ role: 'user', content: question });
+            history.push({ role: 'assistant', content: res.answer });
+          } else {
+            bubble('assistant', res.error || 'Chat failed.', 'err');
+          }
+        }).catch(function (err) {
+          thinking.remove(); q.disabled = false;
+          bubble('assistant', 'Request failed: ' + err, 'err');
+        });
+      });
+    })();
+
     // --- Dropdowns ---------------------------------------------------------
     // <details> stays open until its own summary is clicked again, so opening
     // one menu and clicking anywhere else left it hanging over the page. Close

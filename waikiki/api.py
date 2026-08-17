@@ -744,6 +744,22 @@ class ChatIn(BaseModel):
     history: list[dict] = []
 
 
+@app.post("/chat")
+async def chat_wiki_endpoint(body: ChatIn):
+    """Chat with no page in context — reachable from Settings, the Index, search.
+
+    Deliberately does NOT pre-retrieve excerpts to compensate. The agent should
+    look things up through Waikiki's own MCP tools; until it can (issue #30) an
+    answer here is only as good as the model's general knowledge, which is the
+    honest state of it rather than a retrieval step pretending otherwise.
+    """
+    import anyio
+    provider = body.provider or store.get_setting("chat_provider", "claude")
+    model = body.model if body.model is not None else store.get_setting("chat_model", "")
+    return await anyio.to_thread.run_sync(
+        lambda: chat.answer(None, body.question, provider, model, body.history or []))
+
+
 @app.post("/wiki/{slug}/chat")
 async def chat_endpoint(slug: str, body: ChatIn):
     """Answer a question about a page via the configured CLI (claude/gemini),

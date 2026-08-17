@@ -480,3 +480,34 @@ mark.wk-hit.on{background:var(--accent);color:var(--accent-contrast)}
 .metadel:hover{border-color:var(--border);color:var(--accent)}
 .metaactions{display:flex;gap:.6rem;align-items:center;margin:.6rem 0}
 .metatags{margin-top:1.6rem}
+
+/* --- Chat launcher + panel --------------------------------------------------
+   Bottom-right so it clears the find bar (top-right) and the rail's drag
+   handle (left edge). */
+.chat-launch{position:fixed;right:1.1rem;bottom:1.1rem;z-index:55;
+  width:2.9rem;height:2.9rem;border-radius:50%;font-size:1.25rem;line-height:1;
+  border:1px solid var(--border);background:var(--surface);color:var(--text);
+  box-shadow:0 4px 16px rgba(0,0,0,.22);cursor:pointer}
+.chat-launch:hover{border-color:var(--accent)}
+.chat-panel{position:fixed;right:1.1rem;bottom:4.6rem;z-index:56;
+  width:min(24rem,calc(100vw - 2.2rem));max-height:min(30rem,calc(100vh - 8rem));
+  display:flex;flex-direction:column;background:var(--surface);
+  border:1px solid var(--border);border-radius:12px;
+  box-shadow:0 10px 34px rgba(0,0,0,.28);overflow:hidden}
+.chat-panel[hidden]{display:none}
+.chat-head{display:flex;align-items:center;justify-content:space-between;
+  gap:.5rem;padding:.5rem .7rem;border-bottom:1px solid var(--border)}
+.chat-scope{font-weight:600;font-size:.9rem;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.chat-close{border:none;background:none;color:var(--muted);cursor:pointer;
+  font-size:1rem;line-height:1;padding:.2rem .3rem;border-radius:6px}
+.chat-close:hover{color:var(--accent)}
+.chat-panel .chatlog{flex:1 1 auto;overflow-y:auto;padding:.6rem .7rem;
+  display:flex;flex-direction:column;gap:.45rem;min-height:6rem}
+.chat-panel .chatform{display:flex;gap:.4rem;padding:.55rem .7rem;
+  border-top:1px solid var(--border)}
+.chat-panel .chatform input[type=text]{flex:1;min-width:0;padding:.4rem .55rem;
+  border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text)}
+.chat-panel .chatform select{max-width:6.5rem}
+@media print{.chat-launch,.chat-panel{display:none !important}}
+.metatags .taglist{display:flex;flex-wrap:wrap;gap:.4rem;margin:.4rem 0}

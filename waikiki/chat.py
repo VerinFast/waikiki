@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 import subprocess
 
-from . import clirun, config, rag, shellenv, store
+from . import clirun, config, db, rag, shellenv, store
 
 DEFAULT_CHAT_SYSTEM = (
     "You are a helpful assistant answering questions about a single wiki article. "
@@ -37,9 +37,20 @@ def chat_system_prompt() -> str:
 
 
 def build_prompt(title: str, article_md: str, excerpts: str,
-                 history: list[dict], question: str, system: str) -> str:
-    """Assemble the single prompt string handed to the CLI. Pure — unit-tested."""
-    parts = [system, f"# Article: {title}\n\n{article_md.strip()}"]
+                 history: list[dict], question: str, system: str,
+                 wiki: str = "") -> str:
+    """Assemble the single prompt string handed to the CLI. Pure — unit-tested.
+
+    `title` may be empty: chat is reachable from pages that aren't an article
+    (Settings, the Index), where the question is about the wiki rather than one
+    page. The agent is expected to look things up itself in that case — see
+    issue #30 for the MCP access that makes that possible.
+    """
+    parts = [system]
+    if wiki:
+        parts.append(f"# Wiki\n\nYou are answering about the '{wiki}' wiki.")
+    if title:
+        parts.append(f"# Article: {title}\n\n{article_md.strip()}")
     if excerpts.strip():
         parts.append("# Other relevant excerpts from this wiki\n\n" + excerpts.strip())
     convo = []
@@ -77,7 +88,7 @@ def _excerpts(question: str, exclude_slug: str) -> str:
     return "\n\n---\n\n".join(blocks[:5])
 
 
-def answer(slug: str, question: str, provider: str = "claude",
+def answer(slug: str | None, question: str, provider: str = "claude",
            model: str = "", history: list[dict] | None = None,
            timeout: int = 180) -> dict:
     """Answer a question about page `slug` using the selected CLI. Synchronous
@@ -85,8 +96,8 @@ def answer(slug: str, question: str, provider: str = "claude",
     provider = provider if provider in ("claude", "gemini") else "claude"
     if not (question or "").strip():
         return {"ok": False, "error": "Ask a question first."}
-    page = store.get_page(slug)
-    if not page:
+    page = store.get_page(slug) if slug else None
+    if slug and not page:
         return {"ok": False, "error": f"No page '{slug}'."}
 
     binary = "gemini" if provider == "gemini" else "claude"
@@ -100,8 +111,11 @@ def answer(slug: str, question: str, provider: str = "claude",
                          f"then reopen Waikiki."}
 
     prompt = build_prompt(
-        page["title"], page["markdown"], _excerpts(question, slug),
-        history or [], question, chat_system_prompt())
+        page["title"] if page else "",
+        page["markdown"] if page else "",
+        _excerpts(question, slug) if page else "",
+        history or [], question, chat_system_prompt(),
+        wiki=db.active_wiki())
     try:
         proc = clirun.run(f"{binary}:chat", _cli_args(provider, cli, model, prompt),
                           timeout)

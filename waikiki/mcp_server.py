@@ -23,6 +23,7 @@ from __future__ import annotations
 import contextvars
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
@@ -77,7 +78,9 @@ mcp = FastMCP(
         "[[wikilinks]] already resolved, in `links`. Before you write about, "
         "quote, or edit something a page links to, read the linked page first — "
         "a wiki holds hundreds of pages and the detail you need is usually one "
-        "hop away, in a page you were never handed.\n\n"
+        "hop away, in a page you were never handed. read_pages(slugs) fetches up "
+        "to 10 of those targets in one call, so following several links is one "
+        "round-trip rather than one per page.\n\n"
         "This wiki changes underneath you. A human or another agent may edit a "
         "page at any time, including while you are working — but your earlier "
         "tool results stay in the conversation unchanged, so old text will look "
@@ -290,6 +293,95 @@ def list_pages(children: bool | list[str] | None = False) -> dict:
     return out
 
 
+# How many pages one read_pages call will fetch. Page bodies are the largest
+# thing this server returns (a mature page runs to several KB of markdown), so
+# the cap is about the caller's context window, not this process: ten pages is
+# roughly a chapter's worth of wiki and still leaves room to think. Slugs past
+# the cap are reported back, never silently dropped.
+READ_PAGES_MAX = 10
+
+# Reading live text is one HTTP call per page, so a batch done naively is slower
+# than the get_page loop it replaces — which would defeat the tool. Two things fix
+# that, both measured against a local server with 10 pages in flight:
+#   * one shared httpx.Client for the batch instead of httpx.get per page. A bare
+#     httpx.get builds (and discards) a whole client each time: 82ms serial for
+#     10 pages, and 421ms when those calls run on threads, because that setup is
+#     CPU work and the threads simply queue for the GIL. Sharing one client: 11ms.
+#   * a bounded pool so the calls overlap. With a realistic 30ms per request:
+#     354ms shared+serial vs 90ms shared+concurrent.
+# So: shared client, bounded concurrency. The bound also stops a big batch
+# opening a socket per page against a laptop dev server.
+_LIVE_FETCH_WORKERS = 8
+
+
+def _live_markdown(slug: str, saved: str, get) -> tuple[str, bool]:
+    """`(markdown, live)` for one page: unsaved live text if a room is open.
+
+    One HTTP call to the web app, which owns the CRDT rooms. Never raises — a
+    headless run (no web app listening) just gets the saved markdown back.
+
+    `get` is the bound `.get` of a client the caller owns, because this runs on
+    worker threads for batch reads: a fresh thread inherits neither the active
+    wiki contextvar (so the wiki header must already be on the client) nor a DB
+    connection (so nothing here touches the DB).
+    """
+    try:
+        r = get(f"{WEB}/api/collab/{slug}/live")
+        if r.status_code == 200:
+            fresh = r.json()["markdown"]
+            return fresh, fresh != saved
+    except Exception:
+        pass
+    return saved, False
+
+
+def _live_markdowns(pages: dict[str, dict], headers: dict) -> dict[str, tuple[str, bool]]:
+    """`(markdown, live)` for each of `pages` (slug -> stored row).
+
+    The single-page and batch reads share this so both get the same text through
+    the same client settings; see the note above for why it is shaped this way.
+    """
+    if not pages:
+        return {}
+    with httpx.Client(headers=headers, timeout=10,
+                      limits=httpx.Limits(max_connections=_LIVE_FETCH_WORKERS)) as client:
+        if len(pages) == 1:
+            slug, page = next(iter(pages.items()))
+            return {slug: _live_markdown(slug, page["markdown"], client.get)}
+        with ThreadPoolExecutor(max_workers=min(len(pages), _LIVE_FETCH_WORKERS)) as pool:
+            futures = {slug: pool.submit(_live_markdown, slug, page["markdown"], client.get)
+                       for slug, page in pages.items()}
+            return {slug: f.result() for slug, f in futures.items()}
+
+
+def _page_view(wiki: str, page: dict, markdown: str, live: bool) -> dict:
+    """The payload every page read returns — get_page and read_pages share it.
+
+    Deliberately one function rather than two similar ones: an agent must get the
+    same answer for a page whichever tool it reached for, down to the `hint`.
+    """
+    meta, tags, _ = structure.parse_frontmatter(markdown)
+    # Computed from the markdown passed in (live text included), so `links`
+    # always describes the text the caller actually got.
+    links = store.outbound_links(markdown)
+    out = {"wiki": wiki, "slug": page["slug"], "title": page["title"],
+           "link": deeplink.for_page(wiki, page["slug"]),
+           "markdown": markdown, "outline": render.extract_toc(markdown),
+           "links": links,
+           "properties": meta, "tags": tags,
+           "updated_at": page.get("updated_at"),
+           "deleted_at": page.get("deleted_at"),
+           "trashed": bool(page.get("deleted_at")),
+           "live": live,
+           "version": store.content_version(markdown)}
+    if links:
+        out["hint"] = (f"This page links to {len(links)} "
+                       f"{'page' if len(links) == 1 else 'pages'}. Read the ones "
+                       "you'll rely on before writing — read_pages fetches "
+                       "several in one call; see `links`.")
+    return out
+
+
 @mcp.tool
 def get_page(slug: str) -> dict:
     """Get a page's title, current markdown, properties and freshness.
@@ -313,39 +405,72 @@ def get_page(slug: str) -> dict:
 
     Those links are the rest of the picture. Before you write about, quote, or
     edit something this page links to, call get_page on that `target` first —
-    this page is one of hundreds and rarely says everything it assumes."""
+    this page is one of hundreds and rarely says everything it assumes. To follow
+    several links at once, read_pages(slugs) returns exactly this shape for each
+    of up to 10 pages in a single call."""
     wiki = _require_wiki()
     page = store.get_page(slug)
     if not page:
         return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
-    markdown, live = page["markdown"], False
-    try:
-        r = httpx.get(f"{WEB}/api/collab/{slug}/live", headers=_headers(), timeout=10)
-        if r.status_code == 200:
-            fresh = r.json()["markdown"]
-            live = fresh != page["markdown"]
-            markdown = fresh
-    except Exception:
-        pass
+    markdown, live = _live_markdowns({slug: page}, _headers())[slug]
     store.log_activity("ai", "read")
-    meta, tags, _ = structure.parse_frontmatter(markdown)
-    # Computed from the markdown returned above (live text included), so `links`
-    # always describes the text the caller actually got.
-    links = store.outbound_links(markdown)
-    out = {"wiki": wiki, "slug": page["slug"], "title": page["title"],
-           "link": deeplink.for_page(wiki, page["slug"]),
-           "markdown": markdown, "outline": render.extract_toc(markdown),
-           "links": links,
-           "properties": meta, "tags": tags,
-           "updated_at": page.get("updated_at"),
-           "deleted_at": page.get("deleted_at"),
-           "trashed": bool(page.get("deleted_at")),
-           "live": live,
-           "version": store.content_version(markdown)}
-    if links:
-        out["hint"] = (f"This page links to {len(links)} "
-                       f"{'page' if len(links) == 1 else 'pages'}. Read the ones "
-                       "you'll rely on before writing — see `links`.")
+    return _page_view(wiki, page, markdown, live)
+
+
+@mcp.tool
+def read_pages(slugs: list[str]) -> dict:
+    """Read up to 10 pages in ONE call — for following the `links` get_page gave
+    you without paying a round-trip per page.
+
+    Returns `pages`, a slug -> page object map where each value is exactly what
+    get_page returns for that slug (same markdown, live-edit overlay, `outline`,
+    `links`, `version`, `trashed` and deep `link`), plus:
+
+      * `missing` — slugs with no such page here. A missing slug does NOT fail
+        the call: following a red link is a normal outcome, and one bad slug
+        shouldn't cost you the pages that did resolve.
+      * `dropped` — slugs beyond the 10-page cap, which were not read. They are
+        returned so you can ask for them in a second call; nothing is silently
+        truncated. Pass the pages you actually need rather than everything.
+
+    Slugs must be canonical — the `target` values from `links`, or `slug` from
+    list_pages / search. Duplicates collapse. The pages come back in the order
+    you asked for them.
+
+    To re-check pages you already hold, use check_pages instead: it costs no page
+    bodies at all and tells you which ones are worth re-reading."""
+    wiki = _require_wiki()
+    if not isinstance(slugs, list) or not slugs:
+        return {"wiki": wiki, "pages": {}, "missing": [],
+                "error": "slugs must be a non-empty list of page slugs"}
+    wanted = list(dict.fromkeys(
+        s.strip() for s in slugs if isinstance(s, str) and s.strip()))
+    dropped = wanted[READ_PAGES_MAX:]
+    wanted = wanted[:READ_PAGES_MAX]
+
+    found: dict[str, dict] = {}
+    missing: list[str] = []
+    for slug in wanted:
+        page = store.get_page(slug)                 # DB reads stay on this thread
+        if page:
+            found[slug] = page
+        else:
+            missing.append(slug)
+
+    # The live-text fetches are the only network work and they are independent,
+    # so they go out together: a batch costs about one round-trip, not N.
+    fresh = _live_markdowns(found, _headers())
+
+    store.log_activity("ai", "read")     # once per batch: reads shouldn't spam the feed
+    out = {"wiki": wiki,
+           "pages": {slug: _page_view(wiki, page, *fresh[slug])
+                     for slug, page in found.items()},
+           "missing": missing}
+    if dropped:
+        out["dropped"] = dropped
+        out["hint"] = (f"{len(dropped)} slug(s) past the {READ_PAGES_MAX}-page cap "
+                       "were not read — they are listed in `dropped`. Call "
+                       "read_pages again with those if you still need them.")
     return out
 
 

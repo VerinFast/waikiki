@@ -110,3 +110,42 @@ def wiki(tmp_path, monkeypatch):
         yield
     finally:
         db.current_wiki.reset(token)
+
+
+@pytest.fixture
+def fake_live_http(monkeypatch):
+    """Stand in for the web app that MCP page reads fetch live CRDT text from.
+
+    ``get_page`` / ``read_pages`` pull unsaved live text over one shared
+    ``httpx.Client``; patching that one seam keeps the suite off whatever dev
+    server happens to be listening on the default port — without it a test reads
+    a *different* database and reports a spurious ``live`` — and lets a test say
+    what the live text is.
+
+    Call the fixture with ``on_get(url) -> response`` for a room with unsaved
+    text, or with no argument for "the web app isn't there".
+    """
+    from waikiki import mcp_server
+
+    def install(on_get=None):
+        def offline(url):
+            raise RuntimeError("offline: tests never call the real web app")
+
+        handler = on_get or offline
+
+        class _Client:
+            def __init__(self, **kw):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def get(self, url, **kw):
+                return handler(url)
+
+        monkeypatch.setattr(mcp_server.httpx, "Client", _Client)
+
+    return install

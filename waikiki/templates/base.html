@@ -891,9 +891,22 @@
     (function () {
       var menu = null;
 
+      // Dismissal requires a NEW gesture. A ctrl-click is a left click, so the
+      // gesture that opens the menu also fires mouseup/click — and that click
+      // lands in a LATER task, so deferring the listener by a tick is not enough
+      // (a synchronous test will pass and the real gesture will still fail).
+      // Instead: only a fresh mousedown arms dismissal.
+      var armed = false;
+      function arm() { armed = true; }
+      function onDocClick(e) {
+        if (!armed || !menu) return;
+        if (!menu.contains(e.target)) close();
+      }
       function close() {
         if (menu) { menu.remove(); menu = null; }
-        document.removeEventListener('click', close);
+        armed = false;
+        document.removeEventListener('mousedown', arm, true);
+        document.removeEventListener('click', onDocClick, true);
         document.removeEventListener('keydown', onKey);
         document.removeEventListener('scroll', close, true);
       }
@@ -957,13 +970,11 @@
         menu.style.top = Math.min(e.clientY, window.innerHeight - 140) + 'px';
         document.body.appendChild(menu);
 
-        // A ctrl-click is a LEFT click, so this same gesture also fires `click`
-        // on mouse-up. Listening immediately meant the menu was destroyed by the
-        // gesture that created it — it only appeared while the button was held.
-        // Defer to the next tick so we catch the *next* click instead.
+        armed = false;
         setTimeout(function () {
           if (!menu) return;
-          document.addEventListener('click', close);
+          document.addEventListener('mousedown', arm, true);
+          document.addEventListener('click', onDocClick, true);
           document.addEventListener('keydown', onKey);
           document.addEventListener('scroll', close, true);
         }, 0);

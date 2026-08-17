@@ -92,6 +92,31 @@ def test_mcp_list_pages_schema_accepts_every_shape(wiki, monkeypatch):
     assert out["branch"] == out["false"] | {"igni"}
 
 
+def test_link_following_is_asked_for_in_the_prompt_surface():
+    """Agents follow links when something asks them to, and the asking lives in
+    prompt text a refactor can silently drop (issue #47). Assert on what the
+    client is actually served: the server instructions, which land before the
+    first tool call, and get_page's description, which lands at it."""
+    async def descriptions():
+        return {t.name: t.description or "" for t in await mcp_server.mcp.list_tools()}
+
+    served = anyio.run(descriptions)
+    instructions = mcp_server.mcp.instructions
+
+    for text in (instructions, served["get_page"]):
+        low = text.lower()
+        assert "links" in low
+        # Concrete about the moment, like the staleness guidance next to it —
+        # not a general plea to be thorough.
+        assert "before you write" in low and "edit" in low
+        # ...and concrete about the move: fetch the linked page.
+        assert "read the linked page" in low or "get_page on that" in low
+
+    # The staleness nudge this one is modelled on must still be there too: the
+    # two are the same lesson (the page in your transcript isn't the whole truth).
+    assert "check_pages" in instructions
+
+
 def test_mcp_docs_tools(wiki):
     help_content.seed()
     slugs = [d["slug"] for d in mcp_server.list_docs()["docs"]]

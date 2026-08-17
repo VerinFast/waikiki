@@ -261,6 +261,31 @@
 
   <section class="settings">
     <details class="settings-sec">
+      <summary>Doorman <span class="muted">(optional)</span></summary>
+      <form method="post" action="/settings/doorman" class="settings">
+        <label class="rag-toggle">
+          <input type="checkbox" name="enabled" value="1"
+                 {{ 'checked' if doorman.enabled }}>
+          Use Doorman when it is running
+        </label>
+        <button class="btn primary" type="submit">Save</button>
+      </form>
+      {% if doorman.running %}
+        <p class="muted">Detected at <code>{{ doorman.url }}</code>{% if doorman.version %}
+          (version {{ doorman.version }}){% endif %}.
+          {% if doorman.voices %}Better voices are available for Listen and
+          “Say this word”.{% endif %}</p>
+      {% else %}
+        <p class="muted">Not running. Everything works without it — this only
+          adds nicer speech when Doorman happens to be open.</p>
+      {% endif %}
+      <p class="muted note">Doorman is a separate app. Waikiki never starts or
+        installs it, and every feature here works without it.</p>
+    </details>
+  </section>
+
+  <section class="settings">
+    <details class="settings-sec">
       <summary>Updates <span class="muted">(version {{ update.current }})</span></summary>
       {% if update.updatable %}
         <form method="post" action="/settings/updates" class="settings">

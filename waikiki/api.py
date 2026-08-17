@@ -22,7 +22,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from . import (accesslog, ai, appconfig, auth, authoring, backups, bonjour, chat,
-               collab,
+               collab, doorman,
                config, db, debuglog, deeplink, edits, elements, embeddings,
                help_content, imagegen, pdfgen, rag, render, store, structure,
                tunnel, updater, wikis)
@@ -642,6 +642,36 @@ class DraftIn(BaseModel):
     provider: str | None = None
 
 
+@app.get("/api/voice/status")
+def voice_status():
+    """Whether nicer speech is available right now.
+
+    The page asks once and falls back to the browser's own voice otherwise, so a
+    machine without Doorman behaves exactly as it did before.
+    """
+    return doorman.status()
+
+
+class SpeakIn(BaseModel):
+    text: str = ""
+    voice: str = ""
+
+
+@app.post("/api/voice/speak")
+async def voice_speak(body: SpeakIn):
+    """Synthesise through Doorman when it is running.
+
+    404 means "not available" rather than an error: the caller is expected to
+    use speechSynthesis instead, and a reader should never see a failure for
+    what is only a better-sounding option.
+    """
+    import anyio
+    wav = await anyio.to_thread.run_sync(lambda: doorman.speak(body.text, body.voice))
+    if not wav:
+        raise HTTPException(404, "no external voice available")
+    return Response(content=wav, media_type="audio/wav")
+
+
 @app.post("/api/draft")
 async def api_draft(body: DraftIn):
     """Draft a template or element from a description.
@@ -1220,6 +1250,7 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
              backup_list=backups.list_backups()[:10],
              backup_dir=str(config.DATA_DIR / "backups"),
              update=updater.status(),
+             doorman=doorman.status(),
              msg=msg, error=error),
     )
 
@@ -1271,6 +1302,18 @@ def backups_save(enabled: str = Form(""), keep: str = Form("7"),
     except ValueError:
         pass
     return RedirectResponse("/settings?msg=Backup+settings+saved", status_code=303)
+
+
+@app.post("/settings/doorman")
+def doorman_save(enabled: str = Form("")):
+    """Turn the Doorman integration on or off.
+
+    Declinable even when Doorman is running: it is the user's other app, and
+    wanting it running without wanting Waikiki to reach into it is reasonable.
+    """
+    store.set_setting("doorman_enabled", "1" if enabled else "0")
+    doorman.info(force=True)          # reflect the change immediately
+    return RedirectResponse("/settings?msg=Saved", status_code=303)
 
 
 @app.post("/settings/updates")

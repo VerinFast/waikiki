@@ -194,6 +194,16 @@ since the swap restarts the app. Cutting a signed release is
 `./scripts/release.sh v0.14.0` — see **[docs/updates.md](docs/updates.md)** for
 the trust model, key handling, and failure modes.
 
+### Doorman (optional)
+
+If you also run [Doorman](https://github.com/VerinFast/doorman), Waikiki will
+notice and use its much better speech for **Listen** and *"Say this word"*.
+
+It is optional in every direction: Waikiki never starts or installs Doorman,
+everything works identically without it, and you can decline the integration even
+while Doorman is running (**Settings → Doorman**). See
+**[docs/doorman.md](docs/doorman.md)**.
+
 ### Deep links
 
 `waikiki://` URLs open the app at a specific place, and survive the app picking a

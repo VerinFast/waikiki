@@ -365,12 +365,54 @@
       }
       function stop() {
         if (supported) window.speechSynthesis.cancel();
+        if (audio) { try { audio.pause(); } catch (e) {} audio = null; }
         reset(current); current = null;
       }
+      // Nicer voices, when something local offers them (Doorman). Asked once;
+      // a machine without it behaves exactly as before. Never a hard dependency
+      // — this is a better-sounding path, not a required one.
+      var external = null;          // null = unknown, false = no, true = yes
+      var audio = null;
+      fetch('/api/voice/status').then(function (r) { return r.json(); })
+        .then(function (s) { external = !!(s && s.running); })
+        .catch(function () { external = false; });
+
+      function speakExternal(text, btn) {
+        return fetch('/api/voice/speak', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text })
+        }).then(function (r) {
+          if (!r.ok) throw new Error('unavailable');
+          return r.blob();
+        }).then(function (blob) {
+          audio = new Audio(URL.createObjectURL(blob));
+          if (btn) {
+            current = btn;
+            btn.dataset.label = btn.textContent;
+            btn.textContent = '\u23f9';
+            btn.classList.add('speaking');
+          }
+          audio.onended = audio.onerror = function () {
+            if (current === btn) { reset(btn); current = null; }
+            audio = null;
+          };
+          return audio.play();
+        });
+      }
+
       function speak(text, btn) {
         if (!supported || !(text || '').trim()) return false;
         if (btn && current === btn) { stop(); return true; }   // toggle off
         stop();
+        if (external) {
+          // Fall back to the built-in voice on any hiccup, silently.
+          speakExternal(text, btn).catch(function () { speakBuiltin(text, btn); });
+          return true;
+        }
+        return speakBuiltin(text, btn);
+      }
+
+      function speakBuiltin(text, btn) {
         var u = new SpeechSynthesisUtterance(text);
         u.onend = u.onerror = function () {
           if (current === btn) { reset(btn); current = null; }

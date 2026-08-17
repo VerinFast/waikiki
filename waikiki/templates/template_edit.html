@@ -33,6 +33,22 @@
                 style="width:100%;font-family:var(--mono)"
                 placeholder="# {{ '{{title}}' }}&#10;&#10;…">{{ tpl.markdown }}</textarea>
     </label>
+    <label>Metadata schema <span class="muted">(optional)</span>
+      <textarea name="meta_schema" rows="6"
+                style="width:100%;font-family:var(--mono)"
+                placeholder="hp: str&#10;blade*: int&#10;role: player | npc&#10;born: date">{{ tpl.meta_schema }}</textarea>
+    </label>
+    <p class="muted note">
+      One property per line — <code>name: type</code>, with <code>*</code> after
+      the name for required (the same marker custom elements use). Types:
+      <code>str</code>, <code>int</code>, <code>float</code>, <code>bool</code>,
+      <code>date</code>, <code>list[str]</code>, or a choice like
+      <code>player | npc</code>. Pages made from this template are stamped with
+      <code>template: {{ tpl.name or 'Name' }}</code> and checked against it on
+      their Metadata tab. Checking <strong>never blocks a save</strong> and never
+      rewrites a value — a mismatch is reported, not corrected, and pages made
+      before you wrote this schema are untouched.
+    </p>
     <p class="muted note">
       Templates accept <strong>arbitrary HTML</strong> alongside Markdown — paste
       custom layouts, <code>&lt;details&gt;</code>, tables, iframes, etc. — and it

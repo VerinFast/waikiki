@@ -18,6 +18,9 @@ two in parity (same substance, different voice) whenever you change either.
   FTS5, sqlite-vec load, apsw/stdlib backend shim, low-level settings SQL.
 - `waikiki/mcp_server.py` — FastMCP tool surface; shares `store`/`rag` with the API.
 - `waikiki/collab.py` — CRDT rooms + the debounced snapshot flusher.
+- `waikiki/metaschema.py` — the metadata declaration a template may carry
+  (`name[*]: type`) compiled to `pydantic` checks. Pure, sits below `store`; it
+  **reports**, it never blocks a write or rewrites a value (issue #28).
 - `waikiki/ydoc.py` — **canonical Y.Doc persistence** + the wiki-interchange
   produce/consume round-trip. Sits below `store`, like `rag`.
 - `waikiki/vendor/wiki_interchange/` — vendored, version-pinned interchange

@@ -532,14 +532,22 @@ def list_templates() -> dict:
 
 
 @mcp.tool
-def create_template(name: str, markdown: str) -> dict:
+def create_template(name: str, markdown: str, meta_schema: str = "") -> dict:
     """Create (or update) a page template in the active wiki. Put {{title}} where
     the page title should go — new pages made from it fill that in. Frontmatter is
     fine (e.g. a Character template with HitPoints / Class properties), and the
     body may contain arbitrary HTML in addition to Markdown — it renders (raw HTML
-    is on by default; can be turned off per wiki in Settings → Content)."""
+    is on by default; can be turned off per wiki in Settings → Content).
+
+    `meta_schema` optionally declares the shape of that frontmatter, one property
+    per line — `name: type`, `*` after the name for required, e.g.
+    "hp: str\\nblade*: int\\nrole: player | npc\\nborn: date". Types: str, int,
+    float, bool, date, list[str], or a choice list. Pages made from the template
+    are stamped `template: <name>` and checked against it; a mismatch is reported
+    by get_metadata/set_metadata and never blocks a write. Omit it to leave an
+    existing template's schema alone."""
     wiki = _require_wiki()
-    store.template_save(name, markdown)
+    store.template_save(name, markdown, meta_schema=(meta_schema or None))
     return {"wiki": wiki, "template": name}
 
 
@@ -783,7 +791,12 @@ def get_metadata(slug: str) -> dict:
 
     Use this to DISCOVER what a page records — get_property needs a key you
     already know, this returns them all — and to check freshness (`updated_at`)
-    or whether the page is in the bin (`trashed`) before acting on it."""
+    or whether the page is in the bin (`trashed`) before acting on it.
+
+    `schema` reports the page against the template it came from: `fields` is what
+    that template expects, `errors` lists properties that do not match, and
+    `values` gives them coerced (an int field as an int). `ok` with no fields
+    means nothing constrains this page."""
     wiki = _require_wiki()
     meta = store.page_metadata(slug)
     if meta is None:
@@ -799,7 +812,12 @@ def set_metadata(slug: str, properties: dict) -> dict:
     One rewrite and one history entry for the whole batch, unlike calling
     set_property repeatedly. A null value removes that property. Properties are
     frontmatter, so they can be referenced from any page as {{Key}} (same page)
-    or {{Slug.Key}} (cross-page)."""
+    or {{Slug.Key}} (cross-page).
+
+    The write always lands. If the page came from a template that declares a
+    metadata schema, the returned `schema` says whether what you wrote matches it
+    — check `schema.errors` and fix your value rather than assuming it was
+    accepted as the type the template expects."""
     wiki = _require_wiki()
     if not isinstance(properties, dict) or not properties:
         return {"wiki": wiki, "error": "properties must be a non-empty object"}
@@ -808,7 +826,7 @@ def set_metadata(slug: str, properties: dict) -> dict:
         return {"wiki": wiki, "error": f"no page '{slug}' in {wiki}"}
     meta = store.page_metadata(slug) or {}
     return {"wiki": wiki, "slug": slug, "properties": meta.get("properties", {}),
-            "updated_at": meta.get("updated_at")}
+            "schema": meta.get("schema"), "updated_at": meta.get("updated_at")}
 
 
 @mcp.tool

@@ -251,10 +251,17 @@
     // plenty of people and materially easier for a dyslexic writer, so this is
     // an accessibility feature, not a convenience.
     //
-    // Web Speech is not guaranteed in WKWebView, which is Waikiki's real home,
-    // so `supported` is checked before any button is offered — a dead mic is
-    // worse than none. Text is appended to the field and never auto-submitted:
-    // a misrecognition must be fixable before it is sent.
+    // MEASURED, 0.17.0: the packaged app's WKWebView reports
+    //   speechSynthesis: true, SpeechRecognition: false,
+    //   webkitSpeechRecognition: false, getUserMedia: false
+    // so dictation does NOT work in the desktop app — only in a browser. It
+    // degrades to typing there (no mic is rendered), and speaking a page aloud
+    // is unaffected because synthesis is present. Getting dictation into the app
+    // needs the native side; see issue #37 (Doorman already has voicebox.py).
+    // Don't re-attempt this in the webview without re-measuring.
+    //
+    // Text is appended to the field and never auto-submitted: a misrecognition
+    // must be fixable before it is sent.
     window.wkDictate = (function () {
       var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
       var supported = !!Rec;

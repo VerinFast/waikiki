@@ -23,8 +23,8 @@ from pydantic import BaseModel
 
 from . import (accesslog, ai, appconfig, auth, backups, bonjour, chat, collab,
                config, db, debuglog, deeplink, edits, elements, embeddings,
-               help_content, imagegen, pdfgen, rag, render, store, tunnel,
-               updater, wikis)
+               help_content, imagegen, pdfgen, rag, render, store, structure,
+               tunnel, updater, wikis)
 
 
 @asynccontextmanager
@@ -805,6 +805,59 @@ def view_page(request: Request, slug: str):
                           tags=store.tags_of(slug),
                           comment_count=len(store.comments_list(slug)))
     )
+
+
+@app.get("/wiki/{slug}/metadata", response_class=HTMLResponse)
+def metadata_view(request: Request, slug: str, msg: str = "", error: str = ""):
+    """The page's frontmatter properties and tags, as a peer of Article.
+
+    This is where the automatic key/value table used to be prepended to the
+    article body. Custom elements the author placed in the body stay there.
+    """
+    page = store.get_page(slug)
+    if not page:
+        raise HTTPException(404, "Page not found")
+    meta, _tags, _body = structure.parse_frontmatter(page["markdown"])
+    return templates.TemplateResponse(request,
+        "metadata.html", _ctx(request, page=page,
+                          trashed=bool(page.get("deleted_at")),
+                          properties=meta, tags=store.tags_of(slug),
+                          parent=store.parent_of(page),
+                          crumbs=store.ancestors(page),
+                          comment_count=len(store.comments_list(slug)),
+                          msg=msg, error=error))
+
+
+@app.post("/wiki/{slug}/metadata")
+async def metadata_save(request: Request, slug: str):
+    """Replace the page's properties with exactly what the form submitted.
+
+    Keys and values arrive as parallel lists so a rename is just an edited key,
+    and order is whatever the form shows. `tags` is refused: tags live in the
+    same block but are their own concept, and accepting one here would create a
+    second, competing source for them.
+    """
+    form = await request.form()
+    keys = [str(k).strip() for k in form.getlist("key")]
+    values = [str(v) for v in form.getlist("value")]
+    props: dict[str, str] = {}
+    rejected = []
+    for key, value in zip(keys, values):
+        if not key:
+            continue                       # a blank key is a deleted row
+        if key.replace(" ", "").lower() == "tags":
+            rejected.append(key)
+            continue
+        props[key] = value.strip()
+    if store.replace_properties(slug, props, author="human") is None:
+        raise HTTPException(404, "Page not found")
+    if rejected:
+        return RedirectResponse(
+            f"/wiki/{quote(slug)}/metadata?error="
+            + quote("'tags' is managed separately — use the tag controls"),
+            status_code=303)
+    return RedirectResponse(f"/wiki/{quote(slug)}/metadata?msg=Saved",
+                            status_code=303)
 
 
 @app.get("/wiki/{slug}/details", response_class=HTMLResponse)

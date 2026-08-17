@@ -465,3 +465,18 @@ mark.wk-hit.on{background:var(--accent);color:var(--accent-contrast)}
   min-height:1.2rem;opacity:0;transition:opacity .12s}
 .rendered:hover .lead-tools,.lead-tools:focus-within{opacity:1}
 .lead-tools .section-edit{position:static;margin:0}
+
+/* --- Metadata tab ----------------------------------------------------------- */
+.metatable{width:100%;border-collapse:collapse;margin:.8rem 0}
+.metatable th{text-align:left;font-size:.78rem;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--muted);padding:.3rem .4rem}
+.metatable td{padding:.2rem .4rem;border-top:1px solid var(--border)}
+.metatable input{width:100%;padding:.35rem .5rem;border:1px solid var(--border);
+  border-radius:7px;background:var(--bg);color:var(--text)}
+.metatable td:first-child{width:32%}
+.metatable td:last-child{width:2.4rem}
+.metadel{border:1px solid transparent;background:none;color:var(--muted);
+  cursor:pointer;border-radius:6px;padding:.2rem .4rem;line-height:1}
+.metadel:hover{border-color:var(--border);color:var(--accent)}
+.metaactions{display:flex;gap:.6rem;align-items:center;margin:.6rem 0}
+.metatags{margin-top:1.6rem}

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Metadata: {{ page.title }} — Waikiki{% endblock %}
+{% block topbar_actions %}{% if not trashed %}{% include "_page_options.html" %}{% endif %}{% endblock %}
+{% block content %}
+  <article class="article">
+    {% if crumbs %}
+      <nav class="crumbs" aria-label="Breadcrumb">
+        {% for c in crumbs %}
+          <a href="/wiki/{{ c.slug }}">{{ c.title }}</a>
+          <span class="crumb-sep" aria-hidden="true">›</span>
+        {% endfor %}
+        <a href="/wiki/{{ page.slug }}">{{ page.title }}</a>
+        <span class="crumb-sep" aria-hidden="true">›</span>
+        <span class="crumb-here">Metadata</span>
+      </nav>
+    {% endif %}
+
+    <div class="article-head">
+      <h1>{{ page.title }} <span class="muted">— Metadata</span></h1>
+    </div>
+
+    <nav class="pagetabs">
+      <a class="tab" href="/wiki/{{ page.slug }}">Article</a>
+      <a class="tab on" href="/wiki/{{ page.slug }}/metadata">Metadata</a>
+      <a class="tab" href="/wiki/{{ page.slug }}/details">Details{% if comment_count %} <span class="tabcount">{{ comment_count }}</span>{% endif %}</a>
+    </nav>
+
+    {% if msg %}<p class="flash ok">{{ msg }}</p>{% endif %}
+    {% if error %}<p class="flash err">{{ error }}</p>{% endif %}
+
+    <form method="post" action="/wiki/{{ page.slug }}/metadata" class="metaform" id="metaform">
+      <table class="metatable">
+        <thead><tr><th>Property</th><th>Value</th><th aria-label="Remove"></th></tr></thead>
+        <tbody id="metarows">
+          {% for k, v in properties.items() %}
+            <tr>
+              <td><input type="text" name="key" value="{{ k }}" autocomplete="off"></td>
+              <td><input type="text" name="value" value="{{ v }}" autocomplete="off"></td>
+              <td><button type="button" class="metadel" title="Remove this property"
+                          onclick="wkMetaRemove(this)">✕</button></td>
+            </tr>
+          {% else %}
+            <tr class="metaempty"><td colspan="3" class="muted">
+              No properties yet. Add one below.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="metaactions">
+        <button type="button" class="btn" onclick="wkMetaAdd()">+ Add property</button>
+        <button type="submit" class="btn primary">Save metadata</button>
+      </div>
+      <p class="muted note">Values are free text and are stored exactly as typed —
+        <code>20 / 100</code> stays <code>20 / 100</code>. Clearing a property's
+        name removes it.</p>
+    </form>
+
+    <section class="metatags">
+      <h2>Tags</h2>
+      {% if tags %}
+        <p class="taglist">
+          {% for t in tags %}<a class="tagchip" href="/tags/{{ t }}">{{ t }}</a>{% endfor %}
+        </p>
+      {% else %}
+        <p class="muted">No tags.</p>
+      {% endif %}
+      <p class="muted note">Tags live in the same frontmatter block but are their
+        own thing — they drive the index pages and search. They aren't editable
+        here yet; for now, edit the <code>tags:</code> line on the
+        <a href="/wiki/{{ page.slug }}/edit">page itself</a>.</p>
+    </section>
+  </article>
+
+  <script>
+    // Rows are plain paired inputs, so a rename is just an edited key and the
+    // submitted order is the stored order.
+    function wkMetaAdd() {
+      var body = document.getElementById('metarows');
+      var blank = body.querySelector('.metaempty');
+      if (blank) blank.remove();
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td><input type="text" name="key" autocomplete="off"></td>' +
+                     '<td><input type="text" name="value" autocomplete="off"></td>' +
+                     '<td><button type="button" class="metadel" title="Remove this property"' +
+                     ' onclick="wkMetaRemove(this)">✕</button></td>';
+      body.appendChild(tr);
+      tr.querySelector('input').focus();
+    }
+    function wkMetaRemove(btn) {
+      var tr = btn.closest('tr');
+      if (tr) tr.remove();     // gone from the form means gone on save
+    }
+  </script>
+{% endblock %}

@@ -54,10 +54,18 @@ def test_tags_indexed_and_queryable(wiki):
     assert {p["slug"] for p in store.pages_with_tag("character")} == {"ansel", "bram"}
 
 
-def test_frontmatter_renders_infobox(wiki):
+def test_frontmatter_is_not_dumped_into_the_article(wiki):
+    """Properties belong on the Metadata tab, not prepended to every page.
+
+    This used to render an automatic key/value table above the body. Custom
+    elements an author places in the body are a different thing and still
+    render — see test_elements.py.
+    """
     p = store.create_page("Sheet", "---\nRole: Mage\n---\n# Sheet\nbody")
-    assert 'class="infobox"' in p["html"] and "Mage" in p["html"]
-    assert "Role:" not in p["html"].split("<h1")[0] or "infobox" in p["html"]
+    assert 'class="infobox"' not in p["html"]
+    assert "Mage" not in p["html"]
+    # ...but the property is still parsed and available.
+    assert store.get_property("sheet", "Role") == "Mage"
 
 
 def test_property_interpolation(wiki):

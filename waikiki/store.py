@@ -500,7 +500,11 @@ def render_html(markdown: str) -> str:
     if slots:
         html, used = elements.fill(html, slots)
         html += elements.defs_script(used)
-    return render.infobox(meta) + html
+    # The frontmatter table is NOT prepended here any more — it lives on the
+    # page's Metadata tab. Custom elements authored in the body (infoboxes,
+    # stat blocks) are untouched: those are deliberate content, this was an
+    # automatic dump of every key.
+    return html
 
 
 def get_property(slug: str, key: str) -> Optional[str]:
@@ -516,7 +520,7 @@ def set_property(slug: str, key: str, value: str) -> Optional[dict]:
     return set_properties(slug, {key: value})
 
 
-def set_properties(slug: str, props: dict) -> Optional[dict]:
+def set_properties(slug: str, props: dict, author: str = "ai") -> Optional[dict]:
     """Set several frontmatter properties in ONE rewrite.
 
     Setting them one at a time re-parses, re-renders and re-indexes the page per
@@ -541,7 +545,30 @@ def set_properties(slug: str, props: dict) -> Optional[dict]:
     if tags:
         lines.insert(0, "tags: " + ", ".join(tags))
     fm = ("---\n" + "\n".join(lines) + "\n---\n") if lines else ""
-    return update_page(slug, page["title"], fm + body.lstrip("\n"), author="ai")
+    return update_page(slug, page["title"], fm + body.lstrip("\n"), author=author)
+
+
+def replace_properties(slug: str, props: dict,
+                       author: str = "human") -> Optional[dict]:
+    """Replace a page's frontmatter properties wholesale, in the order given.
+
+    `set_properties` merges, which cannot express a removal or a rename from a
+    form that submits the whole set. This writes exactly `props`, so the editor's
+    view is the truth.
+
+    Tags are untouched: they live in the same block but are their own concept,
+    and a `tags` key here would produce two competing sources. The caller is
+    expected to have filtered it out.
+    """
+    page = get_page(slug)
+    if not page:
+        return None
+    _meta, tags, body = structure.parse_frontmatter(page["markdown"])
+    lines = [f"{k}: {v}" for k, v in (props or {}).items()]
+    if tags:
+        lines.insert(0, "tags: " + ", ".join(tags))
+    fm = ("---\n" + "\n".join(lines) + "\n---\n") if lines else ""
+    return update_page(slug, page["title"], fm + body.lstrip("\n"), author=author)
 
 
 def content_version(markdown: str) -> str:

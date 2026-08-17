@@ -28,6 +28,17 @@
     <button type="button" id="wk-find-next" title="Next (Enter)">↓</button>
     <button type="button" id="wk-find-close" title="Close (Esc)">✕</button>
   </div>
+  {# Jump to article (⌘J): a page finder scoped to the active wiki. Distinct
+     from ⌘F, which searches within the page, and from the top-bar search,
+     which searches page *content*. This matches titles and goes straight there. #}
+  <div class="jump" id="wk-jump" hidden>
+    <div class="jump-box" role="dialog" aria-modal="true" aria-label="Jump to article">
+      <input type="text" id="wk-jump-input" placeholder="Jump to article&#8230;"
+             autocomplete="off" spellcheck="false" aria-label="Jump to article">
+      <ul class="jump-list" id="wk-jump-list" role="listbox"></ul>
+      <p class="jump-hint muted">&#8593;&#8595; to choose &middot; &crarr; to open &middot; esc to close</p>
+    </div>
+  </div>
   {# Order is deliberate: identity (logo, wiki), navigation (history, search),
      then actions from most to least frequent, ending in Help. #}
   {# Chat. A launcher rather than a section on the Details page: the question is
@@ -234,6 +245,98 @@
       if (text) _copyText(text);
       return !!text;
     };
+    // --- Jump to article (Cmd+J) -------------------------------------------
+    // Titles only, and it navigates rather than searching: Cmd+F is within the
+    // page and the top-bar search is over content. Scoped to the active wiki.
+    window.wkJump = (function () {
+      var wrap, input, list, pages = null, items = [], at = 0;
+      function els() {
+        wrap = wrap || document.getElementById('wk-jump');
+        input = input || document.getElementById('wk-jump-input');
+        list = list || document.getElementById('wk-jump-list');
+        return wrap && input && list;
+      }
+      // Subsequence match, scored so tighter and earlier matches win. Cheap
+      // enough for a few thousand titles on every keystroke.
+      function score(title, q) {
+        if (!q) return 0;
+        var t = title.toLowerCase(), i = 0, s = 0, last = -1;
+        for (var c = 0; c < q.length; c++) {
+          i = t.indexOf(q[c], i);
+          if (i < 0) return -1;
+          s += (last >= 0 && i === last + 1) ? 3 : 1;   // contiguous runs score higher
+          if (i === 0) s += 2;                           // matches at the start
+          last = i; i++;
+        }
+        return s - t.length * 0.01;                      // prefer shorter titles
+      }
+      function render(q) {
+        var scored = [];
+        (pages || []).forEach(function (p) {
+          var sc = q ? score(p.title, q) : 0;
+          if (sc >= 0) scored.push([sc, p]);
+        });
+        if (q) scored.sort(function (a, b) { return b[0] - a[0]; });
+        items = scored.slice(0, 30).map(function (x) { return x[1]; });
+        at = 0;
+        list.innerHTML = '';
+        if (!items.length) {
+          var li = document.createElement('li');
+          li.className = 'jump-empty muted';
+          li.textContent = pages ? 'No matching article' : 'Loading\u2026';
+          list.appendChild(li);
+          return;
+        }
+        items.forEach(function (p, i) {
+          var li = document.createElement('li');
+          li.className = 'jump-item' + (i === 0 ? ' on' : '');
+          li.setAttribute('role', 'option');
+          li.textContent = p.title;
+          li.addEventListener('click', function () { go(p); });
+          list.appendChild(li);
+        });
+      }
+      function mark() {
+        [].forEach.call(list.children, function (li, i) {
+          li.classList.toggle('on', i === at);
+          if (i === at && li.scrollIntoView) li.scrollIntoView({ block: 'nearest' });
+        });
+      }
+      function go(p) { close(); window.location.href = '/wiki/' + p.slug; }
+      function open() {
+        if (!els()) return;
+        wrap.hidden = false;
+        input.value = ''; input.focus();
+        render('');
+        if (pages === null) {
+          // Children too: the sidebar hides them, but they are still articles.
+          fetch('/api/pages?children=1')
+            .then(function (r) { return r.json(); })
+            .then(function (data) { pages = data || []; render(input.value.trim().toLowerCase()); })
+            .catch(function () { pages = []; render(''); });
+        }
+      }
+      function close() { if (els()) wrap.hidden = true; }
+      function init() {
+        if (!els()) return;
+        input.addEventListener('input', function () {
+          render(input.value.trim().toLowerCase());
+        });
+        input.addEventListener('keydown', function (e) {
+          if (e.key === 'ArrowDown') { e.preventDefault(); at = Math.min(at + 1, items.length - 1); mark(); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); at = Math.max(at - 1, 0); mark(); }
+          else if (e.key === 'Enter') { e.preventDefault(); if (items[at]) go(items[at]); }
+          else if (e.key === 'Escape') { e.preventDefault(); close(); }
+        });
+        wrap.addEventListener('click', function (e) {
+          if (e.target === wrap) close();      // click the backdrop
+        });
+      }
+      if (document.readyState !== 'loading') init();
+      else document.addEventListener('DOMContentLoaded', init);
+      return { open: open, close: close };
+    })();
+
     // --- Chat launcher -----------------------------------------------------
     // Page-scoped where a page is in context, wiki-scoped otherwise. No
     // retrieval is done for the wiki-scoped case on purpose: the agent should
@@ -580,6 +683,7 @@
       else if (k === 'v') { if (_isEditable(document.activeElement) && window.wkPaste()) e.preventDefault(); }
       else if (k === 'a' && !_isEditable(document.activeElement)) { window.wkSelectAll(); e.preventDefault(); }
       else if (k === 'f' && window.wkFind) { e.preventDefault(); window.wkFind.open(); }
+      else if (k === 'j' && window.wkJump) { e.preventDefault(); window.wkJump.open(); }
       else if (k === 'g' && window.wkFind) {   // Cmd+G / Cmd+Shift+G, macOS habit
         e.preventDefault();
         window.wkFind.open();

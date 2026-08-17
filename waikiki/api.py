@@ -822,6 +822,7 @@ def metadata_view(request: Request, slug: str, msg: str = "", error: str = ""):
         "metadata.html", _ctx(request, page=page,
                           trashed=bool(page.get("deleted_at")),
                           properties=meta, tags=store.tags_of(slug),
+                          all_tags=[t["tag"] for t in store.all_tags()],
                           parent=store.parent_of(page),
                           crumbs=store.ancestors(page),
                           comment_count=len(store.comments_list(slug)),
@@ -857,6 +858,22 @@ async def metadata_save(request: Request, slug: str):
             + quote("'tags' is managed separately — use the tag controls"),
             status_code=303)
     return RedirectResponse(f"/wiki/{quote(slug)}/metadata?msg=Saved",
+                            status_code=303)
+
+
+@app.post("/wiki/{slug}/tags")
+async def tags_save(request: Request, slug: str):
+    """Replace a page's tags from the Metadata tab.
+
+    Goes through the repository so the frontmatter is rewritten too — updating
+    only the index would leave the page's own text disagreeing with its tags,
+    and the next editor save would quietly revert it.
+    """
+    form = await request.form()
+    tags = [str(t) for t in form.getlist("tag")]
+    if store.set_tags(slug, tags, author="human") is None:
+        raise HTTPException(404, "Page not found")
+    return RedirectResponse(f"/wiki/{quote(slug)}/metadata?msg=Tags+saved",
                             status_code=303)
 
 
@@ -1398,8 +1415,11 @@ class PageIn(BaseModel):
 
 
 @app.get("/api/pages")
-def api_list_pages():
-    return store.list_pages()
+def api_list_pages(children: bool = False):
+    """Pages in the active wiki. `children=1` includes child pages, which the
+    sidebar hides but the jump-to-article palette needs — you should be able to
+    jump to any article, not just top-level ones."""
+    return store.list_pages(include_children=children)
 
 
 @app.post("/api/pages")

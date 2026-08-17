@@ -155,3 +155,68 @@ def test_wiki_scoped_prompt_has_no_article_and_no_excerpts(wiki):
     assert "# Article" not in prompt
     assert "Other relevant excerpts" not in prompt
     assert "'main' wiki" in prompt
+
+
+# --- Tag editing (#27) --------------------------------------------------------
+
+def test_tags_are_editable_from_the_metadata_tab(wiki):
+    store.create_page("Meru", "---\ntags: city\nRole: capital\n---\nbody")
+    with _client() as c:
+        c.post("/wiki/meru/tags", data={"tag": ["city", "spire"]},
+               follow_redirects=False)
+    assert store.tags_of("meru") == ["city", "spire"]
+
+
+def test_editing_tags_rewrites_the_frontmatter_not_just_the_index(wiki):
+    """The markdown is the source of truth.
+
+    Updating page_tags alone would leave the page's own text disagreeing with
+    its tags, and the next save from the editor would silently revert them.
+    """
+    store.create_page("Meru", "---\ntags: city\n---\nbody")
+    with _client() as c:
+        c.post("/wiki/meru/tags", data={"tag": ["spire"]}, follow_redirects=False)
+    assert "tags: spire" in store.get_page("meru")["markdown"]
+    assert "city" not in store.get_page("meru")["markdown"]
+
+
+def test_properties_survive_a_tag_edit(wiki):
+    store.create_page("Meru", "---\ntags: city\nRole: capital\nHP: 20 / 100\n---\nbody")
+    with _client() as c:
+        c.post("/wiki/meru/tags", data={"tag": ["spire"]}, follow_redirects=False)
+    assert store.get_property("meru", "Role") == "capital"
+    assert store.get_property("meru", "HP") == "20 / 100"
+
+
+def test_tags_are_normalised(wiki):
+    """Lowercased and de-duplicated, so 'Spire' and 'spire' don't diverge —
+    pages_with_tag looks up lowercase."""
+    store.create_page("Meru", "body")
+    with _client() as c:
+        c.post("/wiki/meru/tags", data={"tag": ["Spire", " spire ", "CITY"]},
+               follow_redirects=False)
+    assert store.tags_of("meru") == ["city", "spire"]
+
+
+def test_a_tag_cannot_smuggle_in_a_separator(wiki):
+    """','/';' separate tags on read, so they must not survive inside one."""
+    store.create_page("Meru", "body")
+    with _client() as c:
+        c.post("/wiki/meru/tags", data={"tag": ["a,b"]}, follow_redirects=False)
+    assert store.tags_of("meru") == ["a b"]
+
+
+def test_all_tags_are_removable(wiki):
+    store.create_page("Meru", "---\ntags: city\nRole: capital\n---\nbody")
+    with _client() as c:
+        c.post("/wiki/meru/tags", data={"tag": []}, follow_redirects=False)
+    assert store.tags_of("meru") == []
+    assert store.get_property("meru", "Role") == "capital", "properties were lost"
+
+
+def test_the_editor_offers_existing_tags(wiki):
+    store.create_page("Other", "---\ntags: spire, ruin\n---\nx")
+    store.create_page("Meru", "body")
+    with _client() as c:
+        body = c.get("/wiki/meru/metadata").text
+    assert 'id="alltags"' in body and "spire" in body and "ruin" in body

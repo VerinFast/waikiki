@@ -56,18 +56,77 @@
 
     <section class="metatags">
       <h2>Tags</h2>
-      {% if tags %}
-        <p class="taglist">
-          {% for t in tags %}<a class="tagchip" href="/tags/{{ t }}">{{ t }}</a>{% endfor %}
-        </p>
-      {% else %}
-        <p class="muted">No tags.</p>
-      {% endif %}
-      <p class="muted note">Tags live in the same frontmatter block but are their
-        own thing — they drive the index pages and search. They aren't editable
-        here yet; for now, edit the <code>tags:</code> line on the
-        <a href="/wiki/{{ page.slug }}/edit">page itself</a>.</p>
+      <form method="post" action="/wiki/{{ page.slug }}/tags" id="tagform">
+        <div class="tagedit" id="tagedit">
+          {% for t in tags %}
+            <span class="tagchip editable" data-tag="{{ t }}">{{ t }}
+              <input type="hidden" name="tag" value="{{ t }}">
+              <button type="button" class="tagx" title="Remove {{ t }}"
+                      onclick="wkTagRemove(this)" aria-label="Remove {{ t }}">✕</button>
+            </span>
+          {% endfor %}
+          <input type="text" id="tagnew" list="alltags" placeholder="Add a tag…"
+                 autocomplete="off" aria-label="Add a tag">
+          <datalist id="alltags">
+            {% for t in all_tags %}<option value="{{ t }}"></option>{% endfor %}
+          </datalist>
+        </div>
+        <div class="metaactions">
+          <button type="submit" class="btn primary">Save tags</button>
+        </div>
+      </form>
+      <p class="muted note">Tags drive the index pages and search. Typing offers
+        tags already used in this wiki, so related pages stay together rather
+        than drifting into near-duplicates.</p>
     </section>
+
+  <script>
+    // Tags are hidden inputs so the form submits exactly what is on screen.
+    function wkTagRemove(btn) {
+      var chip = btn.closest('.tagchip');
+      if (chip) chip.remove();
+    }
+    (function () {
+      var input = document.getElementById('tagnew');
+      var box = document.getElementById('tagedit');
+      if (!input || !box) return;
+      function add() {
+        var raw = (input.value || '').trim().toLowerCase();
+        input.value = '';
+        if (!raw) return;
+        // Split on the separators the frontmatter uses, so pasting "a, b" works.
+        raw.split(/[,;]/).forEach(function (t) {
+          var tag = t.trim().replace(/\s+/g, ' ');
+          if (!tag) return;
+          var existing = [].slice.call(box.querySelectorAll('.tagchip'))
+            .some(function (c) { return c.getAttribute('data-tag') === tag; });
+          if (existing) return;
+          var chip = document.createElement('span');
+          chip.className = 'tagchip editable';
+          chip.setAttribute('data-tag', tag);
+          chip.textContent = tag;
+          var hidden = document.createElement('input');
+          hidden.type = 'hidden'; hidden.name = 'tag'; hidden.value = tag;
+          var x = document.createElement('button');
+          x.type = 'button'; x.className = 'tagx'; x.textContent = '\u2715';
+          x.title = 'Remove ' + tag;
+          x.addEventListener('click', function () { chip.remove(); });
+          chip.appendChild(hidden); chip.appendChild(x);
+          box.insertBefore(chip, input);
+        });
+      }
+      input.addEventListener('keydown', function (e) {
+        // Enter adds a tag rather than submitting a half-typed one.
+        if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(); }
+        else if (e.key === 'Backspace' && !input.value) {
+          var chips = box.querySelectorAll('.tagchip');
+          if (chips.length) chips[chips.length - 1].remove();
+        }
+      });
+      input.addEventListener('blur', add);   // don't lose a typed-but-unadded tag
+    })();
+  </script>
+
   </article>
 
   <script>

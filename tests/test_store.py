@@ -99,6 +99,64 @@ def test_parent_pages_hidden_from_rail(wiki):
     assert store.get_page("child")["parent_id"] is not None
 
 
+def _branchy_wiki():
+    """Two parents with a child each, plus a childless top-level page."""
+    for title in ("Pantheon", "Villages", "Loner"):
+        store.create_page(title, "top")
+    store.create_page("Igni", "a god")
+    store.create_page("Hamlet", "a village")
+    store.set_parent("igni", "pantheon")
+    store.set_parent("hamlet", "villages")
+
+
+def test_list_pages_children_selects_one_branch(wiki):
+    """include_children takes parent slugs, not just a boolean (issue #45)."""
+    _branchy_wiki()
+    top = {p["slug"] for p in store.list_pages()}
+    assert top == {"pantheon", "villages", "loner"}          # rail unchanged
+    every = {p["slug"] for p in store.list_pages(include_children=True)}
+    assert every == top | {"igni", "hamlet"}
+    # One named branch: the pantheon's child appears, the villages' child does not.
+    branch = {p["slug"] for p in store.list_pages(include_children=["pantheon"])}
+    assert branch == top | {"igni"}
+    assert "hamlet" not in branch
+    # Both branches, and a title instead of a slug still resolves.
+    both = {p["slug"] for p in store.list_pages(include_children=["Pantheon", "villages"])}
+    assert both == top | {"igni", "hamlet"}
+    # A bare slug string is one parent, not a sequence of characters.
+    assert {p["slug"] for p in store.list_pages(include_children="pantheon")} == top | {"igni"}
+    # An unknown parent adds nothing and hides nothing.
+    assert {p["slug"] for p in store.list_pages(include_children=["nope"])} == top
+
+
+def test_list_pages_reports_parent_slug(wiki):
+    """A child row must be navigable: parent_id alone is meaningless (issue #45)."""
+    _branchy_wiki()
+    rows = {p["slug"]: p for p in store.list_pages(include_children=True)}
+    assert rows["igni"]["parent_slug"] == "pantheon"
+    assert rows["igni"]["parent_id"] == store.get_page("pantheon")["id"]
+    assert rows["pantheon"]["parent_slug"] is None            # top-level
+
+
+def test_count_child_pages(wiki):
+    _branchy_wiki()
+    assert store.count_child_pages() == 2
+    store.soft_delete("igni")
+    assert store.count_child_pages() == 1                     # trashed child not counted
+    assert store.count_child_pages(include_deleted=True) == 2
+
+
+def test_list_pages_children_respects_other_filters(wiki):
+    _branchy_wiki()
+    store.toggle_star("igni")
+    starred = [p["slug"] for p in store.list_pages(starred_only=True, include_children=True)]
+    assert starred == ["igni"]
+    titles = [p["title"] for p in store.list_pages(sort="title", include_children=["pantheon"])]
+    assert titles == ["Igni", "Loner", "Pantheon", "Villages"]
+    store.soft_delete("hamlet")
+    assert "hamlet" not in [p["slug"] for p in store.list_pages(include_children=True)]
+
+
 def test_child_excluded_from_main_search(wiki):
     from waikiki import rag
     store.create_page("Top", "unique aardvark content")

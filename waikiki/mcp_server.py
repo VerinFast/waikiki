@@ -243,10 +243,39 @@ def create_wiki(name: str) -> dict:
 # --- Pages (all scoped to the active wiki) ------------------------------------
 
 @mcp.tool
-def list_pages() -> dict:
-    """List pages in the active wiki."""
+def list_pages(children: bool | list[str] | None = False) -> dict:
+    """List pages in the active wiki.
+
+    Most wikis keep the bulk of their content in **sub-pages**, which are hidden
+    from the sidebar rail — and, by default, from this listing. So a page missing
+    here is NOT evidence that it doesn't exist: check `children_hidden` before
+    concluding anything is absent, and never create a page just because this
+    listing omitted it.
+
+    `children` picks how deep to look:
+      * omitted / `false` — top-level pages only (the default).
+      * `true` (or `null`) — every page, sub-pages included.
+      * `["the-pantheon", "villages"]` — top-level pages plus the direct children
+        of exactly those parents. Best on a big wiki when you want one branch.
+
+    Each row carries `parent_slug` (and the internal `parent_id`), so a child in
+    the results can be read straight away with get_page(slug). `children_hidden`
+    counts the child pages this call left out; parent slugs that don't exist come
+    back in `unknown_parents` rather than silently matching nothing."""
     wiki = _require_wiki()
-    return {"wiki": wiki, "pages": store.list_pages()}
+    want: bool | list[str] = True if children is None else children
+    pages = store.list_pages(include_children=want)
+    hidden = store.count_child_pages() - sum(1 for p in pages if p.get("parent_id"))
+    out = {"wiki": wiki, "pages": pages, "children_hidden": max(hidden, 0)}
+    if isinstance(want, list):
+        missing = [s for s in want if s and not store.get_page(render.slugify(s))]
+        if missing:
+            out["unknown_parents"] = missing
+    if out["children_hidden"]:
+        out["hint"] = (f"{out['children_hidden']} child page(s) are not listed. "
+                       "Pass children=true for the whole wiki, or "
+                       "children=[\"parent-slug\"] for one branch.")
+    return out
 
 
 @mcp.tool

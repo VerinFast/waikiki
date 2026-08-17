@@ -33,7 +33,7 @@ cryptography>=42.0
 xhtml2pdf>=0.2.17
 
 # --- AI streaming into the wiki ---
-anthropic>=0.120.2
+anthropic>=0.122.0
 
 # --- MCP server (Human/LLM collaboration) ---
 # Floor is 3.x deliberately: 2.x -> 3.x was a breaking change, and a `>=2.0`

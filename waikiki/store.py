@@ -18,9 +18,14 @@ from __future__ import annotations
 import re
 from typing import List, Optional, Sequence
 
-from . import db, edits, elements, rag, render, structure, ydoc
+from . import db, edits, elements, metaschema, rag, render, structure, ydoc
 
 _INCLUDE = re.compile(r"!\[\[([^\]]+?)\]\]")   # ![[Page]] / ![[Page#Section]] transclusion
+
+# The frontmatter property that binds a page to the template whose metadata
+# schema describes it. Like `tags`, it lives in the same block but is its own
+# concept; see `apply_template` and `check_metadata`.
+TEMPLATE_KEY = "template"
 
 
 # --- Pages --------------------------------------------------------------------
@@ -653,6 +658,43 @@ def content_version(markdown: str) -> str:
     return hashlib.sha256((markdown or "").encode("utf-8")).hexdigest()[:12]
 
 
+def _unchecked(template: Optional[str] = None, found: bool = True) -> dict:
+    """"Nothing constrains this page" — the answer for every page that predates
+    a schema. Built fresh each call so no caller can mutate a shared default."""
+    return {"template": template, "template_found": found, "ok": True,
+            "errors": [], "fields": [], "values": {}}
+
+
+def check_metadata(props: dict) -> dict:
+    """Validate a page's properties against its template's declared schema.
+
+    Reports, never blocks: the result says whether the page matches what its
+    template expects, and the caller decides how loudly to say so. A page with no
+    ``template:`` property, a template that no longer exists, or a template that
+    declares nothing all come back ``ok`` with no fields — which is every page in
+    every wiki that existed before this feature.
+    """
+    name = _lookup_prop(props or {}, TEMPLATE_KEY)
+    if not name or not str(name).strip():
+        return _unchecked()
+    name = str(name).strip()
+    tpl = template_by_name(name)
+    schema_text = (tpl or {}).get("meta_schema") or ""
+    if not tpl or not schema_text.strip():
+        return _unchecked(name, bool(tpl))
+    return {"template": name, "template_found": True,
+            **metaschema.validate(props, schema_text)}
+
+
+def metadata_schema(slug: str) -> Optional[dict]:
+    """`check_metadata` for a stored page (None if there is no such page)."""
+    page = get_page(slug)
+    if not page:
+        return None
+    meta, _tags, _body = structure.parse_frontmatter(page["markdown"])
+    return check_metadata(meta)
+
+
 def page_metadata(slug: str) -> Optional[dict]:
     """Everything *about* a page without its body: properties, tags, lineage and
     timestamps. Agents use this to discover what a page records and to tell
@@ -670,6 +712,9 @@ def page_metadata(slug: str) -> Optional[dict]:
         "slug": page["slug"],
         "title": page["title"],
         "properties": meta,
+        # What the page's template expects of those properties, and whether they
+        # match. `ok` with no fields when nothing declares a schema.
+        "schema": check_metadata(meta),
         "tags": tags or tags_of(slug),
         "parent": parent,
         "children": [c["slug"] for c in children(slug)],
@@ -934,32 +979,53 @@ def suggestion_reject(sid: int) -> bool:
 
 def templates_list() -> List[dict]:
     return [dict(r) for r in db.get_conn().execute(
-        "SELECT id, name, markdown FROM templates ORDER BY name COLLATE NOCASE").fetchall()]
+        "SELECT id, name, markdown, meta_schema FROM templates "
+        "ORDER BY name COLLATE NOCASE").fetchall()]
 
 
 def template_get(tid: int) -> Optional[dict]:
     r = db.get_conn().execute(
-        "SELECT id, name, markdown FROM templates WHERE id=?", (tid,)).fetchone()
+        "SELECT id, name, markdown, meta_schema FROM templates WHERE id=?",
+        (tid,)).fetchone()
     return dict(r) if r else None
 
 
 def template_by_name(name: str) -> Optional[dict]:
     r = db.get_conn().execute(
-        "SELECT id, name, markdown FROM templates WHERE name=? COLLATE NOCASE",
-        (name,)).fetchone()
+        "SELECT id, name, markdown, meta_schema FROM templates "
+        "WHERE name=? COLLATE NOCASE", (name,)).fetchone()
     return dict(r) if r else None
 
 
-def template_save(name: str, markdown: str, tid: Optional[int] = None) -> None:
+def template_save(name: str, markdown: str, tid: Optional[int] = None,
+                  meta_schema: Optional[str] = None) -> None:
+    """Create or update a template.
+
+    ``meta_schema`` is the optional metadata declaration (``waikiki.metaschema``).
+    ``None`` means *leave it as it is* — an agent updating a template's markdown
+    must not silently drop the schema a human authored, and vice versa. Pass ``""``
+    to clear it (which is what the template editor's empty textarea does).
+    """
     conn = db.get_conn()
     if tid:
-        conn.execute("UPDATE templates SET name=?, markdown=? WHERE id=?",
-                     (name, markdown, tid))
-    else:
+        if meta_schema is None:
+            conn.execute("UPDATE templates SET name=?, markdown=? WHERE id=?",
+                         (name, markdown, tid))
+        else:
+            conn.execute(
+                "UPDATE templates SET name=?, markdown=?, meta_schema=? WHERE id=?",
+                (name, markdown, meta_schema, tid))
+    elif meta_schema is None:
         conn.execute(
             "INSERT INTO templates(name, markdown) VALUES (?, ?) "
             "ON CONFLICT(name) DO UPDATE SET markdown=excluded.markdown",
             (name, markdown))
+    else:
+        conn.execute(
+            "INSERT INTO templates(name, markdown, meta_schema) VALUES (?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET markdown=excluded.markdown, "
+            "meta_schema=excluded.meta_schema",
+            (name, markdown, meta_schema))
     conn.commit()
 
 
@@ -969,12 +1035,37 @@ def template_delete(tid: int) -> None:
     conn.commit()
 
 
+def apply_template(tpl: dict, title: str = "") -> str:
+    """Materialise a template's markdown for a new page.
+
+    ``{{title}}`` is filled in, and — only when the template declares a metadata
+    schema — a ``template:`` frontmatter property is stamped in so the page
+    remembers what it is meant to be. The stamp lives in the markdown rather than
+    in a column because the markdown is the projection of the canonical Y.Doc: it
+    rides along with versions, exports and the Kahala interchange round-trip,
+    where a side-table pointer would be lost. It is also visible and editable —
+    a human can retype it to re-bind an old page to a template, or delete it to
+    opt out.
+
+    A template with no schema produces exactly the bytes it did before.
+    """
+    md = (tpl.get("markdown") or "").replace("{{title}}", title)
+    if not (tpl.get("meta_schema") or "").strip():
+        return md
+    meta, tags, body = structure.parse_frontmatter(md)
+    if _lookup_prop(meta, TEMPLATE_KEY) is not None:
+        return md                            # the template says so itself
+    lines = [f"{TEMPLATE_KEY}: {tpl['name']}"] + [f"{k}: {v}" for k, v in meta.items()]
+    if tags:
+        lines.insert(0, "tags: " + ", ".join(tags))
+    return "---\n" + "\n".join(lines) + "\n---\n" + body.lstrip("\n")
+
+
 def create_from_template(template_name: str, title: str) -> Optional[dict]:
     tpl = template_by_name(template_name)
     if not tpl:
         return None
-    md = tpl["markdown"].replace("{{title}}", title)
-    return create_page(title, md, author="ai")
+    return create_page(title, apply_template(tpl, title), author="ai")
 
 
 # --- Images -------------------------------------------------------------------

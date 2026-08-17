@@ -226,10 +226,16 @@ CREATE TABLE IF NOT EXISTS page_tags (
 );
 CREATE INDEX IF NOT EXISTS idx_page_tags_tag ON page_tags(tag);
 
+-- `meta_schema` is the optional declaration of what the frontmatter of pages
+-- made from this template should look like (see `waikiki/metaschema.py`): a few
+-- lines of `name[*]: type`, authored as text so what a human wrote round-trips
+-- verbatim. Empty (the default) means the template constrains nothing, which is
+-- how every template behaved before it existed.
 CREATE TABLE IF NOT EXISTS templates (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    name     TEXT UNIQUE NOT NULL,
-    markdown TEXT NOT NULL DEFAULT ''
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT UNIQUE NOT NULL,
+    markdown    TEXT NOT NULL DEFAULT '',
+    meta_schema TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS activity (
@@ -306,6 +312,9 @@ def _ensure_schema(conn) -> None:
         "ALTER TABLE pages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE pages ADD COLUMN parent_id INTEGER REFERENCES pages(id)",
         "ALTER TABLE pages ADD COLUMN sort_order INTEGER",
+        # Existing wikis get the column empty: no template declares a schema, so
+        # no page's metadata changes meaning. The migration is a no-op by design.
+        "ALTER TABLE templates ADD COLUMN meta_schema TEXT NOT NULL DEFAULT ''",
     ):
         try:
             conn.execute(stmt)

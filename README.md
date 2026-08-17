@@ -115,6 +115,22 @@ request, call a repository function (`store.get_page`, `store.parent_of`,
 [docs/repository-layer.md](docs/repository-layer.md) for the full rationale and
 the seam where multi-tenant scoping attaches later.
 
+### Typed page metadata (optional)
+
+Frontmatter properties are plain strings, and stay plain strings. What a
+**template** can declare is what those strings are supposed to *mean* — a few
+lines of `name[*]: type` in the template editor (`str`, `int`, `float`, `bool`,
+`date`, `list[str]`, or a choice like `player | npc`), compiled to `pydantic`
+checks in [`waikiki/metaschema.py`](waikiki/metaschema.py).
+
+Pages made from such a template carry a `template:` property and are checked
+against it on their Metadata tab and through MCP's `get_metadata`/`set_metadata`.
+Checking **warns; it never blocks**. A wiki is a place for half-finished notes:
+the write always lands, the value on disk is never rewritten (`20 / 100` stays
+`20 / 100`), and the mismatch is reported instead. A template that declares
+nothing behaves exactly as it always did, and pages written before a schema
+existed are untouched by it.
+
 ### The Y.Doc is canonical
 
 A page's content is a **CRDT, not a string**. The full encoded `pycrdt` Y.Doc for

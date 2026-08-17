@@ -14,6 +14,9 @@
       {% for t in templates_list %}
         <li>
           <a class="tpl-name" href="/templates/{{ t.id }}/edit">{{ t.name }}</a>
+          {% if t.meta_schema and t.meta_schema.strip() %}
+            <span class="muted" title="Declares a metadata schema">· typed metadata</span>
+          {% endif %}
           <span class="tpl-actions">
             <a class="btn small" href="/new?template={{ t.id }}">New page →</a>
             <a class="btn small" href="/templates/{{ t.id }}/edit">Edit</a>

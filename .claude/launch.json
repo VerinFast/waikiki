@@ -1,0 +1,4 @@
+{ "version": "0.0.1", "configurations": [
+  { "name": "wk-a11y", "runtimeExecutable": "bash",
+    "runtimeArgs": ["-c", "source .venv/bin/activate && WAIKIKI_DATA=/tmp/wk-a11y WAIKIKI_PORT=8841 python run.py"],
+    "port": 8841 } ] }

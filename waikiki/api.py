@@ -1032,7 +1032,10 @@ async def edit_page(request: Request, slug: str):
     # so the live document already has the page content.
     await collab.ensure_room(db.active_wiki(), slug)
     return templates.TemplateResponse(request,
-        "edit.html", _ctx(request, page=page, is_new=False, collab=True)
+        "edit.html", _ctx(request, page=page, is_new=False, collab=True,
+                          # Shown in the image panel: it silently shapes every
+                          # generated image and is otherwise invisible here.
+                          image_style_prompt=store.get_setting("image_style_prompt", ""))
     )
 
 

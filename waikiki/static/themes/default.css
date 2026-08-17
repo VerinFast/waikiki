@@ -538,3 +538,31 @@ mark.wk-hit.on{background:var(--accent);color:var(--accent-contrast)}
 .jump-hint{padding:.4rem .9rem;border-top:1px solid var(--border);margin:0;
   font-size:.78rem}
 @media print{.jump{display:none !important}}
+.mic{border:1px solid var(--border);background:var(--bg);color:var(--text);
+  border-radius:8px;cursor:pointer;padding:.3rem .5rem;line-height:1}
+.mic:hover{border-color:var(--accent)}
+.mic.listening{background:var(--accent);color:var(--accent-contrast);
+  border-color:var(--accent);animation:micpulse 1.2s ease-in-out infinite}
+@keyframes micpulse{50%{opacity:.55}}
+
+/* --- Inline image generation panel ------------------------------------------
+   Replaces a window.prompt(): the article stays visible, the description
+   survives a failure, and it can be dictated. */
+.imgpanel{display:none;margin:.7rem 0;padding:.7rem .8rem;background:var(--surface);
+  border:1px solid var(--border);border-radius:11px}
+.imgpanel.open{display:block}
+.imgpanel-head{display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:.5rem}
+.imgpanel-close{border:none;background:none;color:var(--muted);cursor:pointer;
+  font-size:1rem;line-height:1;padding:.2rem .3rem;border-radius:6px}
+.imgpanel-close:hover{color:var(--accent)}
+.imgpanel-desc{width:100%;box-sizing:border-box;padding:.5rem .6rem;
+  border:1px solid var(--border);border-radius:8px;background:var(--bg);
+  color:var(--text);font:inherit;resize:vertical}
+.imgpanel-actions{display:flex;align-items:center;gap:.5rem;margin-top:.5rem;
+  flex-wrap:wrap}
+.imgpanel-status{font-size:.85rem}
+.imgpanel-status.err{color:#b42318}
+.imgpanel-status.ok{color:var(--accent)}
+.imgpanel-style{margin:.5rem 0 0}
+@media print{.imgpanel{display:none !important}}

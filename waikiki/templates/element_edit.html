@@ -6,6 +6,22 @@
     <a class="btn" href="/elements">← All elements</a>
   </div>
 
+  {# Describe it instead of writing it. The draft lands in the form below rather
+     than being saved: an element ships arbitrary HTML and JS into every page
+     that uses it, so a human reads it here and saves deliberately. #}
+  <section class="draftbox">
+    <label for="draft-desc"><strong>Describe it and let an agent draft it</strong></label>
+    <textarea id="draft-desc" rows="2"
+      placeholder="An infobox for a character: portrait, home, factions, and a stat list"></textarea>
+    <div class="draftbox-actions">
+      <span class="draft-mic-slot"></span>
+      <button type="button" class="btn" id="draft-go">Draft it</button>
+      <span class="draft-status muted"></span>
+    </div>
+    <p class="muted note">It fills the form below — nothing is saved until you
+      press Save, so read it first.</p>
+  </section>
+
   <form method="post" action="/elements/save" class="settings element-editor" id="element-form">
     <div class="el-grid">
       <label>Name
@@ -62,4 +78,60 @@
 {% endblock %}
 {% block scripts %}
 <script src="/static/element_editor.js"></script>
+<script>
+  (function () {
+    var go = document.getElementById('draft-go');
+    var desc = document.getElementById('draft-desc');
+    var status = document.querySelector('.draft-status');
+    if (!go || !desc) return;
+    if (window.wkDictate && window.wkDictate.supported) {
+      var mic = window.wkDictate.button('Describe it out loud');
+      document.querySelector('.draft-mic-slot').appendChild(mic);
+      window.wkDictate.attach(desc, mic);
+    }
+    function setField(sel, value) {
+      var el = document.querySelector(sel);
+      if (!el || value == null || value === '') return;
+      el.value = value;
+      // The element editor swaps textareas for CodeMirror; write through it or
+      // the change is invisible and lost on save.
+      var wrap = el.nextElementSibling;
+      if (wrap && wrap.classList && wrap.classList.contains('CodeMirror') && wrap.CodeMirror) {
+        wrap.CodeMirror.setValue(value);
+      }
+    }
+    go.addEventListener('click', function () {
+      var text = desc.value.trim();
+      if (!text) { desc.focus(); return; }
+      go.disabled = true;
+      status.className = 'draft-status muted';
+      status.textContent = 'Drafting\u2026 this can take a minute.';
+      fetch('/api/draft', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'element', description: text })
+      }).then(function (r) { return r.json(); }).then(function (res) {
+        go.disabled = false;
+        if (!res.ok) {
+          // Keep the description so it can be adjusted and retried.
+          status.className = 'draft-status err';
+          status.textContent = (res.error || 'Drafting failed') + ' Adjust and try again.';
+          return;
+        }
+        setField('input[name=name]', res.name);
+        setField('#ed-fields', res.fields);
+        setField('#ed-html', res.html);
+        setField('#ed-css', res.css);
+        setField('#ed-js', res.js);
+        if (window.wkElementPreview) window.wkElementPreview();
+        status.className = 'draft-status ok';
+        status.textContent = 'Filled in below — read it, then Save.';
+      }).catch(function (err) {
+        go.disabled = false;
+        status.className = 'draft-status err';
+        status.textContent = 'Drafting failed: ' + err + '. Adjust and try again.';
+      });
+    });
+  })();
+</script>
+
 {% endblock %}

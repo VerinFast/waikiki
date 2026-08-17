@@ -245,6 +245,111 @@
       if (text) _copyText(text);
       return !!text;
     };
+    // --- Dictation (shared) ------------------------------------------------
+    // One implementation for both places that need it: the chat question box
+    // and the image description panel. Speaking is easier than typing for
+    // plenty of people and materially easier for a dyslexic writer, so this is
+    // an accessibility feature, not a convenience.
+    //
+    // Web Speech is not guaranteed in WKWebView, which is Waikiki's real home,
+    // so `supported` is checked before any button is offered — a dead mic is
+    // worse than none. Text is appended to the field and never auto-submitted:
+    // a misrecognition must be fixable before it is sent.
+    window.wkDictate = (function () {
+      var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+      var supported = !!Rec;
+      var active = null;
+
+      function stop() {
+        if (active) { try { active.rec.stop(); } catch (e) {} }
+      }
+      function attach(input, btn) {
+        if (!supported || !input || !btn) return false;
+        btn.addEventListener('click', function () {
+          if (active && active.btn === btn) { stop(); return; }   // toggle off
+          stop();
+          var rec = new Rec();
+          rec.lang = document.documentElement.lang || 'en-US';
+          rec.interimResults = true;
+          rec.continuous = true;      // don't cut off a slow speaker
+          var base = input.value;
+          rec.onresult = function (ev) {
+            var finalText = '', interim = '';
+            for (var i = ev.resultIndex; i < ev.results.length; i++) {
+              var chunk = ev.results[i][0].transcript;
+              if (ev.results[i].isFinal) finalText += chunk;
+              else interim += chunk;
+            }
+            if (finalText) base = (base ? base.replace(/\s*$/, ' ') : '') + finalText.trim();
+            input.value = (base + (interim ? ' ' + interim.trim() : '')).trim();
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          };
+          rec.onend = function () {
+            btn.classList.remove('listening');
+            btn.setAttribute('aria-pressed', 'false');
+            active = null;
+            input.focus();
+          };
+          rec.onerror = rec.onend;
+          active = { rec: rec, btn: btn };
+          btn.classList.add('listening');
+          btn.setAttribute('aria-pressed', 'true');
+          try { rec.start(); } catch (e) { rec.onend(); }
+        });
+        return true;
+      }
+      // Build a mic button only where dictation actually works.
+      function button(title) {
+        if (!supported) return null;
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'mic';
+        b.title = title || 'Dictate';
+        b.setAttribute('aria-label', title || 'Dictate');
+        b.setAttribute('aria-pressed', 'false');
+        b.textContent = '\uD83C\uDFA4';
+        return b;
+      }
+      return { supported: supported, attach: attach, button: button, stop: stop };
+    })();
+
+    // --- Speech (shared) ---------------------------------------------------
+    // Lives outside the article-only block below so anything can speak — the
+    // context menu's "Say this" works on any page. One `current` utterance, so
+    // a menu item and a section 🔊 can't talk over each other.
+    window.wkSpeech = (function () {
+      var supported = 'speechSynthesis' in window;
+      var current = null;
+      function reset(btn) {
+        if (btn && btn.dataset && btn.dataset.label != null) {
+          btn.textContent = btn.dataset.label;
+          btn.classList.remove('speaking');
+        }
+      }
+      function stop() {
+        if (supported) window.speechSynthesis.cancel();
+        reset(current); current = null;
+      }
+      function speak(text, btn) {
+        if (!supported || !(text || '').trim()) return false;
+        if (btn && current === btn) { stop(); return true; }   // toggle off
+        stop();
+        var u = new SpeechSynthesisUtterance(text);
+        u.onend = u.onerror = function () {
+          if (current === btn) { reset(btn); current = null; }
+        };
+        if (btn) {
+          current = btn;
+          btn.dataset.label = btn.textContent;
+          btn.textContent = '\u23f9';
+          btn.classList.add('speaking');
+        }
+        window.speechSynthesis.speak(u);
+        return true;
+      }
+      return { supported: supported, speak: speak, stop: stop };
+    })();
+
     // --- Jump to article (Cmd+J) -------------------------------------------
     // Titles only, and it navigates rather than searching: Cmd+F is within the
     // page and the top-bar search is over content. Scoped to the active wiki.
@@ -351,6 +456,13 @@
       var prov = document.getElementById('wk-chat-provider');
       var scope = document.getElementById('wk-chat-scope');
       var history = [];
+      // Asking a question is the one thing here whose whole point is your own
+      // words, so if typing is the barrier the feature is closed off entirely.
+      if (window.wkDictate && window.wkDictate.supported) {
+        var mic = window.wkDictate.button('Dictate your question');
+        form.insertBefore(mic, form.querySelector('button[type=submit]'));
+        window.wkDictate.attach(q, mic);
+      }
       var page = window.WAIKIKI_PAGE || null;
 
       scope.textContent = page ? ('\uD83D\uDCAC ' + (document.title.split(' \u2014 ')[0] || 'this page'))
@@ -699,19 +811,56 @@
     // none of these on its own once the native page menu is suppressed).
     (function () {
       var menu = null;
-      function close() { if (menu) { menu.remove(); menu = null; } }
-      document.addEventListener('click', close);
-      document.addEventListener('scroll', close, true);
+
+      function close() {
+        if (menu) { menu.remove(); menu = null; }
+        document.removeEventListener('click', close);
+        document.removeEventListener('keydown', onKey);
+        document.removeEventListener('scroll', close, true);
+      }
+      function onKey(e) { if (e.key === 'Escape') close(); }
+
+      // The word under the pointer, for "Say this" when nothing is selected.
+      function wordAt(x, y) {
+        var pos = null;
+        if (document.caretRangeFromPoint) {
+          var r = document.caretRangeFromPoint(x, y);
+          if (r) pos = { node: r.startContainer, off: r.startOffset };
+        } else if (document.caretPositionFromPoint) {
+          var c = document.caretPositionFromPoint(x, y);
+          if (c) pos = { node: c.offsetNode, off: c.offset };
+        }
+        if (!pos || !pos.node || pos.node.nodeType !== 3) return '';
+        var text = pos.node.nodeValue || '', i = pos.off;
+        var isWord = function (ch) { return ch && /[\w'\u2019-]/.test(ch); };
+        var a = i, b = i;
+        while (a > 0 && isWord(text[a - 1])) a--;
+        while (b < text.length && isWord(text[b])) b++;
+        return text.slice(a, b).trim();
+      }
+
       document.addEventListener('contextmenu', function (e) {
         close();
         var editable = _isEditable(e.target);
         // Read the selection from the event target too — a right-click doesn't
         // always leave the field as document.activeElement.
         var selText = _fieldSel(e.target) || _selectionText();
+        var word = selText ? '' : wordAt(e.clientX, e.clientY);
         var items = [];
         if (selText) items.push(['Copy', function () { _copyText(selText); }]);
         // Pass the clicked element: clicking the menu button moves focus off it.
         if (editable) items.push(['Paste', function () { window.wkPaste(e.target); }]);
+        // Speak the selection, or the word under the pointer. Labelled with the
+        // word itself so it is obvious what you will hear. Omitted entirely
+        // when the platform has no speech, rather than offering a dead item.
+        if (window.wkSpeech && window.wkSpeech.supported) {
+          if (selText) {
+            items.push(['Say this', function () { window.wkSpeech.speak(selText); }]);
+          } else if (word) {
+            items.push(['Say \u201c' + word + '\u201d',
+                        function () { window.wkSpeech.speak(word); }]);
+          }
+        }
         items.push(['Select All', function () { window.wkSelectAll(); }]);
         if (!items.length) return;
         e.preventDefault();
@@ -725,9 +874,20 @@
           });
           menu.appendChild(b);
         });
-        menu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
-        menu.style.top = Math.min(e.clientY, window.innerHeight - 120) + 'px';
+        menu.style.left = Math.min(e.clientX, window.innerWidth - 180) + 'px';
+        menu.style.top = Math.min(e.clientY, window.innerHeight - 140) + 'px';
         document.body.appendChild(menu);
+
+        // A ctrl-click is a LEFT click, so this same gesture also fires `click`
+        // on mouse-up. Listening immediately meant the menu was destroyed by the
+        // gesture that created it — it only appeared while the button was held.
+        // Defer to the next tick so we catch the *next* click instead.
+        setTimeout(function () {
+          if (!menu) return;
+          document.addEventListener('click', close);
+          document.addEventListener('keydown', onKey);
+          document.addEventListener('scroll', close, true);
+        }, 0);
       });
     })();
 
@@ -965,27 +1125,14 @@
     (function () {
       var rendered = document.querySelector('.content .rendered');
       if (!rendered) return;                      // only the article view
-      var supported = 'speechSynthesis' in window;
-      var current = null;
+      var supported = window.wkSpeech.supported;
       function cleanText(el) {
         var c = el.cloneNode(true);
         c.querySelectorAll('.header-anchor,.section-edit,.tts-btn,.cell-edit,button')
           .forEach(function (n) { n.remove(); });
         return (c.textContent || '').replace(/\s+/g, ' ').trim();
       }
-      function reset(btn) { if (btn) { btn.textContent = btn.dataset.label; btn.classList.remove('speaking'); } }
-      function stop() { if (supported) window.speechSynthesis.cancel(); reset(current); current = null; }
-      function speak(text, btn) {
-        if (!supported) { alert("Text-to-speech isn't available here."); return; }
-        if (current === btn) { stop(); return; }  // toggle off
-        stop();
-        if (!text) return;
-        var u = new SpeechSynthesisUtterance(text);
-        u.onend = u.onerror = function () { if (current === btn) { reset(btn); current = null; } };
-        current = btn;
-        btn.dataset.label = btn.textContent; btn.textContent = '⏹'; btn.classList.add('speaking');
-        window.speechSynthesis.speak(u);
-      }
+      function speak(text, btn) { window.wkSpeech.speak(text, btn); }
       var head = document.querySelector('.article .article-head');
       if (head) {
         var pb = document.createElement('button');

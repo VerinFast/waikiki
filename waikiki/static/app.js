@@ -35,32 +35,112 @@ function init() {
   }
 
   // --- Generate an image with AI (Claude writes the prompt → agy/gemini renders) ---
+  // An inline panel rather than window.prompt(): the article stays visible while
+  // you describe what you want, the description survives a failure so it can be
+  // adjusted and retried, and it can be dictated. Children use this — losing a
+  // long spoken description to an OS alert box is the worst part of the old flow.
+  let imgPanel = null;
+
+  function buildImagePanel() {
+    const panel = document.createElement("div");
+    panel.className = "imgpanel";
+    panel.innerHTML = `
+      <div class="imgpanel-head">
+        <strong>Generate an image</strong>
+        <button type="button" class="imgpanel-close" title="Close">✕</button>
+      </div>
+      <textarea class="imgpanel-desc" rows="3"
+        placeholder="Describe the picture — who or what is in it, where it is, what is happening…"></textarea>
+      <div class="imgpanel-actions">
+        <span class="imgpanel-mic-slot"></span>
+        <button type="button" class="btn primary imgpanel-go">Generate</button>
+        <span class="imgpanel-status muted"></span>
+      </div>
+      <p class="imgpanel-style muted note"></p>`;
+    const container = document.querySelector(".EasyMDEContainer");
+    (container ? container.parentNode : document.body)
+      .insertBefore(panel, container ? container.nextSibling : null);
+
+    const style = (CFG.imageStyle || "").trim();
+    panel.querySelector(".imgpanel-style").textContent = style
+      ? `Every image in this wiki also uses: ${style}`
+      : "";
+    panel.querySelector(".imgpanel-close").onclick = () => hideImagePanel();
+
+    // Dictation, where the platform supports it (shared helper in base.html).
+    if (window.wkDictate && window.wkDictate.supported) {
+      const mic = window.wkDictate.button("Describe the image out loud");
+      panel.querySelector(".imgpanel-mic-slot").appendChild(mic);
+      window.wkDictate.attach(panel.querySelector(".imgpanel-desc"), mic);
+    }
+    return panel;
+  }
+
+  function hideImagePanel() {
+    if (window.wkDictate) window.wkDictate.stop();
+    if (imgPanel) imgPanel.classList.remove("open");
+  }
+
   function generateImage() {
+    if (!imgPanel) imgPanel = buildImagePanel();
+    const desc = imgPanel.querySelector(".imgpanel-desc");
+    const status = imgPanel.querySelector(".imgpanel-status");
+    const go = imgPanel.querySelector(".imgpanel-go");
+
+    imgPanel.classList.add("open");
     if (!CFG.slug) {
-      alert("Save the page first — generated images are stored per article.");
+      // Inline, not an alert — and the description is kept either way.
+      status.textContent = "Save the page first — generated images are stored per article.";
+      status.className = "imgpanel-status err";
+      go.disabled = true;
       return;
     }
-    const desc = window.prompt("Describe the image to generate:");
-    if (!desc || !desc.trim()) return;
-    const doc = cm.getDoc();
-    const placeholder = `![⏳ generating image…](gen-${Date.now()})`;
-    doc.replaceRange("\n" + placeholder + "\n", doc.getCursor());
-    const replacePlaceholder = (text) => {
-      const idx = easymde.value().indexOf(placeholder);
-      if (idx < 0) return;                       // user removed it — leave content alone
-      doc.replaceRange(text, doc.posFromIndex(idx),
-                       doc.posFromIndex(idx + placeholder.length));
+    go.disabled = false;
+    status.textContent = "";
+    status.className = "imgpanel-status muted";
+    desc.focus();
+
+    go.onclick = () => {
+      const text = desc.value.trim();
+      if (!text) { desc.focus(); return; }
+      go.disabled = true;
+      status.className = "imgpanel-status muted";
+      status.textContent = "Generating… this can take a minute.";
+
+      const doc = cm.getDoc();
+      const placeholder = `![⏳ generating image…](gen-${Date.now()})`;
+      doc.replaceRange("\n" + placeholder + "\n", doc.getCursor());
+      const replacePlaceholder = (t) => {
+        const idx = easymde.value().indexOf(placeholder);
+        if (idx < 0) return;                     // user removed it — leave content alone
+        doc.replaceRange(t, doc.posFromIndex(idx),
+                         doc.posFromIndex(idx + placeholder.length));
+      };
+
+      fetch(`/wiki/${CFG.slug}/generate-image`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: text }),
+      }).then((r) => r.json()).then((res) => {
+        replacePlaceholder(res.ok ? res.markdown : "");
+        go.disabled = false;
+        if (res.ok) {
+          status.className = "imgpanel-status ok";
+          status.textContent = "Added. Describe another, or close.";
+          desc.select();          // easy to tweak and go again
+        } else {
+          // Keep the description: losing it to a failure is the whole complaint.
+          status.className = "imgpanel-status err";
+          const why = (res.error || "Generation failed").replace(/[.\s]+$/, "");
+          status.textContent = why + ". Adjust the description and try again.";
+        }
+      }).catch((err) => {
+        replacePlaceholder("");
+        go.disabled = false;
+        status.className = "imgpanel-status err";
+        status.textContent = "Generation failed: " + err +
+          ". Adjust the description and try again.";
+      });
     };
-    fetch(`/wiki/${CFG.slug}/generate-image`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description: desc.trim() }),
-    }).then((r) => r.json()).then((res) => {
-      replacePlaceholder(res.ok ? res.markdown : "");
-      if (!res.ok) alert("Image generation failed: " + (res.error || "unknown"));
-    }).catch((err) => {
-      replacePlaceholder("");
-      alert("Image generation failed: " + err);
-    });
   }
 
   // Keep the hidden textarea in sync on submit (Save posts current content).

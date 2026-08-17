@@ -21,7 +21,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import (accesslog, ai, appconfig, auth, backups, bonjour, chat, collab,
+from . import (accesslog, ai, appconfig, auth, authoring, backups, bonjour, chat,
+               collab,
                config, db, debuglog, deeplink, edits, elements, embeddings,
                help_content, imagegen, pdfgen, rag, render, store, structure,
                tunnel, updater, wikis)
@@ -634,6 +635,27 @@ def templates_delete(tid: int):
 
 # --- Custom elements ---------------------------------------------------------
 
+class DraftIn(BaseModel):
+    kind: str = "element"
+    description: str = ""
+    provider: str | None = None
+
+
+@app.post("/api/draft")
+async def api_draft(body: DraftIn):
+    """Draft a template or element from a description.
+
+    Returns the parts for the editor to fill — it never saves. Elements ship
+    arbitrary HTML and JS into every page that uses them, so a human reads the
+    draft in the form and saves it deliberately (see waikiki/authoring.py).
+    """
+    import anyio
+    provider = body.provider or store.get_setting("chat_provider", "claude")
+    model = store.get_setting("chat_model", "")
+    return await anyio.to_thread.run_sync(
+        lambda: authoring.draft(body.kind, body.description, provider, model))
+
+
 @app.get("/elements", response_class=HTMLResponse)
 def elements_manage(request: Request):
     return templates.TemplateResponse(request, "elements.html",
@@ -1032,7 +1054,10 @@ async def edit_page(request: Request, slug: str):
     # so the live document already has the page content.
     await collab.ensure_room(db.active_wiki(), slug)
     return templates.TemplateResponse(request,
-        "edit.html", _ctx(request, page=page, is_new=False, collab=True)
+        "edit.html", _ctx(request, page=page, is_new=False, collab=True,
+                          # Shown in the image panel: it silently shapes every
+                          # generated image and is otherwise invisible here.
+                          image_style_prompt=store.get_setting("image_style_prompt", ""))
     )
 
 

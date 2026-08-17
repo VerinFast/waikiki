@@ -72,8 +72,7 @@
       slug: {{ page.slug | tojson }},
       wiki: {{ current_wiki | tojson }},
       wsBase: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host
-              + '/collab/' + {{ current_wiki | tojson }},
-      imageStyle: {{ (image_style_prompt or '') | tojson }}
+              + '/collab/' + {{ current_wiki | tojson }}
     };
   </script>
   <script type="module" src="/static/app.js"></script>

@@ -58,6 +58,8 @@
     if (!Object.keys(props).length) props.title = "Sample";
     return props;
   }
+  // Exposed so a drafted element can be shown before it is saved (#34).
+  window.wkElementPreview = function () { try { preview(); } catch (e) {} };
   function preview() {
     var host = document.getElementById("el-preview");
     var tag = "wk-preview-" + (previewN++);

@@ -365,12 +365,54 @@
       }
       function stop() {
         if (supported) window.speechSynthesis.cancel();
+        if (audio) { try { audio.pause(); } catch (e) {} audio = null; }
         reset(current); current = null;
       }
+      // Nicer voices, when something local offers them (Doorman). Asked once;
+      // a machine without it behaves exactly as before. Never a hard dependency
+      // — this is a better-sounding path, not a required one.
+      var external = null;          // null = unknown, false = no, true = yes
+      var audio = null;
+      fetch('/api/voice/status').then(function (r) { return r.json(); })
+        .then(function (s) { external = !!(s && s.running); })
+        .catch(function () { external = false; });
+
+      function speakExternal(text, btn) {
+        return fetch('/api/voice/speak', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: text })
+        }).then(function (r) {
+          if (!r.ok) throw new Error('unavailable');
+          return r.blob();
+        }).then(function (blob) {
+          audio = new Audio(URL.createObjectURL(blob));
+          if (btn) {
+            current = btn;
+            btn.dataset.label = btn.textContent;
+            btn.textContent = '\u23f9';
+            btn.classList.add('speaking');
+          }
+          audio.onended = audio.onerror = function () {
+            if (current === btn) { reset(btn); current = null; }
+            audio = null;
+          };
+          return audio.play();
+        });
+      }
+
       function speak(text, btn) {
         if (!supported || !(text || '').trim()) return false;
         if (btn && current === btn) { stop(); return true; }   // toggle off
         stop();
+        if (external) {
+          // Fall back to the built-in voice on any hiccup, silently.
+          speakExternal(text, btn).catch(function () { speakBuiltin(text, btn); });
+          return true;
+        }
+        return speakBuiltin(text, btn);
+      }
+
+      function speakBuiltin(text, btn) {
         var u = new SpeechSynthesisUtterance(text);
         u.onend = u.onerror = function () {
           if (current === btn) { reset(btn); current = null; }
@@ -849,9 +891,22 @@
     (function () {
       var menu = null;
 
+      // Dismissal requires a NEW gesture. A ctrl-click is a left click, so the
+      // gesture that opens the menu also fires mouseup/click — and that click
+      // lands in a LATER task, so deferring the listener by a tick is not enough
+      // (a synchronous test will pass and the real gesture will still fail).
+      // Instead: only a fresh mousedown arms dismissal.
+      var armed = false;
+      function arm() { armed = true; }
+      function onDocClick(e) {
+        if (!armed || !menu) return;
+        if (!menu.contains(e.target)) close();
+      }
       function close() {
         if (menu) { menu.remove(); menu = null; }
-        document.removeEventListener('click', close);
+        armed = false;
+        document.removeEventListener('mousedown', arm, true);
+        document.removeEventListener('click', onDocClick, true);
         document.removeEventListener('keydown', onKey);
         document.removeEventListener('scroll', close, true);
       }
@@ -915,13 +970,11 @@
         menu.style.top = Math.min(e.clientY, window.innerHeight - 140) + 'px';
         document.body.appendChild(menu);
 
-        // A ctrl-click is a LEFT click, so this same gesture also fires `click`
-        // on mouse-up. Listening immediately meant the menu was destroyed by the
-        // gesture that created it — it only appeared while the button was held.
-        // Defer to the next tick so we catch the *next* click instead.
+        armed = false;
         setTimeout(function () {
           if (!menu) return;
-          document.addEventListener('click', close);
+          document.addEventListener('mousedown', arm, true);
+          document.addEventListener('click', onDocClick, true);
           document.addEventListener('keydown', onKey);
           document.addEventListener('scroll', close, true);
         }, 0);

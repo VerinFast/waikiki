@@ -348,8 +348,10 @@ pre.diff .hunk{color:var(--muted);display:block}
 .textzoom .azero{font-size:.7rem}
 
 /* Text-to-speech buttons */
+/* `color` matters: a <button> defaults to black, which is invisible on the dark
+   and sepia themes — the speaker was there and unreadable. */
 .rendered .tts-btn{opacity:0;margin-left:.3em;border:none;background:none;cursor:pointer;
-  font-size:.7em;vertical-align:middle;padding:0 2px;line-height:1}
+  color:var(--muted);font-size:.7em;vertical-align:middle;padding:0 2px;line-height:1}
 .rendered h1:hover .tts-btn,.rendered h2:hover .tts-btn,.rendered h3:hover .tts-btn,
 .rendered .tts-btn.speaking{opacity:.85}
 .tts-page.speaking,.tts-btn.speaking{opacity:1;color:var(--accent)}
@@ -461,10 +463,22 @@ mark.wk-hit.on{background:var(--accent);color:var(--accent-contrast)}
 
 /* Controls for the lead section (text before the first heading), which has no
    heading of its own to attach to. */
-.lead-tools{display:flex;align-items:center;gap:.5rem;margin:0 0 .3rem;
-  min-height:1.2rem;opacity:0;transition:opacity .12s}
-.rendered:hover .lead-tools,.lead-tools:focus-within{opacity:1}
-.lead-tools .section-edit{position:static;margin:0}
+.lead-tools{display:flex;align-items:center;gap:.6rem;margin:0 0 .3rem;
+  min-height:1.2rem}
+/* The heading controls hide at opacity:0 and are revealed by
+   `:is(h1,h2,h3):hover .section-edit`. The lead has no heading, so that rule can
+   never match and both controls stayed invisible forever — setting opacity on
+   this container did nothing, because each child carries its own opacity:0.
+   Raise the CHILDREN, and keep them faintly visible rather than hover-only:
+   there is no heading to hover, so hover-to-discover has nothing to aim at. */
+.rendered .lead-tools .section-edit,
+.rendered .lead-tools .tts-btn{opacity:.5;position:static;margin:0}
+.rendered:hover .lead-tools .section-edit,
+.rendered:hover .lead-tools .tts-btn,
+.lead-tools:focus-within .section-edit,
+.lead-tools:focus-within .tts-btn{opacity:.8}
+.rendered .lead-tools .section-edit:hover,
+.rendered .lead-tools .tts-btn:hover{opacity:1;color:var(--accent)}
 
 /* --- Metadata tab ----------------------------------------------------------- */
 .metatable{width:100%;border-collapse:collapse;margin:.8rem 0}

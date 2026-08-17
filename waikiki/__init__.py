@@ -1,3 +1,3 @@
 """Waikiki — a small local wiki for Human/LLM collaboration."""
 
-__version__ = "0.14.1"
+__version__ = "0.15.0"

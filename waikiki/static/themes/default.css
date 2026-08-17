@@ -566,3 +566,15 @@ mark.wk-hit.on{background:var(--accent);color:var(--accent-contrast)}
 .imgpanel-status.ok{color:var(--accent)}
 .imgpanel-style{margin:.5rem 0 0}
 @media print{.imgpanel{display:none !important}}
+
+/* --- "Describe it and let an agent draft it" --------------------------------- */
+.draftbox{margin:.8rem 0;padding:.7rem .8rem;background:var(--surface);
+  border:1px solid var(--border);border-radius:11px}
+.draftbox textarea{width:100%;box-sizing:border-box;margin-top:.4rem;
+  padding:.5rem .6rem;border:1px solid var(--border);border-radius:8px;
+  background:var(--bg);color:var(--text);font:inherit;resize:vertical}
+.draftbox-actions{display:flex;align-items:center;gap:.5rem;margin-top:.5rem;
+  flex-wrap:wrap}
+.draft-status{font-size:.85rem}
+.draft-status.err{color:#b42318}
+.draft-status.ok{color:var(--accent)}

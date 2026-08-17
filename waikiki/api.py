@@ -592,7 +592,9 @@ def new_page(request: Request, template: str = ""):
         tpl = (store.template_get(int(template)) if template.isdigit()
                else store.template_by_name(template))
         if tpl:
-            markdown = tpl["markdown"]
+            # Same materialisation the MCP `create_from_template` path uses, so a
+            # page a human starts from a template is bound to it identically.
+            markdown = store.apply_template(tpl)
     return templates.TemplateResponse(request,
         "edit.html",
         _ctx(request, page={"slug": "", "title": "", "markdown": markdown}, is_new=True),
@@ -608,7 +610,8 @@ def templates_manage(request: Request):
 @app.get("/templates/new", response_class=HTMLResponse)
 def template_new_view(request: Request):
     return templates.TemplateResponse(request, "template_edit.html", _ctx(
-        request, tpl={"id": "", "name": "", "markdown": ""}, is_new=True))
+        request, tpl={"id": "", "name": "", "markdown": "", "meta_schema": ""},
+        is_new=True))
 
 
 @app.get("/templates/{tid}/edit", response_class=HTMLResponse)
@@ -622,9 +625,12 @@ def template_edit_view(request: Request, tid: int):
 
 @app.post("/templates/save")
 def templates_save(name: str = Form(...), markdown: str = Form(""),
-                   tid: str = Form("")):
+                   tid: str = Form(""), meta_schema: str = Form("")):
+    """Save a template, including the metadata schema it declares (may be empty:
+    the form always submits the field, so clearing the box clears the schema)."""
     if name.strip():
-        store.template_save(name.strip(), markdown, int(tid) if tid else None)
+        store.template_save(name.strip(), markdown, int(tid) if tid else None,
+                            meta_schema=meta_schema)
     return RedirectResponse("/templates", status_code=303)
 
 
@@ -874,7 +880,8 @@ def metadata_view(request: Request, slug: str, msg: str = "", error: str = ""):
     return templates.TemplateResponse(request,
         "metadata.html", _ctx(request, page=page,
                           trashed=bool(page.get("deleted_at")),
-                          properties=meta, tags=store.tags_of(slug),
+                          properties=meta, schema=store.check_metadata(meta),
+                          tags=store.tags_of(slug),
                           all_tags=[t["tag"] for t in store.all_tags()],
                           parent=store.parent_of(page),
                           crumbs=store.ancestors(page),

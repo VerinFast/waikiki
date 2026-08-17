@@ -28,12 +28,43 @@
     {% if msg %}<p class="flash ok">{{ msg }}</p>{% endif %}
     {% if error %}<p class="flash err">{{ error }}</p>{% endif %}
 
+    {# The template's schema is a warning, never a blocker: the page saved, and
+       this says what does not match. #}
+    {% set errkeys = schema.errors | map(attribute='key') | list %}
+    {% if schema.fields %}
+      <section class="metaschema {{ 'bad' if schema.errors else 'good' }}">
+        <p>
+          {% if schema.errors %}⚠{% else %}✓{% endif %}
+          Checked against the <strong>{{ schema.template }}</strong> template.
+          {% if not schema.errors %}Everything matches.{% endif %}
+        </p>
+        {% if schema.errors %}
+          <ul class="schema-problems">
+            {% for e in schema.errors %}
+              <li><code>{{ e.key }}</code> — {{ e.message }}
+                <span class="muted">(expects {{ e.expected }})</span></li>
+            {% endfor %}
+          </ul>
+          <p class="muted note">Your values were saved exactly as typed. Fix them
+            when you are ready — or edit the schema on the
+            <a href="/templates">{{ schema.template }} template</a>.</p>
+        {% endif %}
+        <p class="muted">Expects
+          {% for f in schema.fields %}<code>{{ f.name }}</code>
+            ({{ f.choices | join(' | ') if f.choices else f.type }}{% if f.required %}, required{% endif %}){% if not loop.last %}, {% endif %}
+          {% endfor %}.</p>
+      </section>
+    {% elif schema.template and not schema.template_found %}
+      <p class="flash warn">This page says it came from a
+        <strong>{{ schema.template }}</strong> template, which no longer exists.</p>
+    {% endif %}
+
     <form method="post" action="/wiki/{{ page.slug }}/metadata" class="metaform" id="metaform">
       <table class="metatable">
         <thead><tr><th>Property</th><th>Value</th><th aria-label="Remove"></th></tr></thead>
         <tbody id="metarows">
           {% for k, v in properties.items() %}
-            <tr>
+            <tr{% if k in errkeys %} class="metarow-bad"{% endif %}>
               <td><input type="text" name="key" value="{{ k }}" autocomplete="off"></td>
               <td><input type="text" name="value" value="{{ v }}" autocomplete="off"></td>
               <td><button type="button" class="metadel" title="Remove this property"

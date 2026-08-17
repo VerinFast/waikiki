@@ -3,6 +3,11 @@ fastapi>=0.140.13
 uvicorn[standard]>=0.52.3
 jinja2>=3.1
 python-multipart>=0.0.32        # form / file uploads
+# Arrives transitively with FastAPI, but it is also what validates page metadata
+# against a template's declared schema (waikiki/metaschema.py) — a domain rule,
+# not a web-framework detail. Named here so that use doesn't rest on FastAPI
+# happening to pull it in. v2 is required: TypeAdapter is a v2 API.
+pydantic>=2.7
 
 # --- Markdown -> HTML (GFM tables, etc.) ---
 markdown-it-py>=4.2.0

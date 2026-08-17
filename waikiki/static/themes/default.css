@@ -578,3 +578,4 @@ mark.wk-hit.on{background:var(--accent);color:var(--accent-contrast)}
 .draft-status{font-size:.85rem}
 .draft-status.err{color:#b42318}
 .draft-status.ok{color:var(--accent)}
+.mic.mic-error{border-color:#b42318;color:#b42318}

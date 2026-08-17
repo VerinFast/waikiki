@@ -404,6 +404,7 @@ def _ctx(request: Request, **extra) -> dict:
         "current_wiki_name": wikis.name_of(wiki),
         "wikis": wikis.list_wikis(),
         "version": config.VERSION,
+        "is_desktop": config.is_desktop(),
         # "owner" (loopback) or "guest" (LAN, password) — templates hide the
         # owner-only controls from guests so the UI matches what they can do.
         "role": request.scope.get("waikiki_role", "owner"),

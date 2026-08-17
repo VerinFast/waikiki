@@ -17,7 +17,8 @@
   </script>
 </head>
 <body>
-  <script>window.WAIKIKI_WIKI_NAME = {{ current_wiki_name | tojson }};</script>
+  <script>window.WAIKIKI_WIKI_NAME = {{ current_wiki_name | tojson }};
+          window.WAIKIKI_DESKTOP = {{ "true" if is_desktop else "false" }};</script>
   {# Find in page. WKWebView has no built-in find UI, so Cmd+F is ours to
      implement — see wkFind in the script block below. #}
   <div class="wk-find" id="wk-find" role="search">
@@ -251,20 +252,32 @@
     // plenty of people and materially easier for a dyslexic writer, so this is
     // an accessibility feature, not a convenience.
     //
-    // MEASURED, 0.17.0: the packaged app's WKWebView reports
-    //   speechSynthesis: true, SpeechRecognition: false,
-    //   webkitSpeechRecognition: false, getUserMedia: false
-    // so dictation does NOT work in the desktop app — only in a browser. It
-    // degrades to typing there (no mic is rendered), and speaking a page aloud
-    // is unaffected because synthesis is present. Getting dictation into the app
-    // needs the native side; see issue #37 (Doorman already has voicebox.py).
-    // Don't re-attempt this in the webview without re-measuring.
+    // Two routes. MEASURED in the packaged app's WKWebView, loading a real
+    // http:// page: webkitSpeechRecognition *exists*, but calling start() fails
+    // with "not-allowed" — the object is present and non-functional. Feature
+    // detection alone therefore picks the broken path and dictation silently
+    // does nothing, so the desktop app always takes the native route regardless
+    // of what the object looks like. Don't "simplify" this back to a capability
+    // check without re-measuring start().
     //
-    // Text is appended to the field and never auto-submitted: a misrecognition
-    // must be fixable before it is sent.
+    // The app instead triggers macOS's own Start Dictation, which types
+    // straight into whatever field has focus. That means no transcript comes
+    // back to us: the OS owns the session and its own indicator is the state,
+    // so we focus the field, start it, and get out of the way.
+    //
+    // On the web route text is appended and never auto-submitted: a
+    // misrecognition must be fixable before it is sent.
     window.wkDictate = (function () {
       var Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
-      var supported = !!Rec;
+      function nativeApi() {
+        var api = window.pywebview && window.pywebview.api;
+        return (api && api.start_dictation) ? api : null;
+      }
+      // pywebview injects its api asynchronously, so "is there a native route"
+      // can be false at load and true a moment later. Treat the desktop app as
+      // capable and let the call itself report a problem.
+      var isDesktop = !!window.WAIKIKI_DESKTOP;   // told by the server, not sniffed
+      var supported = !!Rec || isDesktop;
       var active = null;
 
       function stop() {
@@ -273,6 +286,23 @@
       function attach(input, btn) {
         if (!supported || !input || !btn) return false;
         btn.addEventListener('click', function () {
+          // Desktop: hand off to macOS dictation, which types into the focused
+          // field. There is no transcript to collect and no end event, so don't
+          // pretend to a listening state we cannot track.
+          // Desktop first: see the note above — the web object lies here.
+          var api = nativeApi();
+          if (isDesktop && api) {
+            input.focus();
+            Promise.resolve(api.start_dictation()).then(function (res) {
+              if (res && res.ok === false) {
+                btn.classList.add('mic-error');
+                btn.title = res.error || 'Dictation unavailable';
+                setTimeout(function () { btn.classList.remove('mic-error'); }, 4000);
+              }
+            }).catch(function () {});
+            return;
+          }
+          if (!Rec || isDesktop) return;           // nothing usable here
           if (active && active.btn === btn) { stop(); return; }   // toggle off
           stop();
           var rec = new Rec();

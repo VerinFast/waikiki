@@ -118,6 +118,11 @@ def main() -> None:
         ).run()
         return
 
+    # Tell the page it is running in the desktop shell. Sniffing for
+    # window.pywebview races its async injection, and a mic that fails to render
+    # because the check ran too early is invisible rather than broken.
+    os.environ["WAIKIKI_DESKTOP"] = "1"
+
     import webview
 
     class DesktopApi:
@@ -128,6 +133,54 @@ def main() -> None:
             import webbrowser
             webbrowser.open(url)
             return {"ok": True}
+
+        def start_dictation(self):
+            """Trigger macOS Start Dictation into the focused field.
+
+            WKWebView exposes no SpeechRecognition and no getUserMedia (measured:
+            both false in the packaged app), so the web speech route is a dead
+            end here. Native dictation sidesteps it entirely — it types into
+            whatever text field has focus, which is the box the user just
+            clicked the mic beside.
+
+            Clicking a menu item needs Accessibility permission, so say so
+            plainly when it is refused rather than failing silently.
+            """
+            import subprocess
+
+            script = (
+                'tell application "System Events"\n'
+                '  set p to first process whose frontmost is true\n'
+                '  set em to menu "Edit" of menu bar 1 of p\n'
+                '  repeat with mi in menu items of em\n'
+                '    try\n'
+                '      if name of mi starts with "Start Dictation" then\n'
+                '        click mi\n'
+                '        return "ok"\n'
+                '      end if\n'
+                '    end try\n'
+                '  end repeat\n'
+                'end tell\n'
+                'return "no-item"'
+            )
+            try:
+                r = subprocess.run(["osascript", "-e", script],
+                                   capture_output=True, text=True, timeout=6)
+                out = (r.stdout or "").strip()
+                if r.returncode == 0 and out == "ok":
+                    return {"ok": True}
+                err = (r.stderr or "").strip() or (
+                    "Dictation isn't enabled — turn it on in System Settings › "
+                    "Keyboard › Dictation" if out == "no-item"
+                    else "couldn't start dictation")
+                low = err.lower()
+                if ("not allowed" in low or "assistive" in low
+                        or "-1719" in err or "-25211" in err):
+                    err += (" — grant Waikiki Accessibility access in System "
+                            "Settings › Privacy & Security › Accessibility")
+                return {"ok": False, "error": err}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
 
         def read_clipboard(self):
             """Text currently on the system pasteboard, or "".

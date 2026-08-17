@@ -32,6 +32,13 @@ SEED_WIKIS = ["Beaconlight", "Crosslake", "StartupOS"]
 # Slug of the built-in Help wiki (seeded with help text + the AI system prompts).
 HELP_WIKI = "help"
 
+# True when running inside the packaged desktop shell (set by waikiki_app before
+# the server starts). The page uses it to choose the native dictation route,
+# because WKWebView has no SpeechRecognition.
+def is_desktop() -> bool:
+    return os.environ.get("WAIKIKI_DESKTOP") == "1"
+
+
 # Server -------------------------------------------------------------------------
 HOST = os.environ.get("WAIKIKI_HOST", "127.0.0.1")
 PORT = int(os.environ.get("WAIKIKI_PORT", "8787"))

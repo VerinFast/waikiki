@@ -156,7 +156,20 @@ MAX_TRACKED_SESSIONS = 64
 
 
 def _session_key() -> str | None:
-    """Identity of the calling agent's session, or None if there isn't one."""
+    """Identity of the calling agent's session, or None if there isn't one.
+
+    Every read here is guarded, including the attribute reads. `Context.session_id`
+    is a *property* that raises when there is no session, and `getattr(..., None)`
+    only swallows AttributeError — so reading it outside the try let a RuntimeError
+    escape and fail the tool call with an error about sessions rather than about
+    the tool (issue #52). That combination — `get_context()` succeeding while no
+    session exists — is exactly what an in-process `mcp.call_tool` produces; over
+    stdio a session always exists, which is why it stayed invisible.
+
+    None is the right answer for a caller without a session: `_active_wiki()` then
+    uses the process-local `_ACTIVE` fallback. Never widen that to make distinct
+    sessions share a pointer — see issue #11 and CLAUDE.md rule 4.
+    """
     override = _SESSION_OVERRIDE.get()
     if override:
         return override
@@ -167,7 +180,10 @@ def _session_key() -> str | None:
     except Exception:
         return None                     # no live request: fall back
     for attr in ("session_id", "client_id"):
-        val = getattr(ctx, attr, None)
+        try:
+            val = getattr(ctx, attr, None)
+        except Exception:
+            continue                    # raising property: treat as absent
         if val:
             return str(val)
     return None

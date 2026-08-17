@@ -97,6 +97,39 @@ def test_mcp_list_pages_schema_accepts_every_shape(wiki, monkeypatch):
     assert out["branch"] == out["false"] | {"igni"}
 
 
+def test_in_process_dispatch_survives_a_context_with_no_session(wiki, monkeypatch):
+    """A tool dispatched in-process must do its job, not die looking up a session.
+
+    Inside `mcp.call_tool` there IS a context but there is NO session, and
+    FastMCP's `Context.session_id` is a property that raises in that state.
+    `_session_key()` read it as `getattr(ctx, "session_id", None)` outside its
+    try/except — and `getattr`'s default only swallows AttributeError — so the
+    RuntimeError escaped and every in-process call failed with a ToolError about
+    sessions instead of answering (issue #52). Over stdio a session always
+    exists, which is why it stayed invisible.
+
+    Deliberately NO `_SESSION_OVERRIDE` here: setting it makes `_session_key()`
+    return before it ever reaches that read, so a test that sets it cannot catch
+    this bug — which is exactly why the tests that use the override didn't.
+    """
+    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    monkeypatch.setattr(mcp_server, "_ACTIVE_BY_SESSION", {})
+    store.create_page("Sessionless", "written by a caller with no session")
+    assert mcp_server._SESSION_OVERRIDE.get() is None      # the seam stays unused
+
+    async def go():
+        return (await mcp_server.mcp.call_tool("list_wikis", {}),
+                await mcp_server.mcp.call_tool("list_pages", {}))
+
+    listed, pages = anyio.run(go)
+    assert listed.structured_content["active"] == "main"
+    assert {p["slug"] for p in pages.structured_content["pages"]} == {"sessionless"}
+    # A caller with no session falls back to the process-local active wiki, and
+    # must NOT mint a session entry: distinct sessions sharing one pointer is
+    # the shape that wrote pages into the wrong wiki (issue #11, rule 4).
+    assert mcp_server._ACTIVE_BY_SESSION == {}
+
+
 def test_link_following_is_asked_for_in_the_prompt_surface():
     """Agents follow links when something asks them to, and the asking lives in
     prompt text a refactor can silently drop (issue #47). Assert on what the

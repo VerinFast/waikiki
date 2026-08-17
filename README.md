@@ -307,7 +307,10 @@ branch — and it always reports how many sub-pages it withheld, so an agent nev
 reads silence as absence), `get_page` (returns a heading outline plus its
 resolved outbound `links` — target, title, the label the reader sees, and
 whether the page exists, plus a one-line `hint` asking the agent to read the
-linked pages it is about to rely on), `create_page`, and a family of **merge-safe
+linked pages it is about to rely on), `read_pages` (the same payload for up to 10
+slugs in one call, so following those links costs one round-trip instead of ten —
+slugs that don't exist come back in `missing` rather than failing the batch, and
+anything past the cap in `dropped`), `create_page`, and a family of **merge-safe
 live edit** tools:
 `edit_page` (find/replace — preferred), `replace_section`, `insert_after` /
 `insert_before`, `prepend_to_page`, `remove_from_page`, `append_to_page`, and

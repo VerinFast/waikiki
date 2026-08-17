@@ -47,13 +47,11 @@ def test_metadata_reports_trashed(wiki):
 
 # --- MCP surface -------------------------------------------------------------
 
-def test_get_page_exposes_freshness_and_properties(wiki, monkeypatch):
-    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+def test_get_page_exposes_freshness_and_properties(wiki, monkeypatch, fake_live_http):
     # Isolate from any dev server on the default port: get_page asks the web app
     # for live CRDT text, and without this the test would read a *different*
     # database and report a spurious `live`.
-    monkeypatch.setattr(mcp_server.httpx, "get",
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+    _offline(monkeypatch, fake_live_http)
     store.create_page("Meru", _fm(tags="character", HitPoints="42"))
     out = mcp_server.get_page("meru")
     assert out["updated_at"]                    # staleness signal present
@@ -63,10 +61,8 @@ def test_get_page_exposes_freshness_and_properties(wiki, monkeypatch):
     assert out["tags"] == ["character"]
 
 
-def test_get_page_returns_resolved_outbound_links(wiki, monkeypatch):
-    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
-    monkeypatch.setattr(mcp_server.httpx, "get",     # don't touch a live dev server
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+def test_get_page_returns_resolved_outbound_links(wiki, monkeypatch, fake_live_http):
+    _offline(monkeypatch, fake_live_http)
     store.create_page("Igni", "fire")
     store.create_page("Edaphos", "earth spirit")
     store.create_page("Pantheon", "## Family tree\n\n[[Igni]] · [[Edaphos|earth]] · "
@@ -83,7 +79,8 @@ def test_get_page_returns_resolved_outbound_links(wiki, monkeypatch):
     ]
 
 
-def test_get_page_links_describe_the_live_markdown_it_returned(wiki, monkeypatch):
+def test_get_page_links_describe_the_live_markdown_it_returned(wiki, monkeypatch,
+                                                              fake_live_http):
     """`links` must match the text actually returned, not the saved revision."""
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
     store.create_page("Igni", "fire")
@@ -96,21 +93,20 @@ def test_get_page_links_describe_the_live_markdown_it_returned(wiki, monkeypatch
         def json():
             return {"markdown": "[[Igni]] and now also [[Corliss]]"}
 
-    monkeypatch.setattr(mcp_server.httpx, "get", lambda *a, **k: _Live())
+    fake_live_http(lambda url: _Live())
     out = mcp_server.get_page("pantheon")
     assert out["live"] is True
     assert [d["target"] for d in out["links"]] == ["igni", "corliss"]
 
 
-def _offline(monkeypatch):
+def _offline(monkeypatch, fake_live_http):
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
-    monkeypatch.setattr(mcp_server.httpx, "get",     # don't touch a live dev server
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+    fake_live_http()                                 # don't touch a live dev server
 
 
-def test_get_page_hint_asks_for_the_links_it_returned(wiki, monkeypatch):
+def test_get_page_hint_asks_for_the_links_it_returned(wiki, monkeypatch, fake_live_http):
     """A docstring is read once; the response is read every time (issue #47)."""
-    _offline(monkeypatch)
+    _offline(monkeypatch, fake_live_http)
     store.create_page("Igni", "fire")
     store.create_page("Pantheon", "[[Igni]] · [[Corliss]] · [[Igni]] again")
 
@@ -126,27 +122,25 @@ def test_get_page_hint_asks_for_the_links_it_returned(wiki, monkeypatch):
     assert not any(w in hint.lower() for w in ("you should have", "failed", "forgot"))
 
 
-def test_get_page_hint_counts_one_link_in_the_singular(wiki, monkeypatch):
-    _offline(monkeypatch)
+def test_get_page_hint_counts_one_link_in_the_singular(wiki, monkeypatch, fake_live_http):
+    _offline(monkeypatch, fake_live_http)
     store.create_page("Igni", "fire")
     store.create_page("Pantheon", "just [[Igni]]")
     assert "links to 1 page." in mcp_server.get_page("pantheon")["hint"]
 
 
-def test_get_page_omits_the_hint_when_there_is_nothing_to_follow(wiki, monkeypatch):
+def test_get_page_omits_the_hint_when_there_is_nothing_to_follow(wiki, monkeypatch, fake_live_http):
     """Stop hinting the moment it stops being true — a hint on every page is one
     agents learn to ignore."""
-    _offline(monkeypatch)
+    _offline(monkeypatch, fake_live_http)
     # A section-only link is same-page, so it is not an outbound link.
     store.create_page("Alone", "## Family tree\n\nSee [[#Family tree]].")
     out = mcp_server.get_page("alone")
     assert out["links"] == [] and "hint" not in out
 
 
-def test_get_page_flags_a_trashed_page(wiki, monkeypatch):
-    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
-    monkeypatch.setattr(mcp_server.httpx, "get",     # don't touch a live dev server
-                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+def test_get_page_flags_a_trashed_page(wiki, monkeypatch, fake_live_http):
+    _offline(monkeypatch, fake_live_http)
     store.create_page("Gone", "bye")
     store.soft_delete("gone")
     out = mcp_server.get_page("gone")

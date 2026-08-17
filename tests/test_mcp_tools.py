@@ -1,4 +1,9 @@
+import json
+import threading
+import time
+
 import anyio
+import pytest
 
 from waikiki import help_content, mcp_server, store
 
@@ -115,6 +120,154 @@ def test_link_following_is_asked_for_in_the_prompt_surface():
     # The staleness nudge this one is modelled on must still be there too: the
     # two are the same lesson (the page in your transcript isn't the whole truth).
     assert "check_pages" in instructions
+
+
+class _Resp:
+    """Minimal stand-in for the httpx response /api/collab/{slug}/live returns."""
+
+    def __init__(self, markdown):
+        self.status_code = 200
+        self._markdown = markdown
+
+    def json(self):
+        return {"markdown": self._markdown}
+
+
+@pytest.fixture
+def linked_wiki(wiki, monkeypatch, fake_live_http):
+    """A small wiki with links, frontmatter and a red link, acting as one agent.
+
+    Offline by default so no dev server on the default port can answer for it; a
+    test that wants unsaved live text re-installs the fake with its own handler.
+    """
+    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    fake_live_http()
+    store.create_page(
+        "Igni",
+        "---\nstatus: draft\ntags: fire, gods\n---\n\n# Igni\n\n"
+        "The fire god, brother of [[Meru]] and enemy of [[Corliss]]. "
+        "Again [[Meru|the mountain]], and again [[Meru]].",
+    )
+    store.create_page("Meru", "# Meru\n\nA peak that watches [[Igni]].")
+    store.create_page("Thane", "# Thane\n\nNo links here.")
+
+
+def test_mcp_read_pages_batches_hits_and_misses(linked_wiki):
+    """One bad slug must not discard the good pages (issue #48)."""
+    res = mcp_server.read_pages(["igni", "corliss", "meru"])
+
+    assert list(res["pages"]) == ["igni", "meru"]        # asked-for order kept
+    assert res["missing"] == ["corliss"]
+    assert res["wiki"] == "main"
+    assert "error" not in res and "dropped" not in res
+    assert res["pages"]["igni"]["title"] == "Igni"
+    assert res["pages"]["meru"]["markdown"].startswith("# Meru")
+
+    # Empty input is an error rather than a silent empty batch...
+    assert "error" in mcp_server.read_pages([])
+    # ...but a batch of only-missing slugs is a legitimate answer.
+    only_missing = mcp_server.read_pages(["corliss", "nowhere"])
+    assert only_missing["pages"] == {} and only_missing["missing"] == ["corliss", "nowhere"]
+
+
+def test_mcp_read_pages_caps_and_says_what_it_dropped(wiki, monkeypatch, fake_live_http):
+    """Over the cap, the extra slugs come back named — never silently truncated."""
+    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    fake_live_http()
+    slugs = [f"p{i}" for i in range(mcp_server.READ_PAGES_MAX + 3)]
+    for s in slugs:
+        store.create_page(s.upper(), f"page {s}")
+
+    res = mcp_server.read_pages(slugs)
+    assert len(res["pages"]) == mcp_server.READ_PAGES_MAX
+    assert list(res["pages"]) == slugs[:mcp_server.READ_PAGES_MAX]
+    assert res["dropped"] == slugs[mcp_server.READ_PAGES_MAX:]
+    assert "dropped" in res["hint"] and "read_pages" in res["hint"]
+    # The cap is documented where the caller will actually read it: the tool
+    # description the MCP client is served.
+    async def served():
+        return {t.name: t.description or "" for t in await mcp_server.mcp.list_tools()}
+
+    desc = anyio.run(served)["read_pages"]
+    assert str(mcp_server.READ_PAGES_MAX) in desc and "missing" in desc
+
+    # Duplicates collapse before the cap applies, so they can't crowd it out.
+    dupes = mcp_server.read_pages(["p0"] * 5 + ["p1"])
+    assert list(dupes["pages"]) == ["p0", "p1"] and "dropped" not in dupes
+
+
+def test_mcp_read_pages_is_identical_to_get_page(linked_wiki, fake_live_http):
+    """Same page, either tool, byte-identical — including the live overlay and
+    the `links`/`hint` computed from it. Two shapes would mean an agent's answer
+    depended on which tool it happened to reach for (issue #48)."""
+    # Snapshot the saved text here: the fake runs on worker threads, which get no
+    # DB connection and no active wiki of their own.
+    saved = {s: store.get_page(s)["markdown"] for s in ("igni", "meru", "thane")}
+
+    def fake_get(url, **kw):
+        return _Resp(saved[url.rsplit("/", 2)[-2]] + "\n\nUnsaved: [[Thane]].")
+
+    fake_live_http(fake_get)
+
+    batch = mcp_server.read_pages(["igni", "meru", "thane"])
+    for slug in ("igni", "meru", "thane"):
+        assert json.dumps(batch["pages"][slug], sort_keys=True) == \
+            json.dumps(mcp_server.get_page(slug), sort_keys=True)
+
+    igni = batch["pages"]["igni"]
+    assert igni["live"] is True and "Unsaved" in igni["markdown"]
+    # The live text is what `links` and `version` describe, in both tools.
+    assert {r["target"] for r in igni["links"]} == {"meru", "corliss", "thane"}
+    assert igni["version"] == store.content_version(igni["markdown"])
+    assert igni["properties"] == {"status": "draft"} and igni["tags"] == ["fire", "gods"]
+    assert "hint" in igni and "hint" not in batch
+
+
+def test_mcp_read_pages_logs_one_read_not_one_per_page(linked_wiki):
+    """A batch read is one entry in the activity feed, not N (issue #48)."""
+    def ai_reads():
+        return sum(d["ai_read"] for d in store.activity_last_7_days())
+
+    before = ai_reads()
+    mcp_server.read_pages(["igni", "meru", "thane"])
+    assert ai_reads() == before + 1
+
+
+def test_mcp_read_pages_fetches_live_text_concurrently(linked_wiki, fake_live_http):
+    """The live-edit fetch is one HTTP call per page. Serially, a batch of N is
+    slower than the N get_page calls it replaces, which defeats the tool. Assert
+    the calls actually overlap rather than timing them (issue #48)."""
+    for i in range(5):
+        store.create_page(f"Extra {i}", "filler")
+
+    slugs = ["igni", "meru", "thane"] + [f"extra-{i}" for i in range(5)]
+    saved = {s: store.get_page(s)["markdown"] for s in slugs}   # see note above
+    lock = threading.Lock()
+    state = {"now": 0, "peak": 0, "calls": 0}
+
+    def fake_get(url, **kw):
+        with lock:
+            state["now"] += 1
+            state["calls"] += 1
+            state["peak"] = max(state["peak"], state["now"])
+        time.sleep(0.05)
+        with lock:
+            state["now"] -= 1
+        return _Resp(saved[url.rsplit("/", 2)[-2]])
+
+    fake_live_http(fake_get)
+
+    started = time.monotonic()
+    res = mcp_server.read_pages(slugs)
+    elapsed = time.monotonic() - started
+
+    assert len(res["pages"]) == 8 and state["calls"] == 8   # still one fetch per page
+    assert state["peak"] > 1, "live fetches ran one at a time"
+    # 8 x 50ms serial is 400ms; concurrent is ~50ms. Generous bound, still bites.
+    assert elapsed < 0.25, f"batch of 8 took {elapsed:.2f}s — fetches look serial"
+
+    # A single-page batch must not pay for a thread pool it doesn't need.
+    assert mcp_server.read_pages(["igni"])["pages"]["igni"]["slug"] == "igni"
 
 
 def test_mcp_docs_tools(wiki):

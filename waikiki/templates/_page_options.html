@@ -10,6 +10,21 @@
     <form method="post" action="/wiki/{{ page.slug }}/clone">
       <button type="submit">Clone</button>
     </form>
+    {# Was a collapsed "Page settings" block buried on the Details page, holding
+       only this one control. It is a per-page action, so it belongs here. #}
+    <form method="post" action="/wiki/{{ page.slug }}/parent" class="menu-parent">
+      <label>Parent page
+        <select name="parent">
+          <option value="">— none (top-level) —</option>
+          {% for p in parent_options %}
+            <option value="{{ p.slug }}" {{ 'selected' if parent and parent.slug == p.slug }}>{{ p.title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit">Move</button>
+      <span class="muted note">Children are hidden from the sidebar and the main
+        search.</span>
+    </form>
     <form method="post" action="/wiki/{{ page.slug }}/delete"
           onsubmit="return confirm('Move this page to the Trash?')">
       <button type="submit" class="danger">Delete</button>

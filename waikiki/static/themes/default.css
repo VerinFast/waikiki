@@ -458,3 +458,10 @@ mark.wk-hit.on{background:var(--accent);color:var(--accent-contrast)}
   .rail-resize{display:none}
   .layout{grid-template-columns:1fr}
 }
+
+/* Controls for the lead section (text before the first heading), which has no
+   heading of its own to attach to. */
+.lead-tools{display:flex;align-items:center;gap:.5rem;margin:0 0 .3rem;
+  min-height:1.2rem;opacity:0;transition:opacity .12s}
+.rendered:hover .lead-tools,.lead-tools:focus-within{opacity:1}
+.lead-tools .section-edit{position:static;margin:0}

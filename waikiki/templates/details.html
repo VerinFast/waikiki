@@ -25,7 +25,7 @@
       <a class="tab on" href="/wiki/{{ page.slug }}/details">Details</a>
     </nav>
 
-    <p class="muted">Page settings, links, history, and discussion for
+    <p class="muted">Links, history, and discussion for
       <a href="/wiki/{{ page.slug }}">{{ page.title }}</a>. None of this shows on
       the article itself.</p>
 
@@ -47,21 +47,6 @@
           in this page plus related excerpts from this wiki.</p>
       </details>
     </section>
-
-    <details class="history" id="page-settings">
-      <summary>Page settings</summary>
-      <form method="post" action="/wiki/{{ page.slug }}/parent" class="addmodel">
-        <label>Parent page (children are hidden from the sidebar &amp; main search)
-          <select name="parent">
-            <option value="">— none (top-level) —</option>
-            {% for p in all_pages %}
-              <option value="{{ p.slug }}" {{ 'selected' if parent and parent.slug == p.slug }}>{{ p.title }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <button class="btn" type="submit">Save parent</button>
-      </form>
-    </details>
 
     <details class="history" id="backlinks">
       <summary>What links here ({{ backlinks | length }})</summary>

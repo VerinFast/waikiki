@@ -581,8 +581,38 @@
       }
     });
 
+    // Per-section controls. The lead — everything before the first heading —
+    // has no heading to hang off, so it gets its own strip at the top of the
+    // body; without it the opening paragraph was the one part of a page you
+    // could neither edit in place nor hear. Pages with no headings at all get
+    // exactly one strip covering the whole body.
+    function wkLeadHost() {
+      var rendered = document.querySelector('.content .rendered');
+      if (!rendered) return null;
+      var existing = rendered.querySelector(':scope > .lead-tools');
+      if (existing) return existing;
+      // Nothing before the first heading means there is no lead to act on.
+      var first = rendered.firstElementChild;
+      while (first && first.classList && first.classList.contains('infobox')) {
+        first = first.nextElementSibling;      // the frontmatter table is not lead prose
+      }
+      if (!first || /^H[1-3]$/.test(first.tagName)) return null;
+      var strip = document.createElement('div');
+      strip.className = 'lead-tools';
+      rendered.insertBefore(strip, rendered.firstChild);
+      return strip;
+    }
+
     // Per-section "edit" links next to headings (view mode).
     if (window.WAIKIKI_PAGE) {
+      var leadHost = wkLeadHost();
+      if (leadHost) {
+        var leadEdit = document.createElement('a');
+        leadEdit.className = 'section-edit';
+        leadEdit.textContent = 'edit';
+        leadEdit.href = '/wiki/' + WAIKIKI_PAGE.slug + '/section?anchor=__lead__';
+        leadHost.appendChild(leadEdit);
+      }
       document.querySelectorAll('.content .rendered h1, .content .rendered h2, .content .rendered h3')
         .forEach(function (h) {
           if (!h.id) return;                 // match the section by its anchor id
@@ -753,6 +783,21 @@
         pb.type = 'button'; pb.className = 'btn tts-page'; pb.textContent = '🔊 Listen';
         pb.addEventListener('click', function () { speak(cleanText(rendered), pb); });
         head.appendChild(pb);
+      }
+      var lh = wkLeadHost();
+      if (lh) {
+        var lb = document.createElement('button');
+        lb.type = 'button'; lb.className = 'tts-btn'; lb.title = 'Read the opening aloud';
+        lb.textContent = '\uD83D\uDD0A';
+        lb.addEventListener('click', function () {
+          var parts = [], el = lh.nextElementSibling;
+          while (el) {
+            if (/^H[1-6]$/.test(el.tagName)) break;
+            parts.push(cleanText(el)); el = el.nextElementSibling;
+          }
+          speak(parts.join('. '), lb);
+        });
+        lh.appendChild(lb);
       }
       rendered.querySelectorAll('h1,h2,h3').forEach(function (h) {
         if (!h.id) return;

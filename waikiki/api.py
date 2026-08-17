@@ -413,6 +413,11 @@ def _ctx(request: Request, **extra) -> dict:
     page = base.get("page") or {}
     if page.get("slug"):
         base.setdefault("page_link", deeplink.for_page(wiki, page["slug"]))
+        # Candidate parents for the Page options menu. Top-level pages only,
+        # matching what the old Page settings block offered, and never the page
+        # itself.
+        base.setdefault("parent_options",
+                        [p for p in store.list_pages() if p["slug"] != page["slug"]])
     return base
 
 
@@ -809,7 +814,6 @@ def details_view(request: Request, slug: str):
     page = store.get_page(slug)
     if not page:
         raise HTTPException(404, "Page not found")
-    all_pages = [p for p in store.list_pages() if p["slug"] != slug]
     suggestions = []
     for s in store.suggestions_list(slug):
         full = store.suggestion_get(s["id"])
@@ -823,7 +827,7 @@ def details_view(request: Request, slug: str):
                           versions=store.page_versions(slug),
                           backlinks=store.backlinks(slug), parent=store.parent_of(page),
                           crumbs=store.ancestors(page),
-                          all_pages=all_pages, tags=store.tags_of(slug),
+                          tags=store.tags_of(slug),
                           comments=store.comments_list(slug),
                           suggestions=suggestions)
     )

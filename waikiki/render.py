@@ -253,8 +253,46 @@ def extract_toc(markdown: str) -> list[dict]:
             for (_i, lvl, disp, slug) in _headings(markdown)]
 
 
+LEAD_ANCHOR = "__lead__"
+"""Anchor naming the text before the first heading.
+
+That text has no heading, so it could not be addressed at all — which is why it
+had no per-section edit or Listen control. It is a real section to a reader, so
+it gets a reserved name rather than staying unreachable.
+"""
+
+
+def lead_span(markdown: str) -> tuple[int, int] | None:
+    """Char range of the lead: after any frontmatter, up to the first heading.
+
+    Returns None when there is no lead text. The frontmatter block is excluded
+    deliberately — editing the lead must not swallow or duplicate it.
+    """
+    text = (markdown or "")
+    lines = text.split("\n")
+    # Where the body starts: parse_frontmatter hands back the body, so the
+    # offset is whatever it removed. Reusing it keeps the fence handling in one
+    # place. (Stored markdown is LF-only — store normalises on save — so the
+    # lengths line up.)
+    #
+    # Not `if body else 0`: a page that is frontmatter and nothing else has an
+    # empty body, and that guard returned the frontmatter itself as the lead.
+    from . import structure
+
+    _meta, _tags, body = structure.parse_frontmatter(text)
+    start = len(text) - len(body)
+    heads = _headings(text)
+    end = sum(len(lines[k]) + 1 for k in range(heads[0][0])) if heads else len(text)
+    end = min(end, len(text))
+    if end <= start or not text[start:end].strip():
+        return None                       # page opens on a heading: no lead
+    return (start, end)
+
+
 def section_span_for_slug(markdown: str, slug: str) -> tuple[int, int] | None:
     """Char range of the section whose heading anchor is `slug`."""
+    if slug == LEAD_ANCHOR:
+        return lead_span(markdown)
     lines = (markdown or "").split("\n")
     heads = _headings(markdown)
     target = next((h for h in heads if h[3] == slug), None)

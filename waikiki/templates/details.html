@@ -22,46 +22,13 @@
 
     <nav class="pagetabs">
       <a class="tab" href="/wiki/{{ page.slug }}">Article</a>
+      <a class="tab" href="/wiki/{{ page.slug }}/metadata">Metadata</a>
       <a class="tab on" href="/wiki/{{ page.slug }}/details">Details</a>
     </nav>
 
-    <p class="muted">Page settings, links, history, and discussion for
+    <p class="muted">Links, history, and discussion for
       <a href="/wiki/{{ page.slug }}">{{ page.title }}</a>. None of this shows on
       the article itself.</p>
-
-    <section class="chatpanel" id="chat">
-      <details class="history" open>
-        <summary>💬 Chat with this article</summary>
-        <div class="chatlog" id="chatlog"></div>
-        <form id="chatform" class="chatform">
-          <input type="text" id="chatq" placeholder="Ask about this page…"
-                 autocomplete="off" required>
-          <select id="chatprovider" title="Which CLI">
-            <option value="">Default</option>
-            <option value="claude">Claude</option>
-            <option value="gemini">Gemini</option>
-          </select>
-          <button class="btn primary" type="submit">Ask</button>
-        </form>
-        <p class="muted note">Answered by a local CLI (Settings → Chat), grounded
-          in this page plus related excerpts from this wiki.</p>
-      </details>
-    </section>
-
-    <details class="history" id="page-settings">
-      <summary>Page settings</summary>
-      <form method="post" action="/wiki/{{ page.slug }}/parent" class="addmodel">
-        <label>Parent page (children are hidden from the sidebar &amp; main search)
-          <select name="parent">
-            <option value="">— none (top-level) —</option>
-            {% for p in all_pages %}
-              <option value="{{ p.slug }}" {{ 'selected' if parent and parent.slug == p.slug }}>{{ p.title }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <button class="btn" type="submit">Save parent</button>
-      </form>
-    </details>
 
     <details class="history" id="backlinks">
       <summary>What links here ({{ backlinks | length }})</summary>
@@ -141,49 +108,4 @@
   </article>
 {% endblock %}
 
-{% block scripts %}
-<script>
-  (function () {
-    var form = document.getElementById('chatform');
-    if (!form) return;
-    var log = document.getElementById('chatlog');
-    var q = document.getElementById('chatq');
-    var prov = document.getElementById('chatprovider');
-    var history = [];
-    function bubble(role, text, cls) {
-      var d = document.createElement('div');
-      d.className = 'chatmsg ' + role + (cls ? ' ' + cls : '');
-      d.textContent = text;
-      log.appendChild(d);
-      log.scrollTop = log.scrollHeight;
-      return d;
-    }
-    form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      var question = q.value.trim();
-      if (!question) return;
-      bubble('user', question);
-      q.value = ''; q.disabled = true;
-      var thinking = bubble('assistant', 'Thinking…', 'thinking');
-      fetch('/wiki/' + WAIKIKI_PAGE.slug + '/chat', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question: question, provider: prov.value || null, history: history
-        })
-      }).then(function (r) { return r.json(); }).then(function (res) {
-        thinking.remove(); q.disabled = false; q.focus();
-        if (res.ok) {
-          bubble('assistant', res.answer);
-          history.push({ role: 'user', content: question });
-          history.push({ role: 'assistant', content: res.answer });
-        } else {
-          bubble('assistant', res.error || 'Chat failed.', 'err');
-        }
-      }).catch(function (err) {
-        thinking.remove(); q.disabled = false;
-        bubble('assistant', 'Request failed: ' + err, 'err');
-      });
-    });
-  })();
-</script>
-{% endblock %}
+

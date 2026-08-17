@@ -4,6 +4,7 @@ The client-side halves of this release (find-in-page, the resizable rail) are
 verified in a browser rather than here; what's testable server-side is the data
 those features and the breadcrumb trail are built from.
 """
+import pytest
 from fastapi.testclient import TestClient
 
 from waikiki import db, elements, render, store
@@ -139,3 +140,51 @@ def test_element_links_resolve_by_title_including_red_links(wiki):
     links = json.loads(H.unescape(raw))
     assert links["[[Meru]]"] == '<a href="/wiki/meru">Meru</a>'
     assert links["[[Nowhere]]"] == '<a href="/wiki/nowhere">Nowhere</a>'
+
+
+# --- Lead section (text before the first heading) -----------------------------
+
+def test_lead_span_excludes_frontmatter(wiki):
+    """Editing the lead must not swallow or duplicate the frontmatter block."""
+    md = "---\ntags: a, b\n---\nLead paragraph.\n\n## First\n\nbody\n"
+    span = render.lead_span(md)
+    assert span and md[span[0]:span[1]].strip() == "Lead paragraph."
+    assert "---" not in md[span[0]:span[1]]
+
+
+def test_lead_span_covers_a_page_with_no_headings(wiki):
+    md = "Just a body, no headings at all.\n"
+    span = render.lead_span(md)
+    assert span and md[span[0]:span[1]].strip() == "Just a body, no headings at all."
+
+
+@pytest.mark.parametrize("md", [
+    "# Head\n\nbody\n",                 # opens on a heading
+    "---\ntags: a\n---\n# Head\n",      # frontmatter then a heading
+    "---\ntags: a\n---\n",              # frontmatter and nothing else
+    "",                                  # empty page
+    "---\ntags: a\n---\n\n\n# Head\n",  # only blank lines before the heading
+])
+def test_no_lead_to_edit(wiki, md):
+    """No lead text means no span — and no control offered for one."""
+    assert render.lead_span(md) is None
+
+
+def test_the_lead_is_addressable_by_its_sentinel(wiki):
+    md = "---\ntags: a\n---\nLead.\n\n# H\n\nbody\n"
+    assert render.section_span_for_slug(md, render.LEAD_ANCHOR) == render.lead_span(md)
+
+
+def test_lead_section_round_trips_through_the_edit_route(wiki):
+    """The reported bug end to end: the lead can now be fetched and saved."""
+    store.create_page("Meru", "---\ntags: city\n---\nOriginal opening.\n\n## Later\n\ntail\n")
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        got = client.get(f"/wiki/meru/section?anchor={render.LEAD_ANCHOR}")
+        assert got.status_code == 200 and "Original opening." in got.text
+        client.post("/wiki/meru/section",
+                    data={"anchor": render.LEAD_ANCHOR, "markdown": "Rewritten opening.\n\n"},
+                    follow_redirects=False)
+    md = store.get_page("meru")["markdown"]
+    assert "Rewritten opening." in md and "Original opening." not in md
+    assert md.startswith("---\ntags: city\n---\n"), "frontmatter was damaged"
+    assert "## Later" in md and "tail" in md, "the rest of the page was damaged"

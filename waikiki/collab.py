@@ -15,6 +15,8 @@ from __future__ import annotations
 import asyncio
 import time
 
+import sys
+
 import anyio
 from pycrdt import Text
 from pycrdt.websocket import ASGIServer, WebsocketServer
@@ -179,3 +181,36 @@ async def flusher() -> None:
                     room.awareness.set_local_state(None)
                 except Exception:
                     pass
+
+
+async def flush_all() -> None:
+    """Persist every room that is owed a write, ignoring the debounce.
+
+    `flusher()` only saves text that has been *stable* for `_FLUSH_IDLE`, on a
+    one-second loop, so anything typed in the last couple of seconds has never
+    been written. Cancelling that task at shutdown just stops the loop — it does
+    not flush — so quitting used to drop the tail of whatever someone was
+    editing.
+
+    That matters most on the path the user did not choose: the updater quits the
+    app itself (SIGTERM) so the lifespan shutdown runs, precisely so this can
+    happen. Call it BEFORE cancelling the flusher. See issue #19.
+    """
+    for key in list(_seeded):
+        wiki, slug = _split(key)
+        try:
+            room = await server.get_room(key)
+            current = str(_ytext(room))
+        except Exception:
+            continue
+        if current == _last_saved.get(key):
+            continue                      # already durable, nothing owed
+        token = db.current_wiki.set(wiki)
+        try:
+            await anyio.to_thread.run_sync(_persist, slug, current)
+            _last_saved[key] = current
+        except Exception as exc:
+            print(f"[waikiki] final collab flush failed for {key}: {exc}",
+                  file=sys.stderr)
+        finally:
+            db.current_wiki.reset(token)

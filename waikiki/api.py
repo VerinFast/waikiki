@@ -23,8 +23,8 @@ from pydantic import BaseModel
 
 from . import (accesslog, ai, appconfig, auth, backups, bonjour, chat, collab,
                config, db, debuglog, deeplink, edits, elements, embeddings,
-               help_content, imagegen, pdfgen, rag, render, store, tunnel,
-               updater, wikis)
+               help_content, imagegen, pdfgen, rag, render, store, structure,
+               tunnel, updater, wikis)
 
 
 @asynccontextmanager
@@ -138,6 +138,15 @@ async def lifespan(app: FastAPI):
         finally:
             bonjour.stop()
             tunnel.stop()
+            # Persist any edit the debounce has not written yet, BEFORE the
+            # flusher is cancelled — cancelling only stops its loop, it does not
+            # flush, so the tail of whatever someone was editing was being
+            # dropped on quit. Matters most on the updater's path, which quits
+            # the app on purpose. See issue #19.
+            try:
+                await collab.flush_all()
+            except Exception as exc:
+                print(f"[waikiki] final collab flush failed: {exc}", file=sys.stderr)
             warm_task.cancel()
             seed_task.cancel()
             html_task.cancel()
@@ -404,6 +413,11 @@ def _ctx(request: Request, **extra) -> dict:
     page = base.get("page") or {}
     if page.get("slug"):
         base.setdefault("page_link", deeplink.for_page(wiki, page["slug"]))
+        # Candidate parents for the Page options menu. Top-level pages only,
+        # matching what the old Page settings block offered, and never the page
+        # itself.
+        base.setdefault("parent_options",
+                        [p for p in store.list_pages() if p["slug"] != page["slug"]])
     return base
 
 
@@ -730,6 +744,22 @@ class ChatIn(BaseModel):
     history: list[dict] = []
 
 
+@app.post("/chat")
+async def chat_wiki_endpoint(body: ChatIn):
+    """Chat with no page in context — reachable from Settings, the Index, search.
+
+    Deliberately does NOT pre-retrieve excerpts to compensate. The agent should
+    look things up through Waikiki's own MCP tools; until it can (issue #30) an
+    answer here is only as good as the model's general knowledge, which is the
+    honest state of it rather than a retrieval step pretending otherwise.
+    """
+    import anyio
+    provider = body.provider or store.get_setting("chat_provider", "claude")
+    model = body.model if body.model is not None else store.get_setting("chat_model", "")
+    return await anyio.to_thread.run_sync(
+        lambda: chat.answer(None, body.question, provider, model, body.history or []))
+
+
 @app.post("/wiki/{slug}/chat")
 async def chat_endpoint(slug: str, body: ChatIn):
     """Answer a question about a page via the configured CLI (claude/gemini),
@@ -793,6 +823,59 @@ def view_page(request: Request, slug: str):
     )
 
 
+@app.get("/wiki/{slug}/metadata", response_class=HTMLResponse)
+def metadata_view(request: Request, slug: str, msg: str = "", error: str = ""):
+    """The page's frontmatter properties and tags, as a peer of Article.
+
+    This is where the automatic key/value table used to be prepended to the
+    article body. Custom elements the author placed in the body stay there.
+    """
+    page = store.get_page(slug)
+    if not page:
+        raise HTTPException(404, "Page not found")
+    meta, _tags, _body = structure.parse_frontmatter(page["markdown"])
+    return templates.TemplateResponse(request,
+        "metadata.html", _ctx(request, page=page,
+                          trashed=bool(page.get("deleted_at")),
+                          properties=meta, tags=store.tags_of(slug),
+                          parent=store.parent_of(page),
+                          crumbs=store.ancestors(page),
+                          comment_count=len(store.comments_list(slug)),
+                          msg=msg, error=error))
+
+
+@app.post("/wiki/{slug}/metadata")
+async def metadata_save(request: Request, slug: str):
+    """Replace the page's properties with exactly what the form submitted.
+
+    Keys and values arrive as parallel lists so a rename is just an edited key,
+    and order is whatever the form shows. `tags` is refused: tags live in the
+    same block but are their own concept, and accepting one here would create a
+    second, competing source for them.
+    """
+    form = await request.form()
+    keys = [str(k).strip() for k in form.getlist("key")]
+    values = [str(v) for v in form.getlist("value")]
+    props: dict[str, str] = {}
+    rejected = []
+    for key, value in zip(keys, values):
+        if not key:
+            continue                       # a blank key is a deleted row
+        if key.replace(" ", "").lower() == "tags":
+            rejected.append(key)
+            continue
+        props[key] = value.strip()
+    if store.replace_properties(slug, props, author="human") is None:
+        raise HTTPException(404, "Page not found")
+    if rejected:
+        return RedirectResponse(
+            f"/wiki/{quote(slug)}/metadata?error="
+            + quote("'tags' is managed separately — use the tag controls"),
+            status_code=303)
+    return RedirectResponse(f"/wiki/{quote(slug)}/metadata?msg=Saved",
+                            status_code=303)
+
+
 @app.get("/wiki/{slug}/details", response_class=HTMLResponse)
 def details_view(request: Request, slug: str):
     """The article's discussion/metadata page — settings, links, history,
@@ -800,7 +883,6 @@ def details_view(request: Request, slug: str):
     page = store.get_page(slug)
     if not page:
         raise HTTPException(404, "Page not found")
-    all_pages = [p for p in store.list_pages() if p["slug"] != slug]
     suggestions = []
     for s in store.suggestions_list(slug):
         full = store.suggestion_get(s["id"])
@@ -814,7 +896,7 @@ def details_view(request: Request, slug: str):
                           versions=store.page_versions(slug),
                           backlinks=store.backlinks(slug), parent=store.parent_of(page),
                           crumbs=store.ancestors(page),
-                          all_pages=all_pages, tags=store.tags_of(slug),
+                          tags=store.tags_of(slug),
                           comments=store.comments_list(slug),
                           suggestions=suggestions)
     )

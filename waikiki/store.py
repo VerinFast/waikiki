@@ -658,8 +658,11 @@ def content_version(markdown: str) -> str:
     return hashlib.sha256((markdown or "").encode("utf-8")).hexdigest()[:12]
 
 
-_NO_SCHEMA = {"template": None, "template_found": True, "ok": True,
-              "errors": [], "fields": [], "values": {}}
+def _unchecked(template: Optional[str] = None, found: bool = True) -> dict:
+    """"Nothing constrains this page" — the answer for every page that predates
+    a schema. Built fresh each call so no caller can mutate a shared default."""
+    return {"template": template, "template_found": found, "ok": True,
+            "errors": [], "fields": [], "values": {}}
 
 
 def check_metadata(props: dict) -> dict:
@@ -673,12 +676,12 @@ def check_metadata(props: dict) -> dict:
     """
     name = _lookup_prop(props or {}, TEMPLATE_KEY)
     if not name or not str(name).strip():
-        return dict(_NO_SCHEMA)
+        return _unchecked()
     name = str(name).strip()
     tpl = template_by_name(name)
     schema_text = (tpl or {}).get("meta_schema") or ""
     if not tpl or not schema_text.strip():
-        return {**_NO_SCHEMA, "template": name, "template_found": bool(tpl)}
+        return _unchecked(name, bool(tpl))
     return {"template": name, "template_found": True,
             **metaschema.validate(props, schema_text)}
 

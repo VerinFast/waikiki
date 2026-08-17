@@ -73,6 +73,11 @@ mcp = FastMCP(
         "scratch; it overwrites everything and discards concurrent human edits. "
         "Workflow: get_page to read exact current text, then edit_page with a "
         "unique snippet.\n\n"
+        "No page is the whole picture. get_page returns that page's outbound "
+        "[[wikilinks]] already resolved, in `links`. Before you write about, "
+        "quote, or edit something a page links to, read the linked page first — "
+        "a wiki holds hundreds of pages and the detail you need is usually one "
+        "hop away, in a page you were never handed.\n\n"
         "This wiki changes underneath you. A human or another agent may edit a "
         "page at any time, including while you are working — but your earlier "
         "tool results stay in the conversation unchanged, so old text will look "
@@ -241,6 +246,13 @@ def create_wiki(name: str) -> dict:
 
 
 # --- Pages (all scoped to the active wiki) ------------------------------------
+#
+# A few page tools add a `hint` to their response. One convention, so an agent
+# meeting several in a session reads them as signal rather than boilerplate:
+# name what is NOT in front of the agent, then the single move that fetches it,
+# in one line naming the field or argument to use — and only when it is true.
+# A hint that appears unconditionally is one agents learn to skip, at which
+# point it is pure token cost.
 
 @mcp.tool
 def list_pages(children: bool | list[str] | None = False) -> dict:
@@ -297,7 +309,11 @@ def get_page(slug: str) -> dict:
     have to parse them: `target` (+ `title`) is the page to fetch, `label` is the
     wording the reader sees — they differ in `[[Target|Label]]`, so slugifying the
     label would miss the page. `exists: false` is a red link: a stub worth writing,
-    not worth fetching. Repeats collapse into one row with a `count`."""
+    not worth fetching. Repeats collapse into one row with a `count`.
+
+    Those links are the rest of the picture. Before you write about, quote, or
+    edit something this page links to, call get_page on that `target` first —
+    this page is one of hundreds and rarely says everything it assumes."""
     wiki = _require_wiki()
     page = store.get_page(slug)
     if not page:
@@ -313,18 +329,24 @@ def get_page(slug: str) -> dict:
         pass
     store.log_activity("ai", "read")
     meta, tags, _ = structure.parse_frontmatter(markdown)
-    return {"wiki": wiki, "slug": page["slug"], "title": page["title"],
-            "link": deeplink.for_page(wiki, page["slug"]),
-            "markdown": markdown, "outline": render.extract_toc(markdown),
-            # Computed from the markdown returned above (live text included), so
-            # `links` always describes the text the caller actually got.
-            "links": store.outbound_links(markdown),
-            "properties": meta, "tags": tags,
-            "updated_at": page.get("updated_at"),
-            "deleted_at": page.get("deleted_at"),
-            "trashed": bool(page.get("deleted_at")),
-            "live": live,
-            "version": store.content_version(markdown)}
+    # Computed from the markdown returned above (live text included), so `links`
+    # always describes the text the caller actually got.
+    links = store.outbound_links(markdown)
+    out = {"wiki": wiki, "slug": page["slug"], "title": page["title"],
+           "link": deeplink.for_page(wiki, page["slug"]),
+           "markdown": markdown, "outline": render.extract_toc(markdown),
+           "links": links,
+           "properties": meta, "tags": tags,
+           "updated_at": page.get("updated_at"),
+           "deleted_at": page.get("deleted_at"),
+           "trashed": bool(page.get("deleted_at")),
+           "live": live,
+           "version": store.content_version(markdown)}
+    if links:
+        out["hint"] = (f"This page links to {len(links)} "
+                       f"{'page' if len(links) == 1 else 'pages'}. Read the ones "
+                       "you'll rely on before writing — see `links`.")
+    return out
 
 
 @mcp.tool

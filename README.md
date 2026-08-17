@@ -290,7 +290,8 @@ sidebar; `children=true` for the whole wiki, `children=["a-parent"]` for one
 branch — and it always reports how many sub-pages it withheld, so an agent never
 reads silence as absence), `get_page` (returns a heading outline plus its
 resolved outbound `links` — target, title, the label the reader sees, and
-whether the page exists), `create_page`, and a family of **merge-safe
+whether the page exists, plus a one-line `hint` asking the agent to read the
+linked pages it is about to rely on), `create_page`, and a family of **merge-safe
 live edit** tools:
 `edit_page` (find/replace — preferred), `replace_section`, `insert_after` /
 `insert_before`, `prepend_to_page`, `remove_from_page`, `append_to_page`, and

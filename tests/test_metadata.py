@@ -102,6 +102,47 @@ def test_get_page_links_describe_the_live_markdown_it_returned(wiki, monkeypatch
     assert [d["target"] for d in out["links"]] == ["igni", "corliss"]
 
 
+def _offline(monkeypatch):
+    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    monkeypatch.setattr(mcp_server.httpx, "get",     # don't touch a live dev server
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+
+
+def test_get_page_hint_asks_for_the_links_it_returned(wiki, monkeypatch):
+    """A docstring is read once; the response is read every time (issue #47)."""
+    _offline(monkeypatch)
+    store.create_page("Igni", "fire")
+    store.create_page("Pantheon", "[[Igni]] · [[Corliss]] · [[Igni]] again")
+
+    out = mcp_server.get_page("pantheon")
+    hint = out["hint"]
+    # Counts the rows in `links` (deduplicated), and names the field to look at.
+    assert f"links to {len(out['links'])} pages" in hint
+    assert "`links`" in hint
+    # One line that earns its place. A paragraph here is a field agents skip,
+    # at which point the nudge is pure token cost.
+    assert len(hint) < 140
+    # Guidance, not an accusation: never imply the agent already failed.
+    assert not any(w in hint.lower() for w in ("you should have", "failed", "forgot"))
+
+
+def test_get_page_hint_counts_one_link_in_the_singular(wiki, monkeypatch):
+    _offline(monkeypatch)
+    store.create_page("Igni", "fire")
+    store.create_page("Pantheon", "just [[Igni]]")
+    assert "links to 1 page." in mcp_server.get_page("pantheon")["hint"]
+
+
+def test_get_page_omits_the_hint_when_there_is_nothing_to_follow(wiki, monkeypatch):
+    """Stop hinting the moment it stops being true — a hint on every page is one
+    agents learn to ignore."""
+    _offline(monkeypatch)
+    # A section-only link is same-page, so it is not an outbound link.
+    store.create_page("Alone", "## Family tree\n\nSee [[#Family tree]].")
+    out = mcp_server.get_page("alone")
+    assert out["links"] == [] and "hint" not in out
+
+
 def test_get_page_flags_a_trashed_page(wiki, monkeypatch):
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
     monkeypatch.setattr(mcp_server.httpx, "get",     # don't touch a live dev server

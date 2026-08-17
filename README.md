@@ -285,7 +285,10 @@ mixing. Open a page's editor and ask Claude to add a section; watch it type in
 beside you.
 
 MCP tools: `list_wikis`, `current_wiki`, `switch_wiki`, `create_wiki` (wiki
-selection — required first), then `list_pages`, `get_page` (returns a heading
+selection — required first), then `list_pages` (top-level by default, like the
+sidebar; `children=true` for the whole wiki, `children=["a-parent"]` for one
+branch — and it always reports how many sub-pages it withheld, so an agent never
+reads silence as absence), `get_page` (returns a heading
 outline), `create_page`, and a family of **merge-safe live edit** tools:
 `edit_page` (find/replace — preferred), `replace_section`, `insert_after` /
 `insert_before`, `prepend_to_page`, `remove_from_page`, `append_to_page`, and

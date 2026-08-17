@@ -16,7 +16,7 @@ without touching a single route.
 from __future__ import annotations
 
 import re
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from . import db, edits, elements, rag, render, structure, ydoc
 
@@ -25,25 +25,67 @@ _INCLUDE = re.compile(r"!\[\[([^\]]+?)\]\]")   # ![[Page]] / ![[Page#Section]] t
 
 # --- Pages --------------------------------------------------------------------
 
-_SORTS = {"updated": "updated_at DESC", "title": "title COLLATE NOCASE ASC",
+_SORTS = {"updated": "p.updated_at DESC", "title": "p.title COLLATE NOCASE ASC",
           # Manual drag-and-drop order; unordered pages fall to the end by title.
-          "custom": "sort_order IS NULL, sort_order ASC, title COLLATE NOCASE ASC"}
+          "custom": "p.sort_order IS NULL, p.sort_order ASC, p.title COLLATE NOCASE ASC"}
 
 
 def list_pages(include_deleted: bool = False, sort: str = "updated",
-               starred_only: bool = False, include_children: bool = False) -> List[dict]:
-    clauses = [] if include_deleted else ["deleted_at IS NULL"]
+               starred_only: bool = False,
+               include_children: bool | str | Sequence[str] | None = False) -> List[dict]:
+    """Pages in the active wiki, newest first by default.
+
+    ``include_children`` decides how deep the listing reaches:
+
+    * ``False`` (default) — top-level pages only. The sidebar rail depends on
+      this, so it stays the default.
+    * ``True`` — every page, sub-pages included.
+    * a sequence of parent slugs (or a single slug string) — top-level pages
+      plus the *direct* children of exactly those parents. One branch of a big
+      wiki, without the other 200 pages.
+
+    Every row carries both ``parent_id`` (the internal integer) and
+    ``parent_slug``, so a returned child is navigable by callers — notably
+    agents — that never see page ids (issue #45).
+    """
+    if isinstance(include_children, str):        # a bare slug, not a char sequence
+        parents = [render.slugify(include_children)]
+        all_children = False
+    elif include_children is None or isinstance(include_children, bool):
+        parents = []
+        all_children = bool(include_children)
+    else:
+        parents = [render.slugify(s) for s in include_children if s]
+        all_children = False
+    clauses = [] if include_deleted else ["p.deleted_at IS NULL"]
+    args: list = []
     if starred_only:
-        clauses.append("starred = 1")
-    if not include_children:
-        clauses.append("parent_id IS NULL")  # children never show in the rail
+        clauses.append("p.starred = 1")
+    if not all_children:
+        if parents:
+            marks = ",".join("?" for _ in parents)
+            clauses.append(f"(p.parent_id IS NULL OR par.slug IN ({marks}))")
+            args.extend(parents)
+        else:
+            clauses.append("p.parent_id IS NULL")  # children never show in the rail
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     order = _SORTS.get(sort, _SORTS["updated"])
     rows = db.get_conn().execute(
-        f"SELECT slug, title, updated_at, deleted_at, starred, parent_id "
-        f"FROM pages {where} ORDER BY {order}"
+        f"SELECT p.slug, p.title, p.updated_at, p.deleted_at, p.starred, "
+        f"p.parent_id, par.slug AS parent_slug "
+        f"FROM pages p LEFT JOIN pages par ON par.id = p.parent_id "
+        f"{where} ORDER BY {order}", args
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_child_pages(include_deleted: bool = False) -> int:
+    """How many pages have a parent — i.e. how many a top-level-only listing
+    leaves out. Lets a caller report what it withheld instead of implying the
+    wiki is smaller than it is (issue #45)."""
+    where = "WHERE parent_id IS NOT NULL" + ("" if include_deleted else " AND deleted_at IS NULL")
+    row = db.get_conn().execute(f"SELECT COUNT(*) AS n FROM pages {where}").fetchone()
+    return int(dict(row)["n"]) if row else 0
 
 
 def children(parent_slug: str) -> List[dict]:

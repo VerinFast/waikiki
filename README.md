@@ -286,7 +286,9 @@ beside you.
 
 MCP tools: `list_wikis`, `current_wiki`, `switch_wiki`, `create_wiki` (wiki
 selection — required first), then `list_pages`, `get_page` (returns a heading
-outline), `create_page`, and a family of **merge-safe live edit** tools:
+outline plus its resolved outbound `links` — target, title, the label the reader
+sees, and whether the page exists), `create_page`, and a family of **merge-safe
+live edit** tools:
 `edit_page` (find/replace — preferred), `replace_section`, `insert_after` /
 `insert_before`, `prepend_to_page`, `remove_from_page`, `append_to_page`, and
 `replace_page` (full rewrite, last resort). Plus `changes_since` (change feed),

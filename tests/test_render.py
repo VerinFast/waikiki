@@ -77,6 +77,25 @@ def test_extract_wikilinks_ignores_section_and_self():
     assert links == ["guide", "other"]   # section stripped, same-page skipped
 
 
+def test_extract_wikilink_refs_keeps_label_and_section():
+    refs = render.extract_wikilink_refs(
+        "[[Edaphos|earth]] then [[Guide#Setup Steps]] then [[#Local]] then [[Igni]]")
+    assert refs == [
+        # the visible word is "earth" but the page is edaphos — the whole point
+        {"target": "edaphos", "label": "earth", "section": None},
+        {"target": "guide", "label": "Guide#Setup Steps", "section": "setup-steps"},
+        {"target": "igni", "label": "Igni", "section": None},   # [[#Local]] skipped
+    ]
+
+
+def test_extract_wikilink_refs_labels_match_the_rendered_anchor():
+    """`label` must be the text a reader sees, i.e. what wikilink_anchor writes."""
+    md = "[[Edaphos|earth]] [[Igni]] [[Guide#Setup]]"
+    html = render.render_markdown(md)
+    for ref in render.extract_wikilink_refs(md):
+        assert f">{ref['label']}</a>" in html
+
+
 # --- Wikilinks must resolve everywhere, and stay literal in code --------------
 
 def test_wikilinks_resolve_inside_raw_html():

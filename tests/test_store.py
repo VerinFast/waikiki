@@ -126,6 +126,43 @@ def test_backlinks_and_broken(wiki):
     assert not any(b["target"] == "guide" for b in broken)
 
 
+def test_outbound_links_resolve_label_target_and_existence(wiki):
+    store.create_page("Igni", "fire")
+    store.create_page("Zoe Keres", "mother")
+    md = ("[[Igni]] · [[Zoe Keres|Life, the Mother]] · [[Corliss]] · "
+          "[[#Family tree]] · [[Igni]] · [[Igni]]")
+    links = store.outbound_links(md)
+
+    # first-seen order, and the nine-[[Igni]]s problem: one row, not three
+    assert [(d["target"], d["label"], d["title"], d["exists"], d["count"])
+            for d in links] == [
+        ("igni", "Igni", "Igni", True, 3),
+        # aliased: the reader sees "Life, the Mother", the page is zoe-keres
+        ("zoe-keres", "Life, the Mother", "Zoe Keres", True, 1),
+        # red link kept, not filtered — and no title to offer
+        ("corliss", "Corliss", None, False, 1),
+    ]
+    # [[#Family tree]] is same-page, so it is not an outbound link at all
+    assert not any(d["target"].startswith("family") for d in links)
+
+
+def test_outbound_links_resolve_by_title_and_survive_renames(wiki):
+    store.create_page("Setup Guide", "content")            # slug: setup-guide
+    assert store.outbound_links("read [[Setup Guide]]")[0] == {
+        "target": "setup-guide", "title": "Setup Guide", "label": "Setup Guide",
+        "exists": True, "count": 1}
+    store.update_page("setup-guide", "Manual", "content")  # retitled, slug stable
+    # [[Setup Guide]] no longer matches a title, but [[Manual]] resolves to it
+    assert store.outbound_links("read [[Manual]]")[0]["target"] == "setup-guide"
+
+
+def test_outbound_links_ignore_trashed_targets(wiki):
+    store.create_page("Ghost", "boo")
+    store.soft_delete("ghost")
+    link = store.outbound_links("see [[Ghost]]")[0]
+    assert link["exists"] is False and link["title"] is None
+
+
 def test_broken_links_and_backlinks_scan_children(wiki):
     store.create_page("Parent", "the parent page")
     store.create_page("Child", "links to [[Parent]] and to [[Nowhere Land]]")

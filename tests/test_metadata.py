@@ -63,6 +63,45 @@ def test_get_page_exposes_freshness_and_properties(wiki, monkeypatch):
     assert out["tags"] == ["character"]
 
 
+def test_get_page_returns_resolved_outbound_links(wiki, monkeypatch):
+    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    monkeypatch.setattr(mcp_server.httpx, "get",     # don't touch a live dev server
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("offline")))
+    store.create_page("Igni", "fire")
+    store.create_page("Edaphos", "earth spirit")
+    store.create_page("Pantheon", "## Family tree\n\n[[Igni]] · [[Edaphos|earth]] · "
+                                  "[[Corliss]] · [[#Family tree]] · [[Igni]]")
+    links = mcp_server.get_page("pantheon")["links"]
+    assert links == [
+        {"target": "igni", "title": "Igni", "label": "Igni",
+         "exists": True, "count": 2},
+        # the reader sees "earth"; slugifying that would miss the page
+        {"target": "edaphos", "title": "Edaphos", "label": "earth",
+         "exists": True, "count": 1},
+        {"target": "corliss", "title": None, "label": "Corliss",
+         "exists": False, "count": 1},
+    ]
+
+
+def test_get_page_links_describe_the_live_markdown_it_returned(wiki, monkeypatch):
+    """`links` must match the text actually returned, not the saved revision."""
+    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    store.create_page("Igni", "fire")
+    store.create_page("Pantheon", "[[Igni]]")
+
+    class _Live:                       # the web app's unsaved CRDT text
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"markdown": "[[Igni]] and now also [[Corliss]]"}
+
+    monkeypatch.setattr(mcp_server.httpx, "get", lambda *a, **k: _Live())
+    out = mcp_server.get_page("pantheon")
+    assert out["live"] is True
+    assert [d["target"] for d in out["links"]] == ["igni", "corliss"]
+
+
 def test_get_page_flags_a_trashed_page(wiki, monkeypatch):
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
     monkeypatch.setattr(mcp_server.httpx, "get",     # don't touch a live dev server

@@ -695,6 +695,47 @@ def link_index() -> dict:
     return idx
 
 
+def _page_titles() -> dict:
+    """Map each active page's canonical slug to its title."""
+    return {r["slug"]: r["title"] for r in db.get_conn().execute(
+        "SELECT slug, title FROM pages WHERE deleted_at IS NULL").fetchall()}
+
+
+def outbound_links(markdown: str) -> List[dict]:
+    """The wikilinks in *this markdown*, resolved against the wiki — the
+    'what does this page point at' half of `backlinks`.
+
+    One row per distinct (target, label), in first-seen order:
+
+        target   canonical slug to fetch (the slugified target if unresolved)
+        title    the target page's title, or None when it doesn't exist
+        label    the wording the reader sees. This is the point of the function:
+                 in [[Edaphos|earth]] the visible word is "earth" but the page
+                 is `edaphos`, so a caller that slugifies the label lands on
+                 nothing.
+        exists   False for a red link. Kept rather than filtered — a red link
+                 says "this page is a stub worth writing", and it stops a caller
+                 fetching a 404.
+        count    how many times that link appears (nine [[Igni]]s → one row).
+
+    Takes markdown rather than a slug so the caller can describe the text it is
+    actually handing over — MCP `get_page` may return unsaved live edits that are
+    newer than the stored copy. Same-page [[#section]] links are not outbound and
+    never appear."""
+    idx = link_index()
+    titles = _page_titles()
+    rows: dict[tuple, dict] = {}
+    for ref in render.extract_wikilink_refs(markdown):
+        slug = idx.get(ref["target"])
+        key = (slug or ref["target"], ref["label"])
+        if key in rows:
+            rows[key]["count"] += 1
+            continue
+        rows[key] = {"target": key[0], "title": titles.get(slug) if slug else None,
+                     "label": ref["label"], "exists": slug is not None, "count": 1}
+    return list(rows.values())
+
+
 def backlinks(slug: str) -> List[dict]:
     """Pages that link to `slug` ('what links here') — including sub-pages."""
     idx = link_index()

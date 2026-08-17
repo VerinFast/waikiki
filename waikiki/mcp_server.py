@@ -262,7 +262,13 @@ def get_page(slug: str) -> dict:
     `link` is a `waikiki://<wiki>/<page>` deep link that opens this page in the
     desktop app. Give that to a human rather than an http:// URL — the app picks a
     free port at startup, so its http address can change between runs. Append
-    `#section` (an entry's slug from `outline`) to land on a heading."""
+    `#section` (an entry's slug from `outline`) to land on a heading.
+
+    `links` is this page's outbound [[wikilinks]], already resolved, so you don't
+    have to parse them: `target` (+ `title`) is the page to fetch, `label` is the
+    wording the reader sees — they differ in `[[Target|Label]]`, so slugifying the
+    label would miss the page. `exists: false` is a red link: a stub worth writing,
+    not worth fetching. Repeats collapse into one row with a `count`."""
     wiki = _require_wiki()
     page = store.get_page(slug)
     if not page:
@@ -281,6 +287,9 @@ def get_page(slug: str) -> dict:
     return {"wiki": wiki, "slug": page["slug"], "title": page["title"],
             "link": deeplink.for_page(wiki, page["slug"]),
             "markdown": markdown, "outline": render.extract_toc(markdown),
+            # Computed from the markdown returned above (live text included), so
+            # `links` always describes the text the caller actually got.
+            "links": store.outbound_links(markdown),
             "properties": meta, "tags": tags,
             "updated_at": page.get("updated_at"),
             "deleted_at": page.get("deleted_at"),

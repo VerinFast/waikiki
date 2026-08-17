@@ -201,15 +201,37 @@ def linkify_wikilinks(html: str, resolver=None) -> str:
     return "".join(out)
 
 
-def extract_wikilinks(markdown: str) -> list[str]:
-    """Return the target *page* slugs of cross-page [[wiki links]] (ignores the
-    section part and same-page #links) — for the resolved/broken link stats."""
+def extract_wikilink_refs(markdown: str) -> list[dict]:
+    """Every cross-page [[wiki link]], in document order, keeping what
+    `extract_wikilinks` throws away — the visible label and the #section:
+
+        target   the slugified page part; resolve it through
+                 `store.link_index()` to get the canonical slug
+        label    the text a reader actually sees — "earth" in [[Edaphos|earth]],
+                 "Guide#Setup" in [[Guide#Setup]] — same rule as
+                 `wikilink_anchor`
+        section  the anchor slug the link points at, or None
+
+    Same-page [[#Section]] links have no page part and are skipped, exactly as in
+    `extract_wikilinks`."""
     out = []
     for m in _WIKILINK.finditer(markdown or ""):
-        page_part = m.group(1).split("#", 1)[0].strip()
-        if page_part:
-            out.append(_slugify(page_part))
+        raw, label = m.group(1), m.group(2)
+        page_part, _, section = raw.partition("#")
+        if not page_part.strip():
+            continue
+        out.append({"target": _slugify(page_part.strip()),
+                    "label": (label or raw).strip(),
+                    "section": _slugify(section) if section.strip() else None})
     return out
+
+
+def extract_wikilinks(markdown: str) -> list[str]:
+    """Return the target *page* slugs of cross-page [[wiki links]] (ignores the
+    section part and same-page #links) — for the resolved/broken link stats.
+
+    Labels and sections are dropped here; `extract_wikilink_refs` keeps them."""
+    return [ref["target"] for ref in extract_wikilink_refs(markdown)]
 
 
 _HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*#*\s*$")

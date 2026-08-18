@@ -1,11 +1,14 @@
 # Last scanned for code smell: 2026-08-05 by Claude.
 """Spec + Yjs sync protocol versions and the compatibility gate.
 
-Two independent version numbers travel in every snapshot/changelog envelope:
+Two independent version numbers travel in every snapshot/changelog/bundle
+envelope:
 
 * ``SPEC_VERSION`` — the good-place wiki-interchange *spec* version. Bump it when
   the envelope shape or the Y.Doc shared-type layout changes in a way peers must
-  agree on.
+  agree on. What an envelope *stamps* is the floor for its own kind
+  (``PAGE_ENVELOPE_SPEC`` / ``WIKI_ENVELOPE_SPEC``), not this number — see the
+  note beside those constants.
 * ``YJS_SYNC_PROTOCOL_VERSION`` — the Yjs update/sync *binary* protocol version.
   pycrdt / yrs emit the Yjs v1 update format; two peers MUST share this exactly
   or the CRDT bytes are not safely mergeable. This is independent of the spec.
@@ -22,14 +25,44 @@ from enum import Enum
 
 from .errors import IncompatibleVersionError
 
-SPEC_VERSION = 1
-"""Current wiki-interchange spec version emitted by this build."""
+SPEC_VERSION = 2
+"""Highest wiki-interchange spec version this build understands.
+
+v2 adds the wiki-level bundle's content sections — page hierarchy by slug, sort
+order, starred, custom elements, templates with their metadata schema, and a
+shared content-addressed image area. It is strictly **additive**: the page Y.Doc
+root layout and the per-page snapshot/changelog envelopes are unchanged from v1.
+"""
 
 MIN_COMPATIBLE_SPEC_VERSION = 1
-"""Oldest spec version this build can still read (the upgrade-on-import floor)."""
+"""Oldest spec version this build can still read (the upgrade-on-import floor).
+
+Stays **1**. Because v2 only added material, a v2 build reads a v1 payload with
+no translation: every v1 field means exactly what it meant, and the v2 sections
+are simply absent (an unordered, unstarred, flat wiki with no elements or
+templates — which is what a v1 bundle actually described). The floor rises only
+when we lose the ability to read an old payload, which is not the case here.
+"""
 
 YJS_SYNC_PROTOCOL_VERSION = 1
 """Yjs update binary protocol version. Must match exactly between peers."""
+
+# --- What each envelope kind stamps -------------------------------------------
+# An envelope declares the **oldest spec that can read it**, not the version of
+# the build that produced it. The two diverge as soon as the spec grows a feature
+# only some envelope kinds use, and the difference is load-bearing: a deployed
+# Kahala image is pinned by content hash, so a spec-2 Waikiki routinely meets a
+# spec-1 Kahala. Stamping every payload with the producer's build number would
+# make that peer reject a *page* snapshot whose bytes it understands perfectly —
+# a false rejection by the very gate that exists to catch real incompatibility.
+# So each kind carries its own floor, and a kind's floor moves only when that
+# kind's shape actually changes.
+
+PAGE_ENVELOPE_SPEC = 1
+"""Spec floor for a per-page snapshot/changelog — its shape is unchanged since v1."""
+
+WIKI_ENVELOPE_SPEC = 2
+"""Spec floor for a wiki bundle — its manifest gained content sections in v2."""
 
 
 class Compatibility(str, Enum):

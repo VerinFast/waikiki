@@ -15,9 +15,9 @@ must stay in lockstep:
 | | |
 |---|---|
 | **Path** | `waikiki/vendor/wiki_interchange/` |
-| **Pinned version** | `0.1.0` (spec `SPEC_VERSION = 1`, Yjs sync protocol `1`) |
+| **Pinned version** | `0.2.0` (spec `SPEC_VERSION = 2`, floor `1`, Yjs sync protocol `1`) |
 | **Upstream** | `VerinFast/good-place`, `packages/wiki-interchange/wiki_interchange/` |
-| **Upstream branch** | `claude/issue-3390-wiki-interchange` (W1, PR good-place#3409) |
+| **Upstream branch** | `claude/issue-3679-wiki-envelope-content` (PR good-place#3683, stacked on #3677) |
 | **Runtime dep** | `pycrdt>=0.10,<0.15` (satisfied by Waikiki's own pin) |
 
 ### What it is
@@ -30,7 +30,11 @@ Waikiki consumes it through `waikiki/ydoc.py`:
 - `build_page_doc` / the root-type constants — the canonical page Y.Doc layout
   (`content` Text, `tree`/`comments`/`tags`/`elements` Arrays, `meta` Map).
 - `encode_snapshot` / `decode_snapshot` — full Y.Doc + content-addressed
-  `ImageRef` sidecar (**produce**/**consume**).
+  `ImageRef` sidecar (**produce**/**consume**), for one page.
+- `pack_bundle_into` / `BundleReader` — the **whole-wiki bundle** (spec v2): every
+  page's snapshot, the hierarchy by slug, order, starred, custom elements,
+  templates with their metadata schemas, and one copy of each distinct image
+  blob. Both ends stream, one page at a time.
 - `state_vector` / `produce_changelog` / `apply_changelog` — incremental sync.
 - `check_compatible` / `negotiate` — the spec + Yjs-protocol version gate that
   **rejects** an incompatible envelope rather than merging bad bytes.
@@ -39,6 +43,27 @@ The format carries **content only** — no `tenant_id` / `wiki_id` / permissions
 (server-owned, re-attached by Kahala) and no RAG chunks/embeddings (derived,
 regenerated locally on import). The vendored guards enforce this on both encode
 and decode.
+
+### What each envelope stamps (spec v2)
+
+`SPEC_VERSION` is the highest spec this build understands; what a payload
+*carries* is the oldest spec that can read **its kind** — `PAGE_ENVELOPE_SPEC`
+(1: a page snapshot/changelog is unchanged since v1) or `WIKI_ENVELOPE_SPEC` (2).
+That split is why bumping the spec here does not break the per-page round-trip
+against a **deployed** Kahala: its image is pinned by content hash, so a spec-2
+Waikiki routinely meets a spec-1 peer, and a page snapshot stamped with the
+producer's build number would be rejected by a peer that understands it perfectly.
+`MIN_COMPATIBLE_SPEC_VERSION` stays `1` — v2 is additive, so this build still
+reads v1 payloads.
+
+### Import atomicity (known limit)
+
+`store.import_wiki_bundle` decodes the **whole** payload before its first write
+(`store._read_bundle`), so a malformed, version-incompatible or tampered bundle —
+the realistic failure mode, since it arrives from a peer — leaves the wiki
+untouched. A failure of the local *writes* (full disk, lock) can still leave a
+partial import; making that atomic too means staging into a scratch database and
+swapping the file, which is deliberately out of scope for issue #57.
 
 ### Why vendored (not a dependency)
 
@@ -67,6 +92,7 @@ When W1 (or a later spec bump) changes upstream:
 4. If upstream's `pycrdt` cap moved, roll `requirements.txt`'s `pycrdt` pin
    forward to match (never pin backward — see the repo's roll-forward rule).
 5. Run the suite: `python -m pytest`. A `SPEC_VERSION`/Yjs bump is expected to
-   surface in `tests/test_ydoc_interchange.py` (the version-gate tests).
+   surface in `tests/test_ydoc_interchange.py` and `tests/test_wiki_bundle.py`
+   (the version-gate tests and the whole-wiki round-trip).
 
 [atd-v3-kahala]: https://github.com/VerinFast/good-place/blob/claude/atd-v3-kahala-rfc/docs/content/atd-v3-kahala.md

@@ -18,10 +18,10 @@ from __future__ import annotations
 #: ``__version__``). Keep this in lockstep with ``docs/vendoring.md`` and
 #: ``requirements.txt`` whenever the tree under ``vendor/wiki_interchange`` is
 #: re-synced from upstream.
-WIKI_INTERCHANGE_VERSION = "0.1.0"
+WIKI_INTERCHANGE_VERSION = "0.2.0"
 
 #: Upstream source coordinates, recorded so the vendored tree is re-syncable.
 WIKI_INTERCHANGE_SOURCE = (
     "VerinFast/good-place:packages/wiki-interchange "
-    "(branch claude/issue-3390-wiki-interchange)"
+    "(branch claude/issue-3679-wiki-envelope-content, PR good-place#3683)"
 )

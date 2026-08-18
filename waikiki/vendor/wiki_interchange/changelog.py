@@ -26,7 +26,7 @@ from pycrdt import Doc
 from .errors import MalformedEnvelopeError
 from .schema import assert_content_only, assert_no_derived_data
 from .version import (
-    SPEC_VERSION,
+    PAGE_ENVELOPE_SPEC,
     YJS_SYNC_PROTOCOL_VERSION,
     ProtocolVersions,
     check_compatible,
@@ -45,7 +45,7 @@ class Changelog:
     """An incremental-update envelope: version pair + the missing Yjs updates."""
 
     ydoc_update: bytes
-    spec_version: int = SPEC_VERSION
+    spec_version: int = PAGE_ENVELOPE_SPEC
     yjs_protocol: int = YJS_SYNC_PROTOCOL_VERSION
 
     @property

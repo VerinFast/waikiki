@@ -73,13 +73,24 @@ two in parity (same substance, different voice) whenever you change either.
    flush lands through `store` like any other write, so the canonical doc stays
    authoritative. See `waikiki/ydoc.py`.
 7. **The Kahala ⟷ Waikiki round-trip is content-only and version-gated.** Export
-   (`store.export_snapshot` / `export_changelog`) and import
-   (`store.import_snapshot` / `import_changelog`) go through the repository, using
-   the **vendored** `wiki_interchange` encoders. Payloads carry content only —
-   never invent or require `tenant_id`/`wiki_id`/permissions (Kahala re-attaches
-   those server-side); local embeddings are regenerated on import, never shipped.
-   An incompatible spec/Yjs version is **rejected**, never merged. Re-sync the
-   vendored lib per `docs/vendoring.md` and keep its pin in lockstep.
+   (`store.export_snapshot` / `export_changelog` / `export_wiki_bundle`) and
+   import (`store.import_snapshot` / `import_changelog` / `import_wiki_bundle`)
+   go through the repository, using the **vendored** `wiki_interchange` encoders.
+   Payloads carry content only — never invent or require
+   `tenant_id`/`wiki_id`/permissions (Kahala re-attaches those server-side); local
+   embeddings are regenerated on import, never shipped. An incompatible spec/Yjs
+   version is **rejected**, never merged. Re-sync the vendored lib per
+   `docs/vendoring.md` and keep its pin in lockstep.
+   The **whole-wiki bundle** (issue #57) adds three rules of its own:
+   *hierarchy travels by slug, never by integer id* — ids are local, so an id
+   that crossed would point at whatever page happened to hold that number in the
+   other wiki, which is why `import_wiki_bundle` creates pages under the slug the
+   bundle names (`create_page(..., slug=...)`) rather than deriving one from the
+   title; *the payload is decoded in full before the first write*
+   (`store._read_bundle`), so a bad bundle leaves the wiki untouched instead of
+   half-imported; and *export/import stream*, one page at a time, because a real
+   wiki is 215 pages / ~57MB. `tests/test_wiki_bundle.py` is the round-trip
+   proof and guards all three.
 8. **The updater fails closed, and its trust root is pinned at build time.**
    `updater.py` downloads a bundle and then *executes* it, so it is the highest-
    privilege path in the app. Every release zip must Ed25519-verify against

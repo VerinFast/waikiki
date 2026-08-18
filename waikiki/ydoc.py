@@ -336,6 +336,21 @@ class ImportedPage:
         self.tags = tags
 
 
+def _imported(snap: "wi.Snapshot", remap: dict[int, int]) -> ImportedPage:
+    """Materialise a decoded snapshot as a projectable payload.
+
+    ``remap`` maps the sender's local image ids to ours, so the body's
+    ``/image/<id>`` references point at the blobs we actually stored.
+    """
+    doc = wi.decode_snapshot(snap)               # + content-only re-validation
+    content = _remap_image_ids(content_of(doc), remap)
+    if remap:
+        _apply_content(doc, content)             # keep the canonical doc in step
+    meta = dict(doc.get(ROOT_META, type=Map))
+    tags = [str(t) for t in list(doc.get(ROOT_TAGS, type=Array))]
+    return ImportedPage(doc, content, meta.get("title"), meta.get("slug"), tags)
+
+
 def decode_snapshot(raw: bytes) -> ImportedPage:
     """Decode a snapshot envelope, honouring the version gate.
 
@@ -345,14 +360,7 @@ def decode_snapshot(raw: bytes) -> ImportedPage:
     on a spec/Yjs mismatch — an incompatible envelope is refused, never merged.
     """
     snap = wi.Snapshot.deserialize(raw)          # runs the version gate
-    doc = wi.decode_snapshot(snap)               # + content-only re-validation
-    remap = _rehome_images(snap.images)
-    content = _remap_image_ids(content_of(doc), remap)
-    if remap:
-        _apply_content(doc, content)             # keep the canonical doc in step
-    meta = dict(doc.get(ROOT_META, type=Map))
-    tags = [str(t) for t in list(doc.get(ROOT_TAGS, type=Array))]
-    return ImportedPage(doc, content, meta.get("title"), meta.get("slug"), tags)
+    return _imported(snap, _rehome_images(snap.images))
 
 
 def apply_changelog(page: dict, raw: bytes) -> Doc:
@@ -360,3 +368,86 @@ def apply_changelog(page: dict, raw: bytes) -> Doc:
     doc = canonical_doc(page)
     wi.apply_changelog(doc, raw)                 # runs the version gate, merges
     return doc
+
+
+# --- Whole-wiki bundle: gather + apply, one page at a time --------------------
+# A snapshot is one page; a *bundle* is the wiki above it (RFC atd-v3-kahala, D4:
+# "both produce/consume a snapshot (whole wiki) and a changelog (incremental)").
+# Everything here streams: a real wiki is hundreds of pages and tens of megabytes,
+# so we never hold more than one page and its blobs. The repository (``store``)
+# supplies the rows and performs the writes; this module owns the format calls.
+
+def _bundle_page(page: dict) -> "wi.BundlePage":
+    """One page row as a bundle entry: canonical Y.Doc + its place in the wiki.
+
+    The place travels **by slug** (``parent_slug``), never by the local integer
+    id — the same page is a different number on every peer, so an id that crossed
+    would point at whatever page happened to hold that number over there.
+    """
+    return wi.BundlePage(
+        slug=page["slug"],
+        snapshot=export_snapshot(page),
+        title=page["title"],
+        parent_slug=page.get("parent_slug"),
+        sort_order=page.get("sort_order"),
+        starred=bool(page.get("starred")),
+    )
+
+
+def export_bundle(dest, pages, *, elements=(), templates=(),
+                  label: Optional[str] = None) -> None:
+    """Stream ``pages`` (+ the wiki's elements/templates) into ``dest`` as a bundle.
+
+    ``pages`` is consumed lazily, so the caller can hand over a cursor-backed
+    generator and never materialise the wiki. Image blobs are de-duplicated into
+    the bundle's shared content-addressed area by the format layer.
+    """
+    wi.pack_bundle_into(
+        dest,
+        (_bundle_page(p) for p in pages),
+        elements=[wi.BundleElement(**e) for e in elements],
+        templates=[wi.BundleTemplate(**t) for t in templates],
+        label=label,
+    )
+
+
+def open_bundle(source) -> "wi.BundleReader":
+    """Open a bundle for reading, running the version + content-only gates.
+
+    Raises before a single byte is written locally if the payload is malformed,
+    version-incompatible, or carries a server-only field.
+    """
+    return wi.BundleReader(source)
+
+
+def read_bundle_page(entry: "wi.BundlePage",
+                     remap: Optional[dict[int, int]] = None) -> ImportedPage:
+    """Decode one page of a bundle into a projectable payload (no writes)."""
+    snap = wi.Snapshot.deserialize(entry.snapshot)   # runs the version gate
+    return _imported(snap, remap or {})
+
+
+def rehome_bundle_images(reader: "wi.BundleReader") -> dict[int, int]:
+    """Store a bundle's shared image blobs locally; sender id -> local id.
+
+    Each distinct blob is saved **once**, however many pages embed it, and every
+    sender-side id that resolved to those bytes maps to the one local id — which
+    is what makes the de-duplication survive the round-trip instead of being
+    undone on arrival. The reader has already re-hashed each blob against the
+    digest it was stored under, so substituted bytes never reach the store.
+    """
+    from . import store
+
+    remap: dict[int, int] = {}
+    for img in reader.iter_images():
+        if img.data is None:
+            continue          # blob-by-reference fetch is a server concern
+        new_id = store.save_image(
+            img.filename or img.sha256[:12], img.media_type, img.data
+        )
+        for old in img.image_ids:
+            try:
+                remap[int(old)] = new_id
+            except (TypeError, ValueError):
+                pass
+    return remap

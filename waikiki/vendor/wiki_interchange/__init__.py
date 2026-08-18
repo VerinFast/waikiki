@@ -14,12 +14,28 @@ Public surface:
   :class:`ImageRef`.
 * changelog — :func:`state_vector`, :func:`produce_changelog`,
   :func:`apply_changelog`, :class:`Changelog`.
+* bundle — :func:`pack_bundle` / :func:`pack_bundle_into` / :func:`unpack_bundle`
+  / :class:`BundleReader`, :class:`WikiBundle`, :class:`BundlePage`,
+  :class:`BundleElement`, :class:`BundleTemplate`, :class:`BundleImage`: a whole
+  wiki — pages with their hierarchy, order and starred flags, custom elements,
+  templates (with metadata schemas), and one copy of each image blob.
 * version — :data:`SPEC_VERSION`, :data:`YJS_SYNC_PROTOCOL_VERSION`,
   :func:`negotiate`, :func:`check_compatible`, :class:`Compatibility`.
 """
 
 from __future__ import annotations
 
+from .bundle import (
+    FORMAT_BUNDLE,
+    BundleElement,
+    BundleImage,
+    BundlePage,
+    BundleTemplate,
+    assert_bundle_content_only,
+    pack_bundle,
+    pack_bundle_into,
+)
+from .bundle_reader import BundleReader, WikiBundle, unpack_bundle
 from .changelog import (
     FORMAT_CHANGELOG,
     Changelog,
@@ -57,7 +73,9 @@ from .snapshot import (
 )
 from .version import (
     MIN_COMPATIBLE_SPEC_VERSION,
+    PAGE_ENVELOPE_SPEC,
     SPEC_VERSION,
+    WIKI_ENVELOPE_SPEC,
     YJS_SYNC_PROTOCOL_VERSION,
     Compatibility,
     ProtocolVersions,
@@ -65,13 +83,15 @@ from .version import (
     negotiate,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "__version__",
     # version / compat gate
     "SPEC_VERSION",
     "MIN_COMPATIBLE_SPEC_VERSION",
+    "PAGE_ENVELOPE_SPEC",
+    "WIKI_ENVELOPE_SPEC",
     "YJS_SYNC_PROTOCOL_VERSION",
     "Compatibility",
     "ProtocolVersions",
@@ -102,6 +122,18 @@ __all__ = [
     "apply_changelog",
     "Changelog",
     "FORMAT_CHANGELOG",
+    # bundle (whole-wiki container)
+    "pack_bundle",
+    "pack_bundle_into",
+    "unpack_bundle",
+    "assert_bundle_content_only",
+    "BundlePage",
+    "BundleElement",
+    "BundleTemplate",
+    "BundleImage",
+    "BundleReader",
+    "WikiBundle",
+    "FORMAT_BUNDLE",
     # errors
     "InterchangeError",
     "IncompatibleVersionError",

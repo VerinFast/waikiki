@@ -150,6 +150,18 @@ only (no tenancy or permissions — those are the server's), regenerates embeddi
 locally on import, and **rejects** an incompatible spec/protocol version rather
 than merging bad bytes.
 
+A whole wiki travels as a **bundle** (`store.export_wiki_bundle` /
+`import_wiki_bundle`): every page's Y.Doc, the page hierarchy **by slug**, the
+manual order and starred flags, the custom elements, the templates with the
+metadata schemas they declare, and one copy of each distinct image blob however
+many pages embed it. It streams to and from a file — a real wiki is hundreds of
+pages and tens of megabytes — and a malformed or version-incompatible bundle is
+refused in full *before* the first local write, so a failure part-way through
+leaves the wiki untouched rather than half-imported. Pages merge by slug:
+existing ones are updated (and versioned) in place, and nothing local is deleted.
+Hierarchy travels by slug because integer page ids are local — the same page is a
+different number in every wiki.
+
 ## Setup
 
 ```bash

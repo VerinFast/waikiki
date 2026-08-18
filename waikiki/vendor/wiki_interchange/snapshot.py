@@ -25,7 +25,8 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import asdict, dataclass, field
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
 from pycrdt import Doc
@@ -37,7 +38,7 @@ from .schema import (
     assert_no_derived_data,
 )
 from .version import (
-    SPEC_VERSION,
+    PAGE_ENVELOPE_SPEC,
     YJS_SYNC_PROTOCOL_VERSION,
     ProtocolVersions,
     check_compatible,
@@ -76,6 +77,19 @@ class ImageRef:
             out["data"] = base64.b64encode(self.data).decode("ascii")
         return out
 
+    def without_data(self) -> ImageRef:
+        """This ref with its inline blob dropped — the bytes live elsewhere.
+
+        Used by the wiki bundle, which stores each distinct blob **once** in a
+        shared content-addressed area instead of inline in every page that
+        embeds it. The ref still names the blob by ``sha256``.
+        """
+        return replace(self, data=None)
+
+    def with_data(self, data: bytes) -> ImageRef:
+        """This ref with ``data`` re-attached (the inverse of :meth:`without_data`)."""
+        return replace(self, data=data)
+
     @classmethod
     def _from_json(cls, obj: dict[str, Any]) -> ImageRef:
         raw = obj.get("data")
@@ -95,12 +109,37 @@ class Snapshot:
 
     ydoc_state: bytes
     images: list[ImageRef] = field(default_factory=list)
-    spec_version: int = SPEC_VERSION
+    spec_version: int = PAGE_ENVELOPE_SPEC
     yjs_protocol: int = YJS_SYNC_PROTOCOL_VERSION
 
     @property
     def versions(self) -> ProtocolVersions:
         return ProtocolVersions(self.spec_version, self.yjs_protocol)
+
+    def without_blobs(self) -> Snapshot:
+        """This snapshot with every inline image blob dropped, refs intact.
+
+        The blobs are expected to travel once, elsewhere — see
+        :func:`~wiki_interchange.bundle.pack_bundle`, which hoists them into a
+        bundle's shared content-addressed image area so a logo embedded on 200
+        pages ships once rather than 200 times.
+        """
+        return replace(self, images=[img.without_data() for img in self.images])
+
+    def with_blobs(self, blobs: Mapping[str, bytes]) -> Snapshot:
+        """This snapshot with inline blobs restored from a ``sha256 -> bytes`` map.
+
+        The inverse of :meth:`without_blobs`. A ref whose hash is absent from
+        ``blobs`` keeps whatever it already had, so a snapshot that legitimately
+        ships blob-by-reference is left alone.
+        """
+        return replace(
+            self,
+            images=[
+                img.with_data(blobs[img.sha256]) if img.sha256 in blobs else img
+                for img in self.images
+            ],
+        )
 
     def serialize(self) -> bytes:
         """Encode the envelope as UTF-8 JSON (binary payloads base64-wrapped)."""

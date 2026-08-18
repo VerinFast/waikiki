@@ -15,8 +15,10 @@ without touching a single route.
 """
 from __future__ import annotations
 
+import io
+import json
 import re
-from typing import List, Optional, Sequence
+from typing import IO, List, Optional, Sequence
 
 from . import db, edits, elements, metaschema, rag, render, structure, ydoc
 
@@ -228,10 +230,18 @@ def _normalize_newlines(markdown: str) -> str:
     return (markdown or "").replace("\r\n", "\n").replace("\r", "\n")
 
 
-def create_page(title: str, markdown: str = "", author: str = "human") -> dict:
+def create_page(title: str, markdown: str = "", author: str = "human",
+                slug: Optional[str] = None) -> dict:
+    """Create a page, deriving the slug from the title unless one is given.
+
+    ``slug`` exists for the interchange round-trip, where the slug is not ours to
+    invent: a bundle's page hierarchy is expressed *by slug*, so a page that
+    landed under a title-derived slug would leave every ``parent_slug`` pointing
+    at nothing. A requested slug still goes through the uniqueness loop.
+    """
     conn = db.get_conn()
     markdown = _normalize_newlines(markdown)
-    base = render.slugify(title) or "untitled"
+    base = render.slugify(slug or title) or "untitled"
     slug, n = base, 2
     while conn.execute("SELECT 1 FROM pages WHERE slug=?", (slug,)).fetchone():
         slug, n = f"{base}-{n}", n + 1
@@ -1164,6 +1174,176 @@ def import_changelog(slug: str, raw: bytes, author: str = "import") -> Optional[
     _set_body(slug, title, content, author=author)
     ydoc.persist(page["id"], doc)           # keep the merged lineage authoritative
     return get_page(slug)
+
+
+# --- Wiki-interchange: the whole-wiki bundle (gather / apply) -----------------
+# A snapshot is one page; a *bundle* is the wiki above it — what the RFC's D4
+# actually asks for ("both produce/consume a snapshot (whole wiki) and a
+# changelog (incremental)"). The repository gathers the rows and performs the
+# writes; ``ydoc`` owns the format calls. Same content-only boundary as the
+# per-page path: no tenant_id/wiki_id/permissions, and embeddings are regenerated
+# locally rather than shipped.
+
+def _export_page_rows() -> List[dict]:
+    """Every live page with what the bundle needs, its parent named by slug.
+
+    The join deliberately drops a parent that is itself in the trash: a bundle is
+    self-contained, and a ``parent_slug`` naming a page the bundle does not carry
+    is refused by the format layer — correctly, since it would orphan the child
+    on import.
+    """
+    rows = db.get_conn().execute(
+        "SELECT p.*, par.slug AS parent_slug FROM pages p "
+        "LEFT JOIN pages par ON par.id = p.parent_id AND par.deleted_at IS NULL "
+        "WHERE p.deleted_at IS NULL ORDER BY p.slug"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _export_elements() -> List[dict]:
+    out = []
+    for e in elements.list_elements():
+        try:
+            fields = json.loads(e.get("fields") or "[]")
+        except ValueError:
+            fields = []
+        out.append({"slug": e["slug"], "name": e["name"], "fields": fields,
+                    "html": e["html"], "css": e["css"], "js": e["js"]})
+    return out
+
+
+def _export_templates() -> List[dict]:
+    return [{"name": t["name"], "markdown": t["markdown"] or "",
+             "meta_schema": t.get("meta_schema") or ""} for t in templates_list()]
+
+
+def export_wiki_bundle(dest: Optional[IO[bytes]] = None,
+                       label: Optional[str] = None) -> Optional[bytes]:
+    """Gather the whole active wiki into a wiki-interchange bundle.
+
+    Carries the pages (each as its canonical Y.Doc), their hierarchy **by slug**,
+    manual order and starred flags, the custom elements, the templates with the
+    metadata schemas they declare, and one copy of each distinct image blob.
+    Trashed pages are left behind — the trash is local housekeeping, not content.
+
+    Streams into ``dest`` when given: a real wiki here is 215 pages / ~57MB, and
+    pages are gathered one at a time, so peak memory is one page and its images
+    rather than the wiki. Called without ``dest`` it returns the whole bundle as
+    ``bytes``, which is only reasonable for a small wiki (the tests, an MCP
+    caller); prefer the file form for anything real.
+    """
+    from . import wikis
+
+    if label is None:
+        label = wikis.name_of(db.active_wiki())
+    pages = _export_page_rows()
+    els, tpls = _export_elements(), _export_templates()
+    if dest is not None:
+        ydoc.export_bundle(dest, pages, elements=els, templates=tpls, label=label)
+        return None
+    buf = io.BytesIO()
+    ydoc.export_bundle(buf, pages, elements=els, templates=tpls, label=label)
+    return buf.getvalue()
+
+
+def _place_page(slug: str, parent_slug: Optional[str],
+                sort_order: Optional[int], starred: bool) -> None:
+    """Put an imported page where the bundle says it belongs."""
+    conn = db.get_conn()
+    conn.execute("UPDATE pages SET starred=?, sort_order=? WHERE slug=?",
+                 (1 if starred else 0,
+                  int(sort_order) if sort_order is not None else None, slug))
+    conn.commit()
+    set_parent(slug, parent_slug)      # None = top level; also re-routes vectors
+
+
+def _upsert_by_slug(slug: str, title: str, markdown: str, author: str) -> dict:
+    """Create or update the page with exactly this slug.
+
+    Not ``upsert_page``: that derives a new page's slug from its title, which
+    would land an imported page under a slug nothing in the bundle references.
+    """
+    if get_page(slug):
+        return update_page(slug, title, markdown, author)
+    return create_page(title, markdown, author, slug=slug)
+
+
+def _read_bundle(reader) -> None:
+    """Decode every part of a bundle without writing anything (the dry run).
+
+    This is how the import gets its all-or-nothing property against a bad
+    payload — the realistic failure mode, since the bundle arrives from a peer.
+    Every page envelope is version-gated and re-validated content-only, every
+    section is shape-checked, and every image blob is re-hashed against the
+    digest it was stored under, *before* the first local write. Page 140 of 215
+    failing therefore leaves the wiki untouched rather than half-imported.
+
+    What this does not cover is a failure of the local writes themselves (a full
+    disk, a lock). Making that atomic too would mean staging the whole wiki in a
+    scratch database and swapping the file, which is a bigger change than this
+    issue: see the note in ``docs/vendoring.md``.
+    """
+    reader.elements()
+    reader.templates()
+    for _img in reader.iter_images():          # re-hashes each blob
+        pass
+    for entry in reader.iter_pages(attach_blobs=False):
+        ydoc.read_bundle_page(entry)           # version gate + content-only
+
+
+def import_wiki_bundle(source, author: str = "import") -> dict:
+    """Apply a whole-wiki bundle into the **active** wiki (export-down).
+
+    ``source`` is a bundle's bytes or a readable, seekable binary file. Pages are
+    merged by slug — an existing page is updated (and versioned) in place, a new
+    one is created under the slug the bundle names, and nothing local is ever
+    deleted. Definitions land first (templates, elements), then each distinct
+    image blob is re-homed **once** and the ``/image/<id>`` references rewritten
+    to match, then the pages, then their placement (parent, order, starred) once
+    every page exists to be pointed at.
+
+    Every write goes through the ordinary repository path, so imported content is
+    rendered, versioned and re-indexed exactly like a human's edit — and the
+    embeddings are regenerated here rather than shipped, per the round-trip's
+    content-only rule. Raises before touching the wiki if the bundle is
+    malformed, version-incompatible, or carries a server-only field.
+
+    Returns a count of what landed.
+    """
+    with ydoc.open_bundle(source) as reader:       # gates run on open
+        _read_bundle(reader)                       # dry run: nothing written yet
+
+        tpls = reader.templates()
+        for tpl in tpls:
+            template_save(tpl.name, tpl.markdown, meta_schema=tpl.meta_schema)
+        els = reader.elements()
+        for el in els:
+            elements.save_element(el.slug, el.name, el.fields, el.html, el.css, el.js)
+
+        remap = ydoc.rehome_bundle_images(reader)
+        landed: dict[str, str] = {}
+        placements: list[tuple] = []
+        for entry in reader.iter_pages(attach_blobs=False):
+            imp = ydoc.read_bundle_page(entry, remap)
+            title = imp.title or entry.title or entry.slug
+            # The bundle is the sender's whole state, so it is the later write for
+            # every field; both "before" values are empty because there is no
+            # prior local state that this envelope did not bring (see the same
+            # reasoning in ``import_snapshot``).
+            content = ydoc.reconcile_tags(imp.doc, before_root=[],
+                                          before_frontmatter=[])
+            page = _upsert_by_slug(entry.slug, title, content, author)
+            ydoc.persist(page["id"], imp.doc)      # keep the sender's lineage
+            landed[entry.slug] = page["slug"]
+            placements.append((entry.slug, entry.parent_slug,
+                               entry.sort_order, entry.starred))
+
+        for slug, parent, order, starred in placements:
+            parent_slug = landed.get(parent) if parent else None
+            _place_page(landed[slug], parent_slug, order, starred)
+
+    return {"pages": len(landed), "elements": len(els),
+            "templates": len(tpls), "images": len(set(remap.values()))}
 
 
 # --- Settings -----------------------------------------------------------------

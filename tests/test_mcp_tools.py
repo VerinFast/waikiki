@@ -155,6 +155,35 @@ def test_link_following_is_asked_for_in_the_prompt_surface():
     assert "check_pages" in instructions
 
 
+def test_search_points_at_search_subpages_for_a_branch():
+    """Search is deliberately two-step so an agent isn't handed a 215-page result
+    set — but the second step only exists for an agent who is told about it
+    (issue #59). `search` returning results is not itself evidence anything is
+    missing, so the telling lives in the descriptions the client is served, where
+    a refactor can silently drop it. Assert it is still there, in the hint voice
+    the page tools share: name what is NOT in front of the agent, then the single
+    move that fetches it."""
+    async def descriptions():
+        return {t.name: t.description or "" for t in await mcp_server.mcp.list_tools()}
+
+    served = anyio.run(descriptions)
+    search, subpages, listing = (served["search"], served["search_subpages"],
+                                 served["list_pages"])
+
+    low = search.lower()
+    # What these results are, and what they therefore leave out...
+    assert "top-level" in low and "sub-page" in low
+    # ...and the one move that goes deeper, named with its argument.
+    assert "search_subpages(parent_slug, query)" in search
+
+    # The other end points back, so an agent arriving from either side reads one
+    # story rather than two unrelated notices.
+    assert "search" in subpages.lower() and "children_hidden" in subpages
+    # list_pages is where an agent learns a branch has depth; it names the tool
+    # that searches one.
+    assert "children_hidden" in listing and "search_subpages" in listing
+
+
 class _Resp:
     """Minimal stand-in for the httpx response /api/collab/{slug}/live returns."""
 

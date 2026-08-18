@@ -125,7 +125,8 @@ function init() {
         go.disabled = false;
         if (res.ok) {
           status.className = "imgpanel-status ok";
-          status.textContent = "Added. Describe another, or close.";
+          status.textContent = "Added" + (res.label ? " by " + res.label : "") +
+            ". Describe another, or close.";
           desc.select();          // easy to tweak and go again
         } else {
           // Keep the description: losing it to a failure is the whole complaint.
@@ -374,6 +375,7 @@ function setupAI(easymde) {
     if (!prompt) return;
     aiGo.disabled = true;
     aiStatus.textContent = "thinking…";
+    let backend = "";
     const cm = easymde.codemirror;
     const ins = (t) => cm.getDoc().replaceRange(t, cm.getDoc().getCursor());
     ins("\n");
@@ -381,7 +383,8 @@ function setupAI(easymde) {
       const res = await fetch("/api/ai/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, page_context: easymde.value(), use_rag: aiRag.checked }),
+        body: JSON.stringify({ prompt, page_context: easymde.value(),
+                               use_rag: aiRag.checked, slug: CFG.slug }),
       });
       const reader = res.body.getReader();
       const dec = new TextDecoder();
@@ -397,9 +400,12 @@ function setupAI(easymde) {
           const line = frame.split("\n").find((l) => l.startsWith("data:"));
           if (!line) continue;
           const p = JSON.parse(line.slice(5).trim());
-          if (p.text) ins(p.text);
+          // The first frame names the backend. Which model wrote your page is
+          // not something to leave you guessing about.
+          if (p.label) { backend = p.label; aiStatus.textContent = "writing… " + backend; }
+          else if (p.text) ins(p.text);
           else if (p.error) aiStatus.textContent = "error: " + p.error;
-          else if (p.done) aiStatus.textContent = "done";
+          else if (p.done) aiStatus.textContent = backend ? "done · " + backend : "done";
         }
       }
     } catch (e) {

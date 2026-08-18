@@ -59,7 +59,8 @@
     <form class="chatform" id="wk-chat-form">
       <input type="text" id="wk-chat-q" placeholder="Ask a question…"
              autocomplete="off" required>
-      <select id="wk-chat-provider" title="Which CLI">
+      <select id="wk-chat-provider"
+              title="Which model to prefer — a hint for Doorman when it is answering, otherwise which CLI to run">
         <option value="">Default</option>
         <option value="claude">Claude</option>
         <option value="gemini">Gemini</option>
@@ -593,7 +594,15 @@
         }).then(function (r) { return r.json(); }).then(function (res) {
           thinking.remove(); q.disabled = false; q.focus();
           if (res.ok) {
-            bubble('assistant', res.answer);
+            var b = bubble('assistant', res.answer);
+            // Say who answered. A Doorman agent and the local CLI are different
+            // models with different access; which one spoke is worth knowing.
+            if (res.label) {
+              var who = document.createElement('span');
+              who.className = 'chatwho muted';
+              who.textContent = res.label;
+              b.appendChild(who);
+            }
             history.push({ role: 'user', content: question });
             history.push({ role: 'assistant', content: res.answer });
           } else {

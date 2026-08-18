@@ -1,10 +1,12 @@
 """AI streaming into the wiki.
 
 Streams tokens over Server-Sent Events so the editor fills in live, grounded in
-the wiki's own content via hybrid RAG retrieval. Generation can run against
-Anthropic (cloud, default) or a local Ollama model (e.g. phi3) — chosen in
-Settings. The system prompt is an editable page in the Help wiki, so users can
-tune it without touching code.
+the wiki's own content via hybrid RAG retrieval. Generation runs against a
+Doorman agent when the user has one there (they already configured model access
+in that app; see `waikiki/doorman.py`), and otherwise against Anthropic (cloud,
+default) or a local Ollama model (e.g. phi3) — chosen in Settings. Whichever
+answers, its name is streamed first so the editor can say so. The system prompt
+is an editable page in the Help wiki, so users can tune it without touching code.
 """
 from __future__ import annotations
 
@@ -131,14 +133,92 @@ async def _ollama_stream(system: str, user_message: str) -> AsyncIterator[str]:
             f"back to Anthropic in Settings.")
 
 
+class _Unavailable(Exception):
+    """Doorman declined before saying anything — take the local path, quietly."""
+
+
+async def _doorman_stream(system: str, user_message: str,
+                          page_slug: str) -> AsyncIterator[dict]:
+    """Stream one generation through a Doorman agent.
+
+    Raises `_Unavailable` *before* yielding anything if Doorman can't answer, so
+    the caller can still fall back with nothing shown to the user. Announces the
+    backend on the first real event rather than up front, so the label is only
+    claimed once Doorman has actually taken the question.
+    """
+    from . import db, doorman
+
+    announced = False
+    text = f"{system}\n\n---\n\n{user_message}"
+    async for evt in doorman.ask_events_async(text, wiki=db.active_wiki(),
+                                              page=page_slug):
+        kind = evt.get("kind")
+        if kind == "unavailable":
+            if not announced:
+                raise _Unavailable(evt.get("reason") or "")
+            return
+        if not announced:
+            announced = True
+            yield {"backend": "doorman",
+                   "label": (doorman.ask_backend() or {}).get("label", "Doorman")}
+        if kind == "message" and evt.get("role") == "agent":
+            body = evt.get("text") or ""
+            if body:
+                yield {"text": body}
+        elif kind == "error":
+            yield {"error": evt.get("text") or "Doorman couldn't answer."}
+        elif kind == "end":
+            return
+
+
+def local_backend() -> dict:
+    """Which of Waikiki's own providers would answer, and how to name it."""
+    if _setting("gen_provider", "anthropic") == "ollama":
+        return {"backend": "ollama",
+                "label": f"Ollama · {_setting('gen_model_local', 'phi3')}"}
+    return {"backend": "anthropic",
+            "label": f"Anthropic · {_setting('gen_model', config.ANTHROPIC_MODEL)}"}
+
+
+def backend() -> dict:
+    """Who will answer the next generation. Doorman when it offers an agent —
+    the user already configured model access there — otherwise Waikiki's own
+    provider. Callers show this: swapping backends invisibly is its own bug."""
+    from . import doorman
+    return doorman.ask_backend() or local_backend()
+
+
+async def stream_events(
+    prompt: str, page_context: Optional[str] = None, use_rag: bool = True,
+    page_slug: str = "",
+) -> AsyncIterator[dict]:
+    """Yield `{"backend", "label"}` once, then `{"text": ...}` deltas.
+
+    Routing lives in `doorman`, so the editor, the REST API and any future MCP
+    caller all get the same answer about which backend is in use (rule 5).
+    """
+    from . import doorman
+
+    system = generation_system_prompt()
+    user_message = _assemble_user(prompt, page_context, use_rag)
+    if doorman.can_ask():
+        try:
+            async for evt in _doorman_stream(system, user_message, page_slug):
+                yield evt
+            return
+        except _Unavailable:
+            pass          # Doorman changed its mind mid-probe: local path, silently
+    yield local_backend()
+    stream = (_ollama_stream if _setting("gen_provider", "anthropic") == "ollama"
+              else _anthropic_stream)
+    async for text in stream(system, user_message):
+        yield {"text": text}
+
+
 async def stream_completion(
     prompt: str, page_context: Optional[str] = None, use_rag: bool = True
 ) -> AsyncIterator[str]:
-    """Yield text deltas from the configured generation provider. Consumed by the
-    SSE endpoint; the editor appends them live."""
-    provider = _setting("gen_provider", "anthropic")
-    system = generation_system_prompt()
-    user_message = _assemble_user(prompt, page_context, use_rag)
-    stream = _ollama_stream if provider == "ollama" else _anthropic_stream
-    async for text in stream(system, user_message):
-        yield text
+    """Text-only view of `stream_events`, for callers that only want the words."""
+    async for evt in stream_events(prompt, page_context, use_rag):
+        if evt.get("text"):
+            yield evt["text"]

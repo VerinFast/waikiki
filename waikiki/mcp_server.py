@@ -292,7 +292,9 @@ def list_pages(children: bool | list[str] | None = False) -> dict:
     Each row carries `parent_slug` (and the internal `parent_id`), so a child in
     the results can be read straight away with get_page(slug). `children_hidden`
     counts the child pages this call left out; parent slugs that don't exist come
-    back in `unknown_parents` rather than silently matching nothing."""
+    back in `unknown_parents` rather than silently matching nothing. Those same
+    pages are outside `search`'s index too — search_subpages(parent_slug, query)
+    is how you search one branch."""
     wiki = _require_wiki()
     want: bool | list[str] = True if children is None else children
     pages = store.list_pages(include_children=want)
@@ -657,7 +659,13 @@ def restore_page(slug: str) -> dict:
 
 @mcp.tool
 def search(query: str, k: int = 6) -> dict:
-    """Hybrid BM25 + vector search over the active wiki only (RAG)."""
+    """Hybrid BM25 + vector search over the active wiki only (RAG).
+
+    Results cover **top-level pages**. Sub-pages are deliberately not in this
+    index — they live in their parent's own partition — so a hit here is often a
+    parent page that merely mentions your subject while the page *about* it is
+    one call away: search_subpages(parent_slug, query) searches inside that
+    branch. This is the same depth list_pages reports as `children_hidden`."""
     wiki = _require_wiki()
     return {"wiki": wiki, "results": rag.search_chunks(query, k)}
 
@@ -1049,7 +1057,10 @@ def list_children(parent_slug: str) -> dict:
 @mcp.tool
 def search_subpages(parent_slug: str, query: str, k: int = 6) -> dict:
     """Hybrid search restricted to one parent's child pages (its own index
-    partition) — for large sub-collections kept out of the main index."""
+    partition) — the sub-pages `search` leaves out, kept separate so a big
+    sub-collection can't flood a wiki-wide result set. Reach for it when `search`
+    returns the parent rather than the specific page, or when list_pages reports
+    `children_hidden`; list_children(parent_slug) names what is in the branch."""
     wiki = _require_wiki()
     parent = store.get_page(parent_slug)
     if not parent:

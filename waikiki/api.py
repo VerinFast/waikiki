@@ -230,6 +230,35 @@ class WikiContextMiddleware:
             db.current_wiki.reset(token)
 
 
+class DoormanFrameMiddleware:
+    """Notice when Doorman is the one displaying this page.
+
+    Doorman embeds Waikiki in a plain iframe, and nothing in that request says
+    so — which is why Settings could offer "use Doorman when it is running" as a
+    checkbox while running *inside* Doorman. The browser does say it though:
+    `Sec-Fetch-Dest: iframe` on the document navigation. The decision has to be
+    server-side (Settings renders server-side, and `doorman.enabled()` gates the
+    integration), so a client-side `window.self !== window.top` check can't be
+    the authority.
+
+    Only the framed *document* request carries that header — the page's own
+    fetch() calls do not — so the judgement is recorded in `doorman` rather than
+    re-derived per request. The probe it needs is a blocking HTTP call, so it
+    runs off the event loop, and only when there is framing evidence at all."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and not scope.get("path", "").startswith("/static"):
+            headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+            query = scope.get("query_string", b"").decode()
+            if doorman.looks_framed(headers, query):
+                import anyio
+                await anyio.to_thread.run_sync(doorman.note_request, headers, query)
+        return await self.app(scope, receive, send)
+
+
 class AccessLogMiddleware:
     """Pure-ASGI: log every HTTP request (method, path, status, size, duration)
     and any unhandled error to the access log. Registered last so it's the
@@ -335,6 +364,7 @@ class ShareAuthMiddleware:
 
 
 app.add_middleware(WikiContextMiddleware)
+app.add_middleware(DoormanFrameMiddleware)
 app.add_middleware(ShareAuthMiddleware)
 app.add_middleware(AccessLogMiddleware)  # added last → outermost
 
@@ -1317,9 +1347,17 @@ def doorman_save(enabled: str = Form("")):
 
     Declinable even when Doorman is running: it is the user's other app, and
     wanting it running without wanting Waikiki to reach into it is reasonable.
+
+    Not declinable while Doorman is the window Waikiki is displayed in — the
+    control is rendered locked there, and this refuses the same way so a stale
+    form or a hand-rolled POST can't unlock it either.
     """
+    if doorman.embedded():
+        return RedirectResponse(
+            "/settings?msg=Waikiki+is+running+inside+Doorman,+so+the+integration"
+            "+stays+on", status_code=303)
     store.set_setting("doorman_enabled", "1" if enabled else "0")
-    doorman.info(force=True)          # reflect the change immediately
+    doorman.refresh()                 # reflect the change immediately
     return RedirectResponse("/settings?msg=Saved", status_code=303)
 
 
@@ -1545,17 +1583,23 @@ class AIRequest(BaseModel):
     prompt: str
     page_context: str | None = None
     use_rag: bool = True
+    slug: str | None = None
 
 
 @app.post("/api/ai/stream")
 async def api_ai_stream(body: AIRequest):
-    """Stream Claude tokens as SSE. The editor appends them live."""
+    """Stream generated tokens as SSE. The editor appends them live.
+
+    The first frame names the backend that answered (a Doorman agent, Anthropic
+    or Ollama) so the editor can show it: which model wrote your page is not
+    something to leave the user guessing about.
+    """
     async def event_gen():
         try:
-            async for delta in ai.stream_completion(
-                body.prompt, body.page_context, body.use_rag
+            async for evt in ai.stream_events(
+                body.prompt, body.page_context, body.use_rag, body.slug or ""
             ):
-                yield f"data: {json.dumps({'text': delta})}\n\n"
+                yield f"data: {json.dumps(evt)}\n\n"
             yield "data: {\"done\": true}\n\n"
         except Exception as exc:  # surface errors to the client
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"

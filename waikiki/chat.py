@@ -1,9 +1,16 @@
-"""Chat with an article, powered by a local CLI (Claude Code or Gemini).
+"""Chat with an article, powered by a Doorman agent or a local CLI.
 
 The user asks a question about a page; we ground the answer in (a) the page's
 own markdown and (b) hybrid-RAG excerpts from elsewhere in the *same* wiki, then
-shell out to the `claude` or `gemini` CLI to answer. The CLI runs in one-shot
-"print" mode — no interactive session — so this stays a simple request/response.
+ask a model.
+
+Two backends, one prompt. When Doorman is running and offers an agent, the
+question goes to `POST /api/ask` there — the user configured model access in
+that app once, and shouldn't have to configure a second set of API keys and
+CLIs here. Otherwise (and whenever Doorman is absent, older, or has no agent) we
+shell out to the `claude` or `gemini` CLI exactly as before, in one-shot "print"
+mode — no interactive session — so this stays a simple request/response. The
+answer always carries a `label` naming whichever one spoke.
 
 The system prompt is an editable page in the Help wiki, so it can be tuned
 without code changes. Nothing here crosses wiki boundaries: retrieval always
@@ -137,6 +144,26 @@ def answer(slug: str | None, question: str, provider: str = "claude",
     if slug and not page:
         return {"ok": False, "error": f"No page '{slug}'."}
 
+    prompt = build_prompt(
+        page["title"] if page else "",
+        page["markdown"] if page else "",
+        "",
+        history or [], question, chat_system_prompt(),
+        wiki=db.active_wiki())
+
+    # Doorman first, when it has an agent. It gets `wiki` and `page` because it
+    # keys a real, audited conversation per (wiki, page, agent) — that is what
+    # keeps those threads separate and legible on its side. A None answer means
+    # "not available": fall through to the CLI without a word about it.
+    from . import doorman
+    got = doorman.ask(prompt, wiki=db.active_wiki(), page=slug or "",
+                      agent=provider, timeout=timeout)
+    if got is not None:
+        if not got.get("ok"):
+            return {"ok": False, "error": got.get("error", "Doorman couldn't answer.")}
+        return {"ok": True, "provider": "doorman", "backend": "doorman",
+                "label": got.get("label", "Doorman"), "answer": got["answer"]}
+
     binary = "gemini" if provider == "gemini" else "claude"
     cli = find_cli(binary)
     if not cli:
@@ -147,15 +174,9 @@ def answer(slug: str | None, question: str, provider: str = "claude",
                 "error": f"`{binary}` CLI not found on this machine. {hint}, "
                          f"then reopen Waikiki."}
 
-    # No pre-retrieved excerpts: the agent has the wiki's own search and page
-    # tools, and five chunks guessed in advance are strictly worse than letting
-    # it look up what it actually needs. See issue #30.
-    prompt = build_prompt(
-        page["title"] if page else "",
-        page["markdown"] if page else "",
-        "",
-        history or [], question, chat_system_prompt(),
-        wiki=db.active_wiki())
+    # Note the prompt above carries no pre-retrieved excerpts: the agent has the
+    # wiki's own search and page tools, and five chunks guessed in advance are
+    # strictly worse than letting it look up what it actually needs (issue #30).
     try:
         proc = clirun.run(f"{binary}:chat", _cli_args(provider, cli, model, prompt),
                           timeout)
@@ -170,4 +191,6 @@ def answer(slug: str | None, question: str, provider: str = "claude",
         return {"ok": False, "error": f"{binary} error: {err[:400]}"}
     # Some CLIs prepend a stray login/banner line; strip common ANSI noise.
     out = re.sub(r"\x1b\[[0-9;]*m", "", out)
-    return {"ok": True, "provider": provider, "answer": out}
+    return {"ok": True, "provider": provider, "backend": provider,
+            "label": f"{binary} CLI" + (f" · {model}" if model else ""),
+            "answer": out}

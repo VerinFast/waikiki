@@ -225,11 +225,22 @@ the trust model, key handling, and failure modes.
 ### Doorman (optional)
 
 If you also run [Doorman](https://github.com/VerinFast/doorman), Waikiki will
-notice and use its much better speech for **Listen** and *"Say this word"*.
+notice and use it for things it does better:
+
+- **Speech** — its voices for **Listen** and *"Say this word"*.
+- **Generation, chat and images** — the agents and image models you already
+  configured there, instead of a second set of API keys and CLIs here. Whatever
+  answers is named in the editor's status line, under the chat reply, and in
+  **Settings → Doorman**, so you always know which model wrote something.
+
+Each of those is capability-probed, not version-sniffed: an older Doorman
+without them simply keeps Waikiki on its own Anthropic/Ollama/CLI path, silently.
 
 It is optional in every direction: Waikiki never starts or installs Doorman,
 everything works identically without it, and you can decline the integration even
-while Doorman is running (**Settings → Doorman**). See
+while Doorman is running (**Settings → Doorman**). The one exception is Waikiki
+displayed *inside* Doorman's own window, where "optional" has no meaning — there
+the setting is shown locked, with the reason. See
 **[docs/doorman.md](docs/doorman.md)**.
 
 ### Deep links

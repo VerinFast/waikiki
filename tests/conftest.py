@@ -92,6 +92,30 @@ def _no_update_checks(monkeypatch):
     monkeypatch.setattr(updater, "_get_json", _no_network)
 
 
+@pytest.fixture(autouse=True)
+def _no_doorman(monkeypatch):
+    """The suite must never reach a real Doorman on the developer's machine.
+
+    Waikiki now asks Doorman whether it can answer generation, chat and images,
+    so a developer who happens to have Doorman open would otherwise get a
+    different test run from everyone else — and a live agent call from a unit
+    test. Patched at the same boundary as the update check: the default is "not
+    running", and a test that wants one overrides ``_get`` itself.
+
+    Every cache is cleared on both sides, so probe results never leak between
+    tests either.
+    """
+    from waikiki import doorman
+
+    def _absent(*a, **k):
+        raise RuntimeError("no Doorman in tests")
+
+    doorman.forget()
+    monkeypatch.setattr(doorman, "_get", _absent)
+    yield
+    doorman.forget()
+
+
 @pytest.fixture
 def wiki(tmp_path, monkeypatch):
     """Isolated temp data dir + fake embedder; active wiki = 'main'."""

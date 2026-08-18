@@ -261,23 +261,46 @@
 
   <section class="settings">
     <details class="settings-sec">
-      <summary>Doorman <span class="muted">(optional)</span></summary>
+      <summary>Doorman
+        <span class="muted">({{ 'the app showing this window' if doorman.embedded
+                                else 'optional' }})</span></summary>
       <form method="post" action="/settings/doorman" class="settings">
         <label class="rag-toggle">
           <input type="checkbox" name="enabled" value="1"
-                 {{ 'checked' if doorman.enabled }}>
+                 {{ 'checked' if doorman.enabled }}
+                 {{ 'disabled' if doorman.embedded }}>
           Use Doorman when it is running
         </label>
-        <button class="btn primary" type="submit">Save</button>
+        {% if not doorman.embedded %}
+          <button class="btn primary" type="submit">Save</button>
+        {% endif %}
       </form>
+      {% if doorman.embedded %}
+        <p class="muted"><strong>Locked on:</strong>
+          Waikiki is running inside Doorman’s own window, so Doorman is
+          unmistakably here and is the host. Open Waikiki on its own to make the
+          integration optional again.</p>
+      {% endif %}
       {% if doorman.running %}
         <p class="muted">Detected at <code>{{ doorman.url }}</code>{% if doorman.version %}
           (version {{ doorman.version }}){% endif %}.
           {% if doorman.voices %}Better voices are available for Listen and
-          “Say this word”.{% endif %}</p>
+          “Say this word”.{% endif %}
+          {% if doorman.ask %}Generation and chat are answered by
+          <strong>{{ doorman.ask.agent }}</strong> in Doorman.{% endif %}
+          {% if doorman.image %}Images are rendered by
+          <strong>{{ doorman.image.model }}</strong> in Doorman.{% endif %}</p>
+        {% if not doorman.ask or not doorman.image %}
+          <p class="muted note">{% if not doorman.ask %}Generation and chat{% endif %}
+            {%- if not doorman.ask and not doorman.image %} and {% endif %}
+            {%- if not doorman.image %}Images{% endif %}
+            still use this machine’s own models and CLIs — this Doorman doesn’t
+            offer that yet, which is normal and needs nothing from you.</p>
+        {% endif %}
       {% else %}
         <p class="muted">Not running. Everything works without it — this only
-          adds nicer speech when Doorman happens to be open.</p>
+          adds nicer speech, and hands generation, chat and images to the agents
+          you have already set up there, when Doorman happens to be open.</p>
       {% endif %}
       <p class="muted note">Doorman is a separate app. Waikiki never starts or
         installs it, and every feature here works without it.</p>

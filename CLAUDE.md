@@ -26,8 +26,13 @@ two in parity (same substance, different voice) whenever you change either.
 - `waikiki/vendor/wiki_interchange/` — vendored, version-pinned interchange
   format (see `docs/vendoring.md`).
 - `waikiki/doorman.py` — **optional** integration with the sibling Doorman app:
-  detection plus nicer speech. Must never be required, started or installed —
-  see `docs/doorman.md`.
+  detection, nicer speech, and the **routing decision** for generation, chat and
+  images (`/api/ask`, `/api/image`). Must never be required, started or
+  installed. Capability-probe, never version-sniff: an older Doorman 404s those
+  routes and a 404 means exactly what the documented quiet `{available: false}`
+  200 means. The one place "optional" doesn't apply is Waikiki displayed *inside*
+  Doorman's window (`embedded()`), where the setting is locked on with a reason
+  rather than hidden — see `docs/doorman.md`.
 - `waikiki/deeplink.py` — `waikiki://` deep links: the allow-list that turns an
   external URL into an in-app destination (see `docs/deep-links.md`).
 - `waikiki/updater.py` — self-update for the packaged `.app`: signature-verified
@@ -64,6 +69,11 @@ two in parity (same substance, different voice) whenever you change either.
    `tests/test_cross_wiki_isolation.py` guards this end to end.
 5. **One code path for Human and LLM.** REST, HTML views, and MCP tools all go
    through `store`/`rag` so both callers get identical render + version + index.
+   The same applies to *which model answers*: the Doorman-or-local decision lives
+   in `doorman.py` (below `ai`/`chat`/`imagegen`, which are below the routes), so
+   the editor, the REST API and the MCP tools can't disagree about it. Whatever
+   answers is named back to the caller (`backend`/`label`) — routing to a
+   different model without saying so is its own bug.
 6. **The Y.Doc is the canonical persisted state; markdown is a projection.** Each
    page's full encoded `pycrdt` Y.Doc lives in `page_ydoc` and is the source of
    truth; `pages.markdown`/`html` are maintained *alongside* it for FTS, render

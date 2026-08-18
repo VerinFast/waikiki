@@ -294,6 +294,7 @@ pre.diff .hunk{color:var(--muted);display:block}
 .chatmsg.assistant{align-self:flex-start;background:var(--code-bg);color:var(--text);border:1px solid var(--border)}
 .chatmsg.thinking{opacity:.6;font-style:italic}
 .chatmsg.err{background:transparent;border:1px solid var(--danger);color:var(--danger)}
+.chatwho{display:block;margin-top:.35rem;font-size:.75rem;opacity:.7}
 .chatform{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
 .chatform input[type=text]{flex:1;min-width:200px;padding:.5rem .7rem;border:1px solid var(--border);
   border-radius:8px;background:var(--bg);color:var(--text)}

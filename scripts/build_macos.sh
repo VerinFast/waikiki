@@ -3,8 +3,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-python3 -m venv .venv 2>/dev/null || true
-source .venv/bin/activate
+# Build in a venv of its own, never the dev `.venv`. Claude Desktop launches
+# Waikiki's MCP server from `.venv` in the source tree, so pip-installing here
+# used to mutate a live dependency set: `pip install` briefly uninstalls a
+# package before replacing it, and a launch landing in that window fails to
+# import and the server never starts. Cutting a release must not be able to
+# break the editor you are cutting it from.
+BUILD_VENV=".venv-build"
+python3 -m venv "$BUILD_VENV" 2>/dev/null || true
+source "$BUILD_VENV/bin/activate"
 pip install -q -r requirements.txt
 pip install -q pywebview pyinstaller
 

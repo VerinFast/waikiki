@@ -34,3 +34,4 @@ models/
 # icon build intermediates (keep Waikiki.icns)
 assets/Waikiki.iconset/
 assets/icon-1024.png
+.venv-build/

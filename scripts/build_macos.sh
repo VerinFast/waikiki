@@ -44,6 +44,52 @@ pyinstaller --noconfirm --clean waikiki.spec
 # downloaded app — first launch still needs right-click -> Open.
 codesign --force --deep --sign - dist/Waikiki.app 2>/dev/null || true
 
+# Prove the thing we just built actually RUNS before it can become a release
+# asset. v0.21.0 shipped a signed, verified bundle that could not be opened: the
+# signature proved the bytes were ours, nothing proved they started. Boot it
+# headless (server only, no window) on a scratch data dir and a port nothing else
+# uses, then check it serves its own version.
+SMOKE_PORT=8899
+SMOKE_DATA="$(mktemp -d)"
+echo "==> smoke test: booting the built app headless on :$SMOKE_PORT"
+WAIKIKI_HEADLESS=1 WAIKIKI_DATA="$SMOKE_DATA" WAIKIKI_PORT="$SMOKE_PORT" \
+    dist/Waikiki.app/Contents/MacOS/Waikiki > "$SMOKE_DATA/smoke.log" 2>&1 &
+SMOKE_PID=$!
+# Wait for it to actually exit before removing the dir: kill is asynchronous,
+# and a still-writing process makes rm fail — which, under `set -e`, would
+# abort the build over nothing but cleanup.
+smoke_cleanup() {
+    kill "$SMOKE_PID" 2>/dev/null || true
+    for _ in $(seq 1 40); do kill -0 "$SMOKE_PID" 2>/dev/null || break; sleep 0.25; done
+    rm -rf "$SMOKE_DATA" 2>/dev/null || true
+}
+SMOKE_OK=""
+# Generous: a cold first run may fetch the local embedding model.
+for _ in $(seq 1 120); do
+    kill -0 "$SMOKE_PID" 2>/dev/null || break          # died: stop waiting
+    if curl -sf -m 2 -o /dev/null "http://127.0.0.1:$SMOKE_PORT/"; then SMOKE_OK=1; break; fi
+    sleep 1
+done
+if [ -z "$SMOKE_OK" ]; then
+    echo "ERROR: the built app did not serve on :$SMOKE_PORT — refusing to ship it." >&2
+    echo "--- last 30 lines of its output ---" >&2
+    tail -30 "$SMOKE_DATA/smoke.log" >&2 || true
+    smoke_cleanup
+    exit 1
+fi
+# There is no /api/version route; the shell renders the version beside the logo,
+# which is the same string a user reads, so assert on that.
+SMOKE_VER="$(curl -sf -m 5 "http://127.0.0.1:$SMOKE_PORT/" 2>/dev/null \
+    | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d v)"
+smoke_cleanup
+if [ "$SMOKE_VER" != "$(python3 -c \
+        "import re,pathlib;print(re.search(r'__version__ = \"([^\"]+)\"',pathlib.Path('waikiki/__init__.py').read_text()).group(1))")" ]; then
+    echo "ERROR: the built app serves version $SMOKE_VER, not the source version." >&2
+    echo "       dist/ is stale or half-replaced. Refusing to ship it." >&2
+    exit 1
+fi
+echo "==> smoke test passed${SMOKE_VER:+ (serving $SMOKE_VER)}"
+
 # Zip the .app for a GitHub release asset (preserves the bundle structure).
 cd dist
 ditto -c -k --sequesterRsrc --keepParent "Waikiki.app" "Waikiki-macos.zip"

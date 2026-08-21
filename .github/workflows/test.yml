@@ -1,0 +1,63 @@
+# The suite is the correctness anchor (CLAUDE.md), but until now it only ever ran
+# in whoever's shell happened to run it. This makes "green" mean the same thing
+# for everyone.
+#
+# macOS, not Linux: this ships as a macOS .app, and the dependencies that are
+# most likely to break — apsw, sqlite-vec, onnxruntime — are the ones whose
+# wheels differ by platform. Testing on the platform we ship is the point.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to a PR makes the previous run irrelevant.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -q --upgrade pip
+          pip install -q -r requirements.txt
+
+      - name: Run the suite
+        # No network in tests: an embedder that reaches for a model, or an update
+        # check that reaches GitHub, is a bug the fixtures are meant to prevent —
+        # let it fail here rather than flake later.
+        env:
+          WAIKIKI_DATA: ${{ runner.temp }}/waikiki-ci
+          HF_HUB_OFFLINE: '1'
+        run: python -m pytest -q
+
+  # Guards the rule tests can't: no raw SQL or cursor use in the routes. It has a
+  # test of its own, but a fast explicit signal is worth the twenty seconds.
+  chokepoint:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - run: |
+          python -m pip install -q --upgrade pip
+          pip install -q -r requirements.txt
+      - run: python -m pytest tests/test_repository_chokepoint.py -q

@@ -47,6 +47,15 @@
      it. Present everywhere; page-scoped where there is a page, wiki-scoped
      otherwise. Hidden for guests, who cannot run local CLIs (auth.guest_may). #}
   {% if role != 'guest' %}
+  {%- if cap_state.chat == 'unavailable' %}
+  {# The tool chat runs isn't on this machine, and that was knowable before the
+     click. Rendered unpressable and pointed at the fix, rather than opening a
+     panel whose only possible answer is an error with a command in it. #}
+  <a class="chat-launch cap-off" id="wk-chat-launch" href="/settings#capabilities"
+     role="button" aria-disabled="true" data-cap-off="1" aria-label="Chat unavailable"
+     title="Chat needs a CLI that isn't installed — Settings › Capabilities has the fix"
+     >💬</a>
+  {%- else %}
   <button type="button" class="chat-launch" id="wk-chat-launch"
           title="Chat" aria-label="Chat" aria-expanded="false">💬</button>
   <section class="chat-panel" id="wk-chat-panel" aria-label="Chat" hidden>
@@ -68,6 +77,7 @@
       <button class="btn primary" type="submit">Ask</button>
     </form>
   </section>
+  {%- endif %}
   {% endif %}
   <header class="topbar">
     <a class="brand" href="/">🌺 Waikiki <span class="ver" title="Version">v{{ version }}</span></a>
@@ -529,7 +539,9 @@
     (function () {
       var launch = document.getElementById('wk-chat-launch');
       var panel = document.getElementById('wk-chat-panel');
-      if (!launch || !panel) return;
+      // data-cap-off: chat can't work here, so the launcher is a link to the
+      // capabilities view. Binding the panel handlers to it would swallow that.
+      if (!launch || !panel || launch.dataset.capOff) return;
       var log = document.getElementById('wk-chat-log');
       var form = document.getElementById('wk-chat-form');
       var q = document.getElementById('wk-chat-q');

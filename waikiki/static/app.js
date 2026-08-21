@@ -2,6 +2,14 @@
 // streaming AI (pull) + image upload.
 const CFG = window.WAIKIKI || {};
 const textarea = document.getElementById("editor");
+
+// Whether the tool a feature shells out to actually exists here. Probed
+// server-side (waikiki/capabilities.py) and handed over in window.WAIKIKI, so
+// the toolbar can render a dead control as dead instead of finding out on click.
+// Declared before init() runs: `function init` hoists, `const` does not.
+const CAPS = CFG.caps || {};
+const imagesOff = CAPS.images === "unavailable";
+
 if (textarea) init();
 
 function init() {
@@ -14,8 +22,12 @@ function init() {
               "unordered-list", "ordered-list", "|", "link", "image",
               {name: "attach", className: "fa fa-paperclip",
                title: "Attach image / video / audio", action: attachMedia},
-              {name: "genimage", className: "fa fa-magic",
-               title: "Generate an image with AI", action: generateImage},
+              {name: "genimage",
+               className: "fa fa-magic" + (imagesOff ? " cap-off" : ""),
+               title: imagesOff
+                 ? "Image generation isn't set up on this machine \u2014 Settings \u203a Capabilities has the fix"
+                 : "Generate an image with AI",
+               action: generateImage},
               "|", "preview", "side-by-side", "fullscreen", "|", "guide"],
     uploadImage: true,
     imageUploadFunction: uploadImage,
@@ -88,6 +100,17 @@ function init() {
     const go = imgPanel.querySelector(".imgpanel-go");
 
     imgPanel.classList.add("open");
+    if (imagesOff) {
+      // Say so here rather than after a minute of waiting. The description box
+      // stays usable so nothing typed is lost if the fix is applied in another
+      // tab and this one is reloaded.
+      status.innerHTML = "Image generation isn't set up on this machine. " +
+        '<a href="/settings#capabilities">Settings \u203a Capabilities</a> ' +
+        "says what's missing and can fix it.";
+      status.className = "imgpanel-status err";
+      go.disabled = true;
+      return;
+    }
     if (!CFG.slug) {
       // Inline, not an alert — and the description is kept either way.
       status.textContent = "Save the page first — generated images are stored per article.";

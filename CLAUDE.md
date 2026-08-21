@@ -33,6 +33,15 @@ two in parity (same substance, different voice) whenever you change either.
   200 means. The one place "optional" doesn't apply is Waikiki displayed *inside*
   Doorman's window (`embedded()`), where the setting is locked on with a reason
   rather than hidden — see `docs/doorman.md`.
+- `waikiki/capabilities.py` — what this install can actually do, and the
+  **remedy descriptors** that fix what it can't. Probes every optional tool,
+  reports a state + a plain-language reason, and resolves each remedy to the
+  step that is *actionable now* (see `docs/capabilities.md`). Sits below the
+  routes with `doorman`/`updater`, whose `status()` shape it follows.
+- `waikiki/remedies.py` — the **only** place a remedy's argv is written: three
+  registries (package installs, vendor scripts, "open this pane") plus the
+  execution that re-checks the prerequisite, reports failure honestly, and
+  treats exit 0 as a claim rather than proof. Sits below `capabilities`.
 - `waikiki/deeplink.py` — `waikiki://` deep links: the allow-list that turns an
   external URL into an in-app destination (see `docs/deep-links.md`).
 - `waikiki/updater.py` — self-update for the packaged `.app`: signature-verified
@@ -43,6 +52,8 @@ two in parity (same substance, different voice) whenever you change either.
 - `docs/updates.md` — the auto-update trust model and release procedure.
 - `docs/deep-links.md` — the `waikiki://` scheme and why it is an allow-list.
 - `docs/doorman.md` — the optional Doorman integration and why it stays optional.
+- `docs/capabilities.md` — the capabilities view, remedy descriptors, and the
+  one install that pipes a script into a shell.
 
 ## Architectural rules (load-bearing)
 
@@ -109,6 +120,21 @@ two in parity (same substance, different voice) whenever you change either.
    `app_config.json`, or any other writable place — a replaceable pinned key is
    not a trust root. The bundle's ad-hoc `codesign --sign -` proves nothing about
    origin; it is not a substitute. See `docs/updates.md`.
+
+9. **A missing tool is reported, never discovered on click — and never as a
+   command to paste.** `capabilities.py` probes each optional tool and hands the
+   routes a **remedy descriptor** (a registry id + a label), so Settings shows a
+   button and the feature's own affordance renders disabled and points at it.
+   Four things are load-bearing: a remedy resolves to the **prerequisite that is
+   actionable now** (no `npm` means the button is Node.js, not the CLI); an
+   install is **confirmed server-side** before it changes the machine, and its
+   failure is *reported*, exit code and all; where no vendor publishes an
+   install, we say so and point at the setting rather than **inventing a
+   command**; and **Doorman is never a remedy** — informational only, per rule
+   above and `docs/doorman.md`. The one `curl | bash` path (`agy`) keeps its URL
+   as a constant in `remedies.py`, names the host before it runs, and only ever
+   runs from a click plus a confirmation — never from a probe. See
+   `docs/capabilities.md`; `tests/test_capabilities.py` guards all of it.
 
 ## Before committing
 

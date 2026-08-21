@@ -222,6 +222,29 @@ since the swap restarts the app. Cutting a signed release is
 `./scripts/release.sh v0.14.0` — see **[docs/updates.md](docs/updates.md)** for
 the trust model, key handling, and failure modes.
 
+### Capabilities and one-click fixes
+
+Waikiki shells out to tools it doesn't ship — the `claude`/`gemini` CLIs, an
+image CLI, `cloudflared`, Ollama. **Settings → Capabilities** says which of them
+this machine actually has, what each one powers, and what is missing, *before*
+you press anything. Chat, ✦ Generate and the editor's ✨ image button render
+greyed out and linked to that view when they can't work, instead of failing a
+minute after the click.
+
+Where something can be fixed, there's a **button**, not a command to copy — and
+it offers the step that is actually possible: without `npm`, "install the Claude
+Code CLI" becomes "install Node.js first", and with no Homebrew either it becomes
+instructions with a link rather than a button that would fail. Installing asks
+first, says what it is about to do, and reports honestly when it doesn't work
+(`npm i -g` failing on permissions is common, and reads as exactly that).
+
+Where nobody publishes an install path, Waikiki says so and points at the setting
+you can change — it won't guess at a command. Doorman is listed but never
+offered as a fix: it is your app, and Waikiki never installs or starts it. The
+one installer that pipes a download into a shell (Google's Antigravity CLI, the
+default image tool) names the host it fetches from before it runs. See
+**[docs/capabilities.md](docs/capabilities.md)**.
+
 ### Doorman (optional)
 
 If you also run [Doorman](https://github.com/VerinFast/doorman), Waikiki will

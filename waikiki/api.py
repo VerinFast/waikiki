@@ -21,8 +21,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
-from . import (accesslog, ai, appconfig, auth, authoring, backups, bonjour, chat,
-               collab, doorman,
+from . import (accesslog, ai, appconfig, auth, authoring, backups, bonjour,
+               capabilities, chat, collab, doorman,
                config, db, debuglog, deeplink, edits, elements, embeddings,
                help_content, imagegen, pdfgen, rag, render, store, structure,
                tunnel, updater, wikis)
@@ -438,6 +438,11 @@ def _ctx(request: Request, **extra) -> dict:
         # "owner" (loopback) or "guest" (LAN, password) — templates hide the
         # owner-only controls from guests so the UI matches what they can do.
         "role": request.scope.get("waikiki_role", "owner"),
+        # {capability id: ok|degraded|unavailable}. Every template that offers an
+        # AI affordance gates it on this, so a feature that cannot work renders
+        # disabled and points at Settings → Capabilities instead of failing on
+        # click. Probed below the routes (waikiki/capabilities.py) and cached.
+        "cap_state": capabilities.states(),
     }
     base.update(extra)
     # A waikiki:// link for whichever page this view is showing, so "Copy link"
@@ -1263,13 +1268,19 @@ def advanced_search_view(request: Request, q: str = "", index: str = "all",
 
 
 @app.get("/settings", response_class=HTMLResponse)
-def settings_view(request: Request, msg: str = "", error: str = ""):
+def settings_view(request: Request, msg: str = "", error: str = "",
+                  detail: str = "", confirm: str = ""):
     themes = sorted(p.stem for p in (_STATIC / "themes").glob("*.css"))
     provider, model = embeddings.active()
     wiki = db.active_wiki()
+    # `confirm` names a remedy the user has clicked but not yet agreed to. It is
+    # matched against the registry rather than trusted: an unknown id renders no
+    # panel at all.
+    pending = capabilities.describe(confirm) if confirm else None
     return templates.TemplateResponse(request,
         "settings.html",
         _ctx(request, settings=store.all_settings(), themes=themes,
+             capabilities=capabilities.report(), pending=pending,
              library=embeddings.get_library(), active_provider=provider,
              active_model=model, catalog=embeddings.fastembed_catalog(),
              style_refs=imagegen.list_style_refs(wiki),
@@ -1288,8 +1299,44 @@ def settings_view(request: Request, msg: str = "", error: str = ""):
              backup_dir=str(config.DATA_DIR / "backups"),
              update=updater.status(),
              doorman=doorman.status(),
-             msg=msg, error=error),
+             msg=msg, error=error, detail=detail),
     )
+
+
+@app.post("/settings/capabilities/{remedy_id}/fix")
+async def capability_fix(remedy_id: str, confirm: str = Form("")):
+    """Carry out one capability remedy (owner-only — guests can't reach /settings/*).
+
+    Two steps, on purpose. The first POST only *offers*: it redirects back to a
+    confirmation that names what is about to happen, including the host a script
+    would be fetched from. Installing software changes the user's machine, so
+    the consent is enforced here rather than in a JavaScript ``confirm()`` a
+    stale form or a hand-rolled POST could skip.
+
+    ``remedy_id`` is looked up in the registry and never used to build a
+    command, so the path segment can't become an argument. The work is blocking
+    (a package manager, over the network), so it runs off the event loop the way
+    backups and updates already do.
+    """
+    plan = capabilities.describe(remedy_id)
+    if not plan or plan.get("kind") == "manual":
+        return RedirectResponse(
+            "/settings?error=" + quote("That isn't a fix Waikiki can carry out.")
+            + "#capabilities", status_code=303)
+    if not confirm:
+        return RedirectResponse(f"/settings?confirm={quote(remedy_id)}#capabilities",
+                                status_code=303)
+
+    import anyio
+    res = await anyio.to_thread.run_sync(capabilities.apply, remedy_id)
+    if not res.get("ok"):
+        return RedirectResponse(
+            "/settings?error=" + quote(res.get("error", "The fix failed."))
+            + "&detail=" + quote(res.get("detail", "")) + "#capabilities",
+            status_code=303)
+    return RedirectResponse(
+        "/settings?msg=" + quote(res.get("message", "Done.")) + "#capabilities",
+        status_code=303)
 
 
 @app.post("/settings/sharing")
@@ -1358,6 +1405,7 @@ def doorman_save(enabled: str = Form("")):
             "+stays+on", status_code=303)
     store.set_setting("doorman_enabled", "1" if enabled else "0")
     doorman.refresh()                 # reflect the change immediately
+    capabilities.refresh()            # ...including in the capabilities view
     return RedirectResponse("/settings?msg=Saved", status_code=303)
 
 
@@ -1485,6 +1533,9 @@ def settings_save(theme: str = Form(...),
     if new_html != store.get_setting("allow_html", "0"):
         store.set_setting("allow_html", new_html)
         store.rerender_all()  # re-render every page under the new HTML policy
+    # Which CLI, provider and URL answer are exactly what the capabilities view
+    # reports on, so it has to re-probe rather than show the previous machine.
+    capabilities.refresh()
     return RedirectResponse("/settings?msg=Saved", status_code=303)
 
 

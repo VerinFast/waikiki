@@ -3,7 +3,97 @@
 {% block content %}
   <h1>Settings</h1>
   {% if msg %}<div class="banner ok">{{ msg }}</div>{% endif %}
-  {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
+  {% if error %}<div class="banner err">{{ error }}
+    {% if detail %}<details class="banner-detail"><summary>What it said</summary>
+      <pre>{{ detail }}</pre></details>{% endif %}
+  </div>{% endif %}
+
+  {# --- Capabilities -------------------------------------------------------
+     What this install can actually do, before you press anything. Every row
+     that can be fixed carries a button; every row that can't says why, in
+     words, with the setting that changes it. Doorman deliberately has neither:
+     it is the user's own app and Waikiki never installs or starts it. #}
+  <section class="settings" id="capabilities">
+    <details class="settings-sec" open>
+      <summary>Capabilities <span class="muted">(what this Waikiki can do right now)</span></summary>
+
+      {% if pending %}
+        <div class="cap-confirm">
+          <h4>Before Waikiki does this</h4>
+          <p>{{ pending.detail }}</p>
+          {% if pending.host %}
+            <p class="cap-warn"><strong>This one downloads code and runs it.</strong>
+              The installer script comes from <code>{{ pending.host }}</code> and
+              runs with your account&rsquo;s permissions. Waikiki verifies the
+              signature on its own updates before running them; it cannot do that
+              for somebody else&rsquo;s installer, and it won&rsquo;t pretend
+              otherwise.</p>
+          {% endif %}
+          <details class="cap-runs">
+            <summary>Exactly what will run</summary>
+            <pre>{{ pending.runs }}</pre>
+          </details>
+          <form method="post" action="/settings/capabilities/{{ pending.id }}/fix"
+                class="cap-fix"
+                data-busy="Working&hellip; this can take a minute. Leave Waikiki open.">
+            <input type="hidden" name="confirm" value="yes">
+            <button class="btn primary" type="submit">Yes, {{ pending.verb }}</button>
+            <a class="btn" href="/settings#capabilities">Cancel</a>
+            <span class="cap-busy muted" aria-live="polite"></span>
+          </form>
+        </div>
+      {% endif %}
+
+      <ul class="caplist">
+        {% for c in capabilities %}
+          <li class="cap cap-{{ c.state }}{{ ' cap-optional' if c.optional }}"
+              id="cap-{{ c.id }}">
+            <div class="cap-head">
+              <span class="cap-dot" aria-hidden="true"></span>
+              <strong class="cap-name">{{ c.label }}</strong>
+              <span class="cap-badge">{{ c.state_label }}</span>
+              {% if c.backend %}<span class="muted cap-backend">{{ c.backend }}</span>{% endif %}
+            </div>
+            <p class="muted cap-powers">{{ c.powers }}</p>
+            <p class="cap-reason">{{ c.reason }}</p>
+            {% if c.remedy %}
+              {% if c.remedy.kind == 'manual' %}
+                <div class="cap-actions">
+                  {# Greyed out on purpose: the row keeps its shape, and "there is
+                     no button for this one" is itself the honest answer. #}
+                  <button class="btn" type="button" disabled
+                          title="Waikiki can&rsquo;t do this one for you">{{ c.remedy.label }}</button>
+                  {% if c.remedy.settings %}
+                    <a href="{{ c.remedy.settings }}">Open the setting</a>
+                  {% endif %}
+                  {% if c.remedy.url %}
+                    <a href="{{ c.remedy.url }}" target="_blank" rel="noopener">{{ c.remedy.link or c.remedy.url }}</a>
+                  {% endif %}
+                </div>
+                <p class="muted note cap-why">{{ c.remedy.why }}</p>
+              {% else %}
+                <form method="post" action="/settings/capabilities/{{ c.remedy.id }}/fix"
+                      class="cap-actions">
+                  <button class="btn primary" type="submit">{{ c.remedy.label }}</button>
+                  {% if c.remedy.step == 'prerequisite' %}
+                    <span class="muted">&mdash; the missing piece comes first; the CLI
+                      is one click after it</span>
+                  {% endif %}
+                </form>
+                <p class="muted note cap-why">Waikiki will say what it is about to do,
+                  and ask, before it changes anything.</p>
+              {% endif %}
+            {% endif %}
+            {% if c.where %}
+              <a class="cap-where" href="{{ c.where.href }}">Settings &rsaquo; {{ c.where.label }}</a>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+      <p class="muted note">Waikiki never installs or starts Doorman &mdash; that row
+        is here to say what is in play, not to switch it on.</p>
+    </details>
+  </section>
 
   <form method="post" action="/settings" class="settings">
     <details class="settings-sec" open>
@@ -42,7 +132,7 @@
       </label>
     </details>
 
-    <details class="settings-sec" open>
+    <details class="settings-sec" id="ai-generation" open>
       <summary>AI generation <span class="muted">(the editor's Generate button)</span></summary>
       <label>Provider
         <select name="gen_provider">
@@ -67,7 +157,7 @@
         (<code>ollama pull phi3</code>).</p>
     </details>
 
-    <details class="settings-sec" open>
+    <details class="settings-sec" id="chat" open>
       <summary>Chat <span class="muted">(chat with an article)</span></summary>
       <label>CLI
         <select name="chat_provider">
@@ -84,7 +174,7 @@
         signed in.</p>
     </details>
 
-    <details class="settings-sec" open>
+    <details class="settings-sec" id="images" open>
       <summary>Images <span class="muted">(generate an image)</span></summary>
       <label>Image CLI
         <input type="text" name="image_cli" value="{{ settings.image_cli }}"
@@ -260,7 +350,7 @@
   </section>
 
   <section class="settings">
-    <details class="settings-sec">
+    <details class="settings-sec" id="doorman">
       <summary>Doorman
         <span class="muted">({{ 'the app showing this window' if doorman.embedded
                                 else 'optional' }})</span></summary>
@@ -308,7 +398,7 @@
   </section>
 
   <section class="settings">
-    <details class="settings-sec">
+    <details class="settings-sec" id="updates">
       <summary>Updates <span class="muted">(version {{ update.current }})</span></summary>
       {% if update.updatable %}
         <form method="post" action="/settings/updates" class="settings">
@@ -357,7 +447,7 @@
   </section>
 
   <section class="settings">
-    <details class="settings-sec" open>
+    <details class="settings-sec" id="public-link" open>
       <summary>Share with someone remote <span class="muted">(temporary public link)</span></summary>
       {% if tunnel_url %}
         <p>🔗 <strong>Live now:</strong>
@@ -418,4 +508,20 @@
       </form>
     </details>
   </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  // Progress, not a frozen page. An install runs on the server and the request
+  // is held while it does, so the one thing the user must not think is that
+  // nothing is happening.
+  document.querySelectorAll('form.cap-fix').forEach(function (f) {
+    f.addEventListener('submit', function () {
+      var btn = f.querySelector('button[type=submit]');
+      var say = f.querySelector('.cap-busy');
+      if (btn) { btn.disabled = true; btn.textContent = 'Working\u2026'; }
+      if (say) say.textContent = f.dataset.busy || '';
+    });
+  });
+</script>
 {% endblock %}

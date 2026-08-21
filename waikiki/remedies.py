@@ -98,6 +98,40 @@ PACKAGE_INSTALLS: dict[str, dict] = {
 # Waikiki ships macOS today; the others are declared so adding them later is a
 # packaging question rather than a rewrite.
 SCRIPT_INSTALLS: dict[str, dict] = {
+    # nvm, then Node from it. Three steps in ONE shell on purpose: step 2
+    # sources what step 1 wrote, and step 3 needs that function — separate
+    # processes would each start clean and step 3 would fail with "nvm: command
+    # not found". The nvm version is PINNED: `install.sh` off a moving ref is a
+    # different script every time you look.
+    #
+    # Note the host. The user-facing page for this is nodejs.org, but the script
+    # is served by GitHub (raw.githubusercontent.com) and written by the nvm
+    # project — so the confirmation names both, the company serving it and the
+    # project that wrote it. Naming the friendlier host would be a lie in the one
+    # dialog that exists to tell the truth.
+    "install-node-nvm": {
+        "label": "Install Node.js",
+        "verb": "download and run the nvm installer, then install Node.js 24",
+        "provides": "npm",
+        "vendor": "the nvm project, hosted by GitHub (Microsoft)",
+        "host": "raw.githubusercontent.com",
+        "platforms": {
+            "darwin": {"url": "https://raw.githubusercontent.com/nvm-sh/nvm/"
+                              "v0.40.7/install.sh",
+                       "needs": "curl",
+                       "runner": ["/bin/bash", "-c"],
+                       "pipeline": ('curl -o- {url} | bash'
+                                    ' && . "$HOME/.nvm/nvm.sh"'
+                                    ' && nvm install 24')},
+            "linux": {"url": "https://raw.githubusercontent.com/nvm-sh/nvm/"
+                             "v0.40.7/install.sh",
+                      "needs": "curl",
+                      "runner": ["/bin/bash", "-c"],
+                      "pipeline": ('curl -o- {url} | bash'
+                                   ' && . "$HOME/.nvm/nvm.sh"'
+                                   ' && nvm install 24')},
+        },
+    },
     "install-agy-cli": {
         "label": "Install the Antigravity CLI",
         "verb": "download and run the Antigravity installer",

@@ -116,13 +116,32 @@ def test_without_npm_the_remedy_becomes_node_not_the_cli(wiki, monkeypatch):
     assert "npm" not in remedy["argv"]
 
 
-def test_with_neither_npm_nor_brew_we_say_so_instead_of_offering_a_button(wiki, monkeypatch):
-    _have(monkeypatch)
+def test_with_neither_npm_nor_brew_node_still_gets_a_button_via_nvm(wiki, monkeypatch):
+    """nvm installs Node without a package manager, so the chain does not dead-end.
+
+    It used to stop here with a link. It doesn't have to: curl is enough.
+    """
+    _have(monkeypatch, "curl")
+    remedy = _cap("chat")["remedy"]
+    assert remedy["kind"] == "script"
+    assert remedy["id"] == "install-node-nvm"
+    assert remedy["step"] == "prerequisite"      # Node first, then the CLI
+    assert remedy["provides"] == "npm"
+    # The confirmation must name who actually serves the script, not the
+    # friendlier page it is documented on.
+    assert remedy["host"] == "raw.githubusercontent.com"
+    assert "nodejs.org" not in remedy["detail"]
+    # Pinned: install.sh off a moving ref is a different script every time.
+    assert "/nvm-sh/nvm/v" in remedy["url"]
+
+
+def test_without_even_curl_the_node_button_is_withheld(wiki, monkeypatch):
+    """A script remedy needs something to fetch with; no curl, no button."""
+    _have(monkeypatch)                            # nothing at all
     remedy = _cap("chat")["remedy"]
     assert remedy["kind"] == "manual"
-    assert remedy["id"] == ""             # nothing for a POST route to run
-    assert "npm" in remedy["why"] and "Homebrew" in remedy["why"]
-    assert remedy["url"] == "https://nodejs.org/"
+    assert remedy["id"] == ""                     # nothing for a POST route to run
+    assert remedy["url"] == "https://nodejs.org/en/download"
 
 
 def test_the_public_link_chain_stops_at_homebrew(wiki, monkeypatch):

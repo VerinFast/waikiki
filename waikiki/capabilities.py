@@ -184,6 +184,20 @@ def _manual(label: str, why: str, url: str = "", link: str = "",
     return remedies.manual(label, why, url, link, settings)
 
 
+def _script_step(remedy_id: str, prerequisite: bool = False) -> dict | None:
+    """A script remedy, but only when this machine can actually run it.
+
+    Script installs declare what they need to fetch with (`curl`, `powershell`).
+    A button offered without that present is a button that fails, which is the
+    exact behaviour this module replaced.
+    """
+    plan = describe(remedy_id)
+    if not plan or (plan["needs"] and not _which(plan["needs"])):
+        return None
+    plan["step"] = "prerequisite" if prerequisite else "direct"
+    return plan
+
+
 def _step(remedy_id: str, prerequisite: bool = False) -> dict | None:
     """A remedy descriptor, tagged with whether it is the fix or the step before it."""
     got = describe(remedy_id)
@@ -208,12 +222,17 @@ def _cli_remedy(binary: str) -> dict:
     if _which("brew"):
         return _step("install-node", prerequisite=True) or _manual(
             "Install Node.js", "Node.js brings npm, which installs the CLI.")
+    # No npm and no Homebrew. nvm installs Node without a package manager, so
+    # there is still a button here — it just has one more step behind it.
+    step = _script_step("install-node-nvm", prerequisite=True)
+    if step:
+        return step
     return _manual(
         "Install Node.js",
         f"The {binary} CLI is installed with npm, and this machine has neither "
         f"npm nor Homebrew to install npm with. Installing Node.js brings npm, "
         f"after which Waikiki can install the CLI for you with one click.",
-        url="https://nodejs.org/", link="nodejs.org")
+        url="https://nodejs.org/en/download", link="nodejs.org")
 
 
 def _brew_remedy(remedy_id: str, what: str) -> dict:
@@ -373,9 +392,8 @@ def _images(door) -> dict:
 
 def _agy_remedy() -> dict:
     """The Antigravity installer — offered only when `curl` can carry it out."""
-    plan = describe("install-agy-cli")
-    if plan and (not plan["needs"] or _which(plan["needs"])):
-        plan["step"] = "direct"
+    plan = _script_step("install-agy-cli")
+    if plan:
         return plan
     return _manual(
         "Install the Antigravity CLI",

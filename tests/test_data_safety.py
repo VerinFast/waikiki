@@ -50,7 +50,8 @@ def test_every_wiki_file_is_wal_with_full_sync(wiki):
     assert seen >= 2
 
 
-def test_canonical_ydoc_is_written_before_the_derived_index(wiki):
+@pytest.mark.parametrize("write", ["create", "update", "upsert"])
+def test_canonical_ydoc_is_written_before_the_derived_index(wiki, write):
     """A failing reindex must not leave the canonical Y.Doc a revision behind.
 
     `page_ydoc` is the source of truth; the RAG index is a cache that can be
@@ -59,21 +60,36 @@ def test_canonical_ydoc_is_written_before_the_derived_index(wiki):
     the projection and skipped the canonical write. That really happened: see
     question 1 in `docs/data-safety.md`.
     """
-    store.create_page("Ledger", "version one")
-
     def boom(*a, **k):
         raise RuntimeError("embedder not ready")
+
+    if write != "create":
+        store.create_page("Ledger", "version one")
 
     original = store.rag.reindex_page
     store.rag.reindex_page = boom
     try:
         with pytest.raises(RuntimeError):
-            store.update_page("ledger", "Ledger", "version two")
+            if write == "create":
+                store.create_page("Ledger", "version two")
+            elif write == "update":
+                store.update_page("ledger", "Ledger", "version two")
+            else:
+                store.upsert_page("Ledger", "version two", slug="ledger")
     finally:
         store.rag.reindex_page = original
 
+    # Every content path, not just the one that happened to be audited: each
+    # writes the canonical doc first, so a failing cache leaves truth intact.
     page = store.get_page("ledger")
     assert page["markdown"] == "version two"
+
+    # Assert the blob was PERSISTED, not that a read can reconstruct one.
+    # canonical_doc() lazily seeds a doc from the projection when no state is
+    # stored, so asserting only on its content passes even when the canonical
+    # write never happened — which is precisely the bug this guards.
+    assert ydoc._load_state(page["id"]) is not None, (
+        "no canonical Y.Doc was persisted; the derived index was written first")
     assert ydoc.content_of(ydoc.canonical_doc(page)) == "version two"
 
 

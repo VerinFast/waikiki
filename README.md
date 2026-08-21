@@ -59,9 +59,11 @@ or share.
 
 ### History, trash & retention
 
-- **Version history:** every save snapshots the page. Open a page → **History** to
-  view any version (with a diff vs current) and **Restore** it. Retention keeps
-  the last *N* versions per page (default 50; set per wiki in Settings, 0 = all).
+- **Version history:** every save snapshots the page. Open a page → **Details** →
+  **History** to view any version (with a diff vs current) and **Restore** it.
+  Restoring is itself a save, so the text you just undid is still there. Retention
+  keeps the last *N* versions per page (default 50; set per wiki in Settings,
+  0 = all).
 - **Trash (soft delete):** deleting a page moves it to the **Trash** (header link),
   hidden from lists and search but restorable. **Restore** brings it back;
   **Delete forever** removes it permanently. Trashed pages are auto-purged after
@@ -69,6 +71,28 @@ or share.
   is also soft; it has `list_trash` / `restore_page` tools.
 - **Wiki stats:** the **Wikis** page shows per-wiki article count, internal-link
   count (with **broken** — red-link — count), size on disk, and trash count.
+
+### Backups & restore
+
+Waikiki backs itself up **automatically, on by default**: every 24 hours it takes
+a consistent snapshot of *every* wiki (SQLite's online backup API, so it's safe
+mid-write) and keeps the last 7. They land in
+`<data>/backups/<YYYY-MM-DD_HHMM>/<slug>.db`; the schedule, the count, and a
+**Back up now** button are in Settings → Backups.
+
+**To restore:** quit Waikiki, then **Manage wikis → Open** on a `.db` from a
+backup folder. It opens as a *separate* wiki, so you can compare before replacing
+anything. Images and version history come with it — a snapshot is a complete
+copy of the wiki.
+
+These are local copies on the same disk as your wikis: insurance against
+corruption, a bad import, or a mistake — **not** against losing the machine. Keep
+a `.wiki` export somewhere else too. Backups only run while the app is open, so
+days you never launched it have no snapshot.
+
+What survives a crash, a corrupt file, a failed import or a bad edit — and what
+doesn't — is audited end to end, with the experiments that established each
+answer, in **[docs/data-safety.md](docs/data-safety.md)**.
 
 ## How the collaboration works
 

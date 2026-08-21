@@ -11,6 +11,7 @@ each call so the web app and the (separate-process) MCP server always agree.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import threading
@@ -46,7 +47,21 @@ def _load() -> dict:
 
 
 def _save(reg: dict) -> None:
-    _registry_path().write_text(json.dumps(reg, indent=2))
+    """Replace the registry atomically.
+
+    A plain ``write_text`` truncates first, so a crash mid-write leaves a torn
+    JSON file — and ``_load`` treats unparseable as "no wikis", which makes every
+    wiki the user created themselves disappear from the app while its ``.db``
+    sits untouched on disk. Write beside it and rename: on the same filesystem
+    that swap is atomic, so a reader sees the old registry or the new one.
+    """
+    path = _registry_path()
+    tmp = path.with_name(path.name + f".tmp{os.getpid()}")
+    try:
+        tmp.write_text(json.dumps(reg, indent=2))
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)   # never leave a half-written twin behind
 
 
 def list_wikis() -> list[dict]:

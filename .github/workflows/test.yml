@@ -29,12 +29,12 @@ jobs:
         with:
           python-version: '3.13'
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: requirements-dev.txt
 
       - name: Install dependencies
         run: |
-          python -m pip install -q --upgrade pip
-          pip install -q -r requirements.txt
+          python3 -m pip install -q --upgrade pip
+          python3 -m pip install -q -r requirements-dev.txt
 
       - name: Run the suite
         # No network in tests: an embedder that reaches for a model, or an update
@@ -43,7 +43,7 @@ jobs:
         env:
           WAIKIKI_DATA: ${{ runner.temp }}/waikiki-ci
           HF_HUB_OFFLINE: '1'
-        run: python -m pytest -q
+        run: python3 -m pytest -q
 
   # Guards the rule tests can't: no raw SQL or cursor use in the routes. It has a
   # test of its own, but a fast explicit signal is worth the twenty seconds.
@@ -56,8 +56,8 @@ jobs:
         with:
           python-version: '3.13'
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: requirements-dev.txt
       - run: |
-          python -m pip install -q --upgrade pip
-          pip install -q -r requirements.txt
-      - run: python -m pytest tests/test_repository_chokepoint.py -q
+          python3 -m pip install -q --upgrade pip
+          python3 -m pip install -q -r requirements-dev.txt
+      - run: python3 -m pytest tests/test_repository_chokepoint.py -q

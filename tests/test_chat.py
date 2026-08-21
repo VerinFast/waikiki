@@ -95,12 +95,17 @@ def test_the_prompt_tells_the_agent_which_wiki_to_switch_to():
     assert "switch_wiki" in p and "beaconlight" in p
 
 
-def test_the_prompt_no_longer_carries_pre_retrieved_excerpts(wiki):
+def test_the_prompt_no_longer_carries_pre_retrieved_excerpts(wiki, monkeypatch):
     """Retrieval was a stand-in for the agent being unable to search. It can now."""
     from waikiki import store
 
     store.create_page("Meru", "body")
     captured = {}
+    # Pretend the CLI is installed. Without this the test asserts nothing on a
+    # machine that lacks `claude`: answer() returns the "not found" error before
+    # it ever builds a prompt, and the assertion below dies on an empty capture
+    # rather than on the thing it means to check.
+    monkeypatch.setattr(chat, "find_cli", lambda name: f"/usr/local/bin/{name}")
 
     def fake_run(tag, argv, timeout):
         captured["prompt"] = argv[argv.index("-p") + 1]

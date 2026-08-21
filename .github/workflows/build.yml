@@ -1,0 +1,61 @@
+# Packaging is the one thing the test suite cannot see. `pytest` imports the
+# source; a release runs a PyInstaller bundle, and the two fail differently — a
+# dependency that ships no wheel for the target arch, a module PyInstaller
+# cannot follow, a data file that never made it into the .app. v0.21.0 shipped a
+# signed, verified bundle that would not open, and nothing caught it.
+#
+# Not on every PR: the bundle is ~225MB and takes minutes, and releases are cut
+# locally by scripts/release.sh, which runs this same smoke test before it signs
+# anything. This job exists so packaging breakage surfaces on a schedule instead
+# of at the moment you are trying to ship — dependency drift is the usual cause,
+# and dependabot merges land here weekly.
+name: build
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 6 * * 1'      # Mondays, early — before anyone tries to release
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      # build_macos.sh does the whole job: its own .venv-build, PyInstaller, the
+      # ad-hoc sign, the launch smoke test, and the zip. Calling it rather than
+      # reimplementing it keeps CI and a local release on one code path — if this
+      # passes and a release then fails, the difference is the machine, not the
+      # script.
+      - name: Build the .app and smoke-test that it launches
+        run: bash scripts/build_macos.sh
+
+      - name: Report what was produced
+        run: |
+          ls -lh dist/Waikiki-macos.zip
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+            dist/Waikiki.app/Contents/Info.plist
+
+      # Kept for a human to download and try when a scheduled run goes red, and
+      # deliberately NOT signed here: the Ed25519 private key stays off CI, so
+      # this artifact can never be mistaken for a release.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: waikiki-unsigned-${{ github.sha }}
+          path: dist/Waikiki-macos.zip
+          retention-days: 7
+          if-no-files-found: warn

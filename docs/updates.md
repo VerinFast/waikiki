@@ -63,7 +63,8 @@ So Waikiki carries its own trust root:
   verified in constant memory. `updater.file_digest` and `scripts/release.sh`
   must stay in lockstep; signing a hash is the standard construction, and
   substituting content would require a SHA-256 collision.
-- The **public** half is pinned in `updater.PUBLIC_KEY_HEX`, compiled into the app.
+- The **public** half is pinned in `updater.PUBLIC_KEYS_HEX`, compiled into the
+  app. It is a *set*: a release has to satisfy one of them.
 - The **private** half never enters this repo. `release.sh` reads it from
   `WAIKIKI_UPDATE_KEY` (default `~/.waikiki/update-key.pem`) and refuses to use
   a key stored inside the working tree, where it could be committed by accident.
@@ -84,7 +85,7 @@ It **fails closed**, in every direction:
 | Bundle not writable by this user | Refused, with the reason shown |
 | Not running from a packaged `.app` | Refused |
 
-Never populate `PUBLIC_KEY_HEX` from the network, from `app_config.json`, or from
+Never populate `PUBLIC_KEYS_HEX` from the network, from `app_config.json`, or from
 anything else a user or attacker can rewrite. A pinned key that can be replaced
 is not a trust root. `WAIKIKI_UPDATE_PUBKEY` exists as an override for tests and
 private builds — it is deliberately an environment variable, not a setting.
@@ -97,7 +98,7 @@ One-time, to create the signing key:
 ./scripts/release.sh --genkey
 ```
 
-That prints the public half. Paste it into `updater.PUBLIC_KEY_HEX`, commit, and
+That prints the public half. Paste it into `updater.PUBLIC_KEYS_HEX`, commit, and
 **back up the private key** — losing it means you cannot ship an update that
 existing installs will accept. There is no recovery path short of users
 reinstalling by hand.
@@ -118,7 +119,7 @@ broken one:
   own staging check reject the build.
 - The signature is verified **against the key pinned in the build being
   shipped**, not just against the private key that signed it. That catches a
-  stale or empty `PUBLIC_KEY_HEX` — the case that would otherwise publish a
+  stale or empty `PUBLIC_KEYS_HEX` — the case that would otherwise publish a
   release every client refuses.
 
 A release with no signed zip asset is a release nobody can install. The Settings
@@ -169,3 +170,26 @@ with no `.sig` — one that must fail at verification.
   the app out from under the test runner. Everything that *decides* whether to
   swap is tested in `tests/test_updater.py`; the helper is covered by the
   `swap.log` it writes into `DATA_DIR/updates/`.
+
+
+## Rotating the signing key
+
+A build trusts the keys compiled into it for as long as it is installed. That
+cuts both ways: lose the private half and those copies can never update again,
+and a stolen key cannot be revoked — they will accept whatever it signs until
+each is reinstalled by hand. Neither is recoverable after the fact, which is why
+`PUBLIC_KEYS_HEX` is a set rather than one key, from the first public release.
+
+Rotation is therefore an *overlap*, not a switch:
+
+1. Append the new public key to `PUBLIC_KEYS_HEX`. Keep signing with the first
+   one. Release. Now shipped copies trust both.
+2. Wait for that build to spread. Anyone still on an older build trusts only the
+   old key, and step 3 will strand them until they update.
+3. Move the new key to index 0 and sign with it. `scripts/release.sh` prints
+   which pinned key signed, and warns when it is not the first — that line going
+   from `#0` to `#1` is the rotation happening.
+4. Once the overlap build is everywhere, drop the retired key.
+
+Step 1 is the one with a deadline: it only helps copies released *after* it, so
+the set has to be in place before the installs you care about exist.

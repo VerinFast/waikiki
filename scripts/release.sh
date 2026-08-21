@@ -102,21 +102,31 @@ PYCODE
 # Verify against the key actually pinned in this build, not just the private key
 # we signed with. Catches the case where updater.py still holds an old public key
 # (or none at all) — which would ship a release every client refuses.
-say "verifying against the pinned public key"
+say "verifying against the keys pinned in this build"
 "$PY" - "$ZIP" "$SIG" <<'PYCODE'
 import pathlib, sys
 from waikiki import updater
 
 zip_path, sig_path = (pathlib.Path(p) for p in sys.argv[1:3])
-if updater._pinned_key() is None:
-    sys.exit("PUBLIC_KEY_HEX is empty in waikiki/updater.py — this build cannot\n"
+keys = updater._pinned_keys()
+if not keys:
+    sys.exit("PUBLIC_KEYS_HEX is empty in waikiki/updater.py — this build cannot\n"
              "verify updates. Paste the public half from --genkey and rebuild.")
 sig = updater._parse_signature(sig_path.read_bytes())
-if not updater.verify_file(zip_path, sig):
-    sys.exit("signature does NOT verify against the pinned public key.\n"
-             "The private key used here doesn't match PUBLIC_KEY_HEX — clients\n"
-             "would refuse this update. Not publishing.")
-print("    verified: clients with this build will accept the download")
+signer = updater.verifying_key(updater.file_digest(zip_path), sig)
+if signer is None:
+    sys.exit(f"signature does NOT verify against any of the {len(keys)} key(s)\n"
+             "pinned in this build. The private key used here matches none of\n"
+             "PUBLIC_KEYS_HEX — clients would refuse this update. Not publishing.")
+# Name the signer. During a rotation several keys are trusted at once, and which
+# one actually signed is the thing you want to see go from old to new — not
+# something to infer later from installs that stopped updating.
+which = keys.index(signer)
+print(f"    verified: signed by pinned key #{which} ({signer.hex()[:16]}…)")
+print(f"    this build trusts {len(keys)} key(s); clients with it accept the download")
+if which != 0:
+    print("    NOTE: signed by a successor key, not the first. Copies that predate\n"
+          "          it in PUBLIC_KEYS_HEX will refuse this release.")
 PYCODE
 
 ls -lh "$ZIP" | awk '{print "    " $9 " (" $5 ")"}'

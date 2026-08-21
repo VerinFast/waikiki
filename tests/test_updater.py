@@ -8,6 +8,14 @@ that is the part whose failure mode is running attacker-supplied code.
 """
 import subprocess
 
+from cryptography.hazmat.primitives import serialization as _ser
+
+
+def _pub_hex(priv) -> str:
+    return priv.public_key().public_bytes(
+        _ser.Encoding.Raw, _ser.PublicFormat.Raw).hex()
+
+
 import pytest
 from cryptography.hazmat.primitives import serialization as ser
 from cryptography.hazmat.primitives.asymmetric import ed25519
@@ -331,13 +339,56 @@ def test_an_empty_env_override_disables_a_pinned_build(monkeypatch):
     constant when empty would make it impossible to run a build with updates
     off — and would silently re-enable trust the operator meant to remove.
     """
-    assert updater.PUBLIC_KEY_HEX, "this test is meaningless without a pinned key"
+    assert updater.PUBLIC_KEYS_HEX, "this test is meaningless without a pinned key"
     monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", "")
-    assert updater._pinned_key() is None
+    assert updater._pinned_keys() == []
     ok, why = updater.can_update()
     assert ok is False and "signing key" in why
 
 
-def test_the_pinned_key_is_used_when_no_override_is_set(monkeypatch):
+def test_the_pinned_keys_are_used_when_no_override_is_set(monkeypatch):
     monkeypatch.delenv("WAIKIKI_UPDATE_PUBKEY", raising=False)
-    assert updater._pinned_key() == bytes.fromhex(updater.PUBLIC_KEY_HEX)
+    assert updater._pinned_keys() == [bytes.fromhex(h)
+                                      for h in updater.PUBLIC_KEYS_HEX]
+
+
+# --- Rotation (issue #69) -----------------------------------------------------
+#
+# A build trusts what was pinned into it for its whole life, so rotation only
+# works if a shipped build already trusts more than one key. These pin the
+# overlap that makes that possible.
+
+def test_a_successor_key_verifies_alongside_the_current_one(monkeypatch):
+    """The overlap window: sign with either, both are accepted."""
+    current, successor = (ed25519.Ed25519PrivateKey.generate() for _ in range(2))
+    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", " ".join(
+        _pub_hex(k) for k in (current, successor)))
+    for key in (current, successor):
+        assert updater.verify_signature(b"payload", key.sign(b"payload")) is True
+
+
+def test_a_key_outside_the_set_is_still_refused(monkeypatch):
+    """Trusting several keys must not drift into trusting any key."""
+    trusted, attacker = (ed25519.Ed25519PrivateKey.generate() for _ in range(2))
+    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", _pub_hex(trusted))
+    assert updater.verify_signature(b"payload", attacker.sign(b"payload")) is False
+
+
+def test_verifying_key_names_which_key_signed(monkeypatch):
+    """The release script reports the signer, so a rotation is visible."""
+    current, successor = (ed25519.Ed25519PrivateKey.generate() for _ in range(2))
+    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", " ".join(
+        _pub_hex(k) for k in (current, successor)))
+    signed = updater.verifying_key(b"payload", successor.sign(b"payload"))
+    assert signed == successor.public_key().public_bytes(
+        _ser.Encoding.Raw, _ser.PublicFormat.Raw)
+    assert updater.verifying_key(b"payload", b"\x00" * 64) is None
+
+
+def test_one_malformed_entry_does_not_disarm_the_rest(monkeypatch):
+    """A typo in one key must not take out the others, nor mean 'trust all'."""
+    good = ed25519.Ed25519PrivateKey.generate()
+    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", f"nothex, {_pub_hex(good)}, aa")
+    assert updater.verify_signature(b"payload", good.sign(b"payload")) is True
+    other = ed25519.Ed25519PrivateKey.generate()
+    assert updater.verify_signature(b"payload", other.sign(b"payload")) is False

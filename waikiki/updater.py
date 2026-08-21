@@ -44,14 +44,30 @@ from . import appconfig, config
 REPO = os.environ.get("WAIKIKI_UPDATE_REPO", "VerinFast/waikiki")
 LATEST_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 
-# Ed25519 public key (64 hex chars) that release zips must verify against.
+# Ed25519 public keys (64 hex chars each) that release zips must verify against.
+# A release needs to satisfy ONE of them.
 #
 # Generate a keypair with scripts/release.sh --genkey. Paste the PUBLIC half
 # here and commit it; keep the private half outside the repo (the script reads
-# it from WAIKIKI_UPDATE_KEY). Empty means "updates disabled" -- see
-# _pinned_key(). Never populate this from the network or from app config: a
+# it from WAIKIKI_UPDATE_KEY). An empty set means "updates disabled" -- see
+# _pinned_keys(). Never populate this from the network or from app config: a
 # pinned key an attacker can rewrite is not a trust root.
-PUBLIC_KEY_HEX = "1e2c9d83ba11d5af155d6e0bb71f8a22d4da2146400a2fd5f0d872c285076937"
+#
+# WHY A SET AND NOT ONE KEY. Each build trusts what is pinned into it, for its
+# whole life. With a single key there is no way out of either disaster: lose the
+# private half and every copy in the field can never take another update, and
+# there is no revoking a stolen one -- those copies will accept whatever it signs
+# until each is reinstalled by hand. A set makes rotation possible without
+# abandoning anyone: publish a build trusting {current, next}, wait for it to
+# spread, start signing with `next`, and later drop `current`. That overlap only
+# exists if the shipped builds already carry more than one slot, which is why
+# this is a tuple today, while the only installs are ours.
+#
+# SIGN WITH THE FIRST ONE. Order is meaningful: index 0 is the current signing
+# key. Successors are appended, never inserted.
+PUBLIC_KEYS_HEX: tuple[str, ...] = (
+    "1e2c9d83ba11d5af155d6e0bb71f8a22d4da2146400a2fd5f0d872c285076937",
+)
 
 DEFAULT_INTERVAL_HOURS = 24
 _lock = threading.Lock()
@@ -102,24 +118,33 @@ def interval_hours() -> int:
         return DEFAULT_INTERVAL_HOURS
 
 
-def _pinned_key() -> bytes | None:
-    """The pinned Ed25519 public key, or None if updates are disabled.
+def _pinned_keys() -> list[bytes]:
+    """Every Ed25519 public key this build trusts. Empty means updates are off.
 
-    WAIKIKI_UPDATE_PUBKEY overrides the constant so tests (and a private build)
-    can supply their own key without editing the source. Setting it to an empty
-    value is a deliberate override too — it means "no key", which disables
-    updating rather than falling back to the pinned one. That keeps the
-    fail-closed direction: an override can only ever remove trust, never grant it.
+    WAIKIKI_UPDATE_PUBKEY overrides the pinned set so tests (and a private build)
+    can supply their own without editing the source; separate several with commas
+    or whitespace. Setting it to an empty value is a deliberate override too — it
+    means "no keys", which disables updating rather than falling back to what is
+    pinned. That keeps the fail-closed direction: an override can only ever
+    remove trust from a shipped build, never quietly add to it.
+
+    Malformed entries are dropped rather than raising: a typo in one key must not
+    take out the others, and it must never end up meaning "trust everything".
     """
     env = os.environ.get("WAIKIKI_UPDATE_PUBKEY")
-    raw = (PUBLIC_KEY_HEX if env is None else env).strip()
-    if not raw:
-        return None
-    try:
-        key = bytes.fromhex(raw)
-    except ValueError:
-        return None
-    return key if len(key) == 32 else None
+    raw = list(PUBLIC_KEYS_HEX) if env is None else env.replace(",", " ").split()
+    out: list[bytes] = []
+    for item in raw:
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            key = bytes.fromhex(item)
+        except ValueError:
+            continue
+        if len(key) == 32 and key not in out:
+            out.append(key)
+    return out
 
 
 # --- Paths --------------------------------------------------------------------
@@ -147,7 +172,7 @@ def bundle_path() -> Path | None:
 
 def can_update() -> tuple[bool, str]:
     """Whether this install is updatable, and why not when it isn't."""
-    if _pinned_key() is None:
+    if not _pinned_keys():
         return False, ("no update signing key is pinned in this build "
                        "(see waikiki/updater.py)")
     bundle = bundle_path()
@@ -234,29 +259,43 @@ def maybe_check() -> dict | None:
 # --- Verify -------------------------------------------------------------------
 
 def verify_signature(payload: bytes, signature: bytes) -> bool:
-    """Ed25519-verify `payload` against the pinned public key.
+    """Ed25519-verify `payload` against any pinned public key.
 
-    False for a bad signature, a wrong key, a malformed key, or no pinned key.
+    False for a bad signature, a key we do not trust, a malformed key, or no
+    pinned keys at all. One key out of the set is enough — that is what makes a
+    rotation survivable (see PUBLIC_KEYS_HEX).
     """
-    key_bytes = _pinned_key()
-    if key_bytes is None or not signature:
-        return False
+    return verifying_key(payload, signature) is not None
+
+
+def verifying_key(payload: bytes, signature: bytes) -> bytes | None:
+    """Which pinned key verifies `payload`, or None if none of them does.
+
+    Same answer as verify_signature, but it names the key — the release script
+    reports which one signed, so a rotation is visible rather than something you
+    infer from a release going quiet.
+    """
+    keys = _pinned_keys()
+    if not keys or not signature:
+        return None
     try:
         from cryptography.exceptions import InvalidSignature
         from cryptography.hazmat.primitives.asymmetric import ed25519
     except Exception:
-        return False
-    try:
-        key = ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
-    except Exception:
-        return False
-    try:
-        key.verify(signature, payload)
-        return True
-    except InvalidSignature:
-        return False
-    except Exception:
-        return False
+        return None
+    for key_bytes in keys:
+        try:
+            key = ed25519.Ed25519PublicKey.from_public_bytes(key_bytes)
+        except Exception:
+            continue          # a bad entry must not mask a good one
+        try:
+            key.verify(signature, payload)
+            return key_bytes
+        except InvalidSignature:
+            continue
+        except Exception:
+            continue
+    return None
 
 
 def _parse_signature(raw: bytes) -> bytes:
@@ -501,5 +540,6 @@ def status() -> dict:
         # The only field Settings may gate the install offer on: set when the
         # last check found a release that is both newer AND signed.
         "last_available": appconfig.get("update_last_available"),
-        "signing_key_pinned": _pinned_key() is not None,
+        "signing_key_pinned": bool(_pinned_keys()),
+        "signing_keys_trusted": len(_pinned_keys()),
     }

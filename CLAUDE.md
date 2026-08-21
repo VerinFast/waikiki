@@ -115,7 +115,8 @@ two in parity (same substance, different voice) whenever you change either.
 8. **The updater fails closed, and its trust root is pinned at build time.**
    `updater.py` downloads a bundle and then *executes* it, so it is the highest-
    privilege path in the app. Every release zip must Ed25519-verify against
-   `PUBLIC_KEY_HEX` **before** it is expanded; no pinned key means updating is
+   one of the keys in `PUBLIC_KEYS_HEX` **before** it is expanded; no pinned key
+   means updating is
    disabled, never "trust the download". Never source that key from the network,
    `app_config.json`, or any other writable place — a replaceable pinned key is
    not a trust root. The bundle's ad-hoc `codesign --sign -` proves nothing about

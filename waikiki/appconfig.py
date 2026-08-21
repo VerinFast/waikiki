@@ -7,6 +7,7 @@ have to be duplicated per wiki.
 from __future__ import annotations
 
 import json
+import os
 import threading
 
 from . import config
@@ -30,7 +31,19 @@ def get(key: str, default=None):
 
 
 def set(key: str, value) -> None:
+    """Write one key, replacing the file atomically.
+
+    ``_load`` treats an unparseable file as an empty config, so a torn write here
+    silently resets every app-global preference — including whether backups run.
+    Write beside it and rename, same as the wiki registry.
+    """
     with _lock:
         data = _load()
         data[key] = value
-        _path().write_text(json.dumps(data, indent=2))
+        path = _path()
+        tmp = path.with_name(path.name + f".tmp{os.getpid()}")
+        try:
+            tmp.write_text(json.dumps(data, indent=2))
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)

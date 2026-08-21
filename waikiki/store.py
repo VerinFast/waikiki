@@ -254,8 +254,9 @@ def create_page(title: str, markdown: str = "", author: str = "human",
     _snapshot(page_id, title, markdown, author)
     _index_meta(page_id, markdown)
     conn.commit()
-    rag.reindex_page(page_id, markdown)
+    # Canonical state before the derived index — see the note in `_set_body`.
     _sync_ydoc(page_id, slug, title, markdown)
+    rag.reindex_page(page_id, markdown)
     if (b := _activity_bucket(author)):
         log_activity(b, "write")
     return get_page(slug)
@@ -359,8 +360,18 @@ def _set_body(slug: str, title: str, markdown: str, author: str) -> None:
     _snapshot(page["id"], title, markdown, author)
     _index_meta(page["id"], markdown)
     conn.commit()
-    rag.reindex_page(page["id"], markdown)
+    # The canonical Y.Doc is written *before* the search index, because the two
+    # are not the same kind of thing: `page_ydoc` is the source of truth (rule 6)
+    # while the RAG index is a derived cache that `reindex_page` can rebuild from
+    # the markdown at any time. With the old order, anything that raised in
+    # reindex — an embedder that isn't ready yet, a missing sqlite-vec, a model
+    # download failing — committed the projection and then skipped the canonical
+    # write, silently leaving the Y.Doc a revision behind. That is not
+    # hypothetical: the Help wiki's About page in this developer's install still
+    # carries version 0.18.0 in its Y.Doc and 0.21.0 in its markdown. See
+    # `docs/data-safety.md` (question 1).
     _sync_ydoc(page["id"], slug, title, markdown)
+    rag.reindex_page(page["id"], markdown)
     if (b := _activity_bucket(author)):
         log_activity(b, "write")
 

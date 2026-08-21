@@ -66,6 +66,13 @@ untouched. A failure of the local *writes* (full disk, lock) can still leave a
 partial import; making that atomic too means staging into a scratch database and
 swapping the file, which is deliberately out of scope for issue #57.
 
+The 1.0 audit measured what that partial state actually is and **decided against
+staging-and-swap** for 1.0: the import merges by slug and never deletes, so a
+failed run leaves an *incomplete but not destructive* wiki, every page that
+landed is a normal versioned page, and re-running the same bundle finishes it
+exactly. See `docs/data-safety.md` question 4 for the numbers and the trade-off;
+`tests/test_data_safety.py` pins the property.
+
 ### Why vendored (not a dependency)
 
 The desktop app bundles its own Python; there is no package index at install

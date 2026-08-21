@@ -42,6 +42,11 @@ two in parity (same substance, different voice) whenever you change either.
   registries (package installs, vendor scripts, "open this pane") plus the
   execution that re-checks the prerequisite, reports failure honestly, and
   treats exit 0 as a claim rather than proof. Sits below `capabilities`.
+- `waikiki/backups.py` — scheduled local snapshots of **every** wiki, on by
+  default, taken with SQLite's online backup API (never a file copy of a live WAL
+  database) and written whole-or-not-at-all. Same disk as the wikis, so it is
+  insurance against corruption and mistakes, not against losing the machine — see
+  `docs/data-safety.md`.
 - `waikiki/deeplink.py` — `waikiki://` deep links: the allow-list that turns an
   external URL into an in-app destination (see `docs/deep-links.md`).
 - `waikiki/updater.py` — self-update for the packaged `.app`: signature-verified
@@ -54,6 +59,10 @@ two in parity (same substance, different voice) whenever you change either.
 - `docs/doorman.md` — the optional Doorman integration and why it stays optional.
 - `docs/capabilities.md` — the capabilities view, remedy descriptors, and the
   one install that pipes a script into a shell.
+- `docs/data-safety.md` — the 1.0 durability audit (issue #68): what survives a
+  crash, a corrupt wiki file, a failed import; how restore actually works; and
+  the risks we accept, named. Every answer there was established by making it
+  happen, and `tests/test_data_safety.py` pins the properties.
 
 ## Architectural rules (load-bearing)
 
@@ -93,6 +102,14 @@ two in parity (same substance, different voice) whenever you change either.
    discard the doc. The live `collab.py` room is still just an editing buffer; its
    flush lands through `store` like any other write, so the canonical doc stays
    authoritative. See `waikiki/ydoc.py`.
+   **Order matters within a write: canonical state before derived state.**
+   `_sync_ydoc` runs *before* `rag.reindex_page`, because the Y.Doc is truth and
+   the RAG index is a cache rebuildable from the markdown. With the old order,
+   anything raising in reindex committed the projection and skipped the canonical
+   write, silently leaving the doc a revision behind — which is how the Help
+   wiki's About page ended up carrying two different versions at once. A page
+   save is still *not* one transaction (issue #72); `docs/data-safety.md`
+   question 1 has the measurements.
 7. **The Kahala ⟷ Waikiki round-trip is content-only and version-gated.** Export
    (`store.export_snapshot` / `export_changelog` / `export_wiki_bundle`) and
    import (`store.import_snapshot` / `import_changelog` / `import_wiki_bundle`)

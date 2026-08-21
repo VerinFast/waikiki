@@ -1,0 +1,417 @@
+# Data safety
+
+*The 1.0 audit — issue [#68](https://github.com/VerinFast/waikiki/issues/68).*
+
+A family wiki losing content is the worst outcome this app has. Backup and
+restore code existed and several safety properties had been established along
+the way, but nobody had checked the whole story end to end. This is that check.
+
+**Everything below was made to happen, not reasoned about.** Databases were
+opened and their pragmas read; processes were killed mid-write; wiki files were
+truncated and scribbled on; an import was failed part-way through; a 215-page
+wiki was restored from a real backup. Where the honest answer is "we accept this
+risk", it says so. The tests that pin each real-but-previously-unproven property
+live in `tests/test_data_safety.py`.
+
+Method note: the developer's own wikis were only ever opened **read-only**, and
+every destructive experiment ran against a copy in a scratch `WAIKIKI_DATA`
+directory.
+
+**Summary**
+
+| # | Question | Verdict |
+|---|---|---|
+| 1 | Crash / power loss mid-write | WAL and `synchronous=FULL` confirmed on every file; no committed write was lost. But one page save is **several** transactions, so a crash between them leaves the canonical Y.Doc behind its markdown projection ([#72](https://github.com/VerinFast/waikiki/issues/72)). Live typing is durable ~1.5–2.5s after you stop. |
+| 2 | A corrupted wiki file | A corrupt *non-default* wiki does not stop the app or its neighbours — but *Manage wikis* 500s, and a corrupt **default** wiki stops the app from starting at all ([#71](https://github.com/VerinFast/waikiki/issues/71)). |
+| 3 | Restore | Works, proven on a real 55MB backup: 215 pages, 75 images, 711 versions. Backups are on by default. Documented only inside the app, and they live on the same disk as the wikis. |
+| 4 | Import paths | A part-written import is incomplete but never destructive, and re-running the same bundle finishes it exactly. **1.0 does not need staging-and-swap.** |
+| 5 | Version history | Reachable and it works — 4 interactions. But nothing on an article says it has a history ([#73](https://github.com/VerinFast/waikiki/issues/73)). |
+
+---
+
+## 1. Crash / power loss mid-write
+
+### Is WAL actually on for every wiki?
+
+Yes — checked per file, on a cold read-only handle, which is what a recovering
+process sees. The developer's real install:
+
+```
+beaconlight.db     journal=wal sync=2 pages=224 ydoc=114 versions=711  (55 MB)
+crosslake.db       journal=wal sync=2 pages=0
+doorman.db         journal=wal sync=2 pages=4
+ever-afterlife.db  journal=wal sync=2 pages=6
+help.db            journal=wal sync=2 pages=11
+main.db            journal=wal sync=2 pages=0
+startupos.db       journal=wal sync=2 pages=78 ydoc=0  versions=156
+```
+
+and every file a fresh install creates, with `PRAGMA integrity_check` = `ok` on
+each. `sync=2` is `FULL`, which is stronger than WAL's usual `NORMAL`: SQLite
+fsyncs the WAL before each commit returns, so an unexpected power cut cannot
+lose an already-acknowledged write. This is now pinned by
+`test_every_wiki_file_is_wal_with_full_sync`.
+
+### Does a hard kill lose committed writes?
+
+No. The real app was started on a scratch data directory and hammered with
+`/api/autosave` from four threads; `SIGKILL` arrived mid-burst. **826 writes had
+been acknowledged; all 826 were present after the kill**, `integrity_check` was
+`ok`, and the leftover `-wal` recovered on next open with no repair step.
+
+### Can a half-written Y.Doc outlive its markdown projection, or vice versa?
+
+The Y.Doc side cannot be half-written: `ydoc._store_state` is a single
+`INSERT ... ON CONFLICT`, which SQLite makes atomic on either backend. All 116
+canonical Y.Doc blobs in the real install decode cleanly — none is torn.
+
+But **the two can get out of step, and the projection is the one that wins.**
+`store._set_body` performs the projection write, the version snapshot, the
+metadata index, the canonical Y.Doc write and the RAG reindex as *separate*
+transactions — under apsw (the default backend, and the one the packaged app
+ships) `commit()` is a documented no-op and no `BEGIN` is ever issued, so every
+statement autocommits on its own.
+
+Killing the process at two deliberate points, saving `v2` over `v1`:
+
+| crash point | `pages.markdown` | `page_versions` | canonical Y.Doc |
+|---|---|---|---|
+| before the version snapshot | `v2` | `v1` only | `v1` |
+| before the Y.Doc write | `v2` | `v1`, `v2` | `v1` |
+
+The file is not corrupt in either case — `integrity_check` says `ok`. On next
+open the user sees `v2`, because every read path returns `pages.markdown`. The
+canonical Y.Doc silently stays at `v1`; a plain read does not repair it, and
+`export_snapshot` ships the stale doc. The next ordinary save does repair it.
+
+**This is not hypothetical.** Comparing every canonical Y.Doc against its
+markdown across the developer's real wikis found 115 agreeing and one diverged —
+the Help wiki's About page:
+
+```
+--- canonical ydoc
++++ pages.markdown
+-**Waikiki** version **0.18.0**.
++**Waikiki** version **0.21.0**.
+```
+
+Chasing that produced the more likely trigger, which is not a crash at all.
+`rag.reindex_page` sat *between* the projection commit and the canonical Y.Doc
+write, so anything that raised in reindexing — an embedder not ready yet, a
+missing `sqlite-vec`, a model download failing — committed the projection and
+then skipped the canonical write. Reproduced exactly:
+
+```
+start markdown : 'version 1 of the ledger'
+start canonical: 'version 1 of the ledger'
+update raised  : embedder not ready
+markdown now   : 'version 2 of the ledger'
+canonical now  : 'version 1 of the ledger'      <-- silently a revision behind
+```
+
+**Fixed in this PR**, because it is small and obviously correct: the canonical
+Y.Doc is now written *before* the derived search index, since `page_ydoc` is the
+source of truth and the RAG index is a cache that can be rebuilt from the
+markdown at any time. Guarded by
+`test_canonical_ydoc_is_written_before_the_derived_index`.
+
+**Not fixed here:** making one page save one transaction. That needs explicit
+`BEGIN`/`COMMIT`/`ROLLBACK` through the `db` shim on both backends, and
+`_set_body` is called from enough places that the seam has to tolerate being
+already inside a transaction. Filed as
+[#72](https://github.com/VerinFast/waikiki/issues/72), with a cheaper stopgap
+suggested (reconcile on read, so an existing divergence heals instead of being
+exported).
+
+### How much live typing does a hard kill lose?
+
+In collab mode the browser editor posts nothing; the server-side flusher owns
+persistence, saving a room once its text has been stable for `_FLUSH_IDLE`
+(1.5s) on a one-second loop. Measured, by editing a room and then `os._exit`:
+
+* killed **1.0s** after the edit → the edit is gone
+* killed **3.0s** after the edit → the edit is on disk
+
+**We accept this risk.** The durability window for typing is roughly 1.5–2.5
+seconds after you stop typing, and someone typing continuously with no pause
+longer than 1.5s has nothing written for as long as that lasts. A clean quit
+does not lose it — `collab.flush_all()` runs before the flusher is cancelled,
+which is the whole point of issue #19 — so this is specifically the power-cut /
+`SIGKILL` case.
+
+---
+
+## 2. A corrupted wiki file
+
+Two shapes, both on a scratch install with `main` and `beaconlight` seeded.
+
+### A corrupt non-default wiki
+
+The app **starts**, and the other wikis are completely unaffected — pages,
+search and links all work. Physical separation earns its keep. Pinned by
+`test_a_corrupt_wiki_does_not_take_its_neighbours_with_it`.
+
+Two things still go wrong:
+
+```
+GET /                                    -> 200
+GET /wikis                               -> 500   <-- Manage wikis
+GET /wiki/home        wiki=main          -> 200
+GET /search?q=text    wiki=main          -> 200
+GET /wiki/home        wiki=beaconlight   -> 500   (bare "Internal Server Error")
+```
+
+`/wikis` — *Manage wikis*, the one page a user would go to in order to get away
+from the broken wiki, or to open a backup — builds stats for **every** wiki, so
+one bad file takes the whole page down. And the broken wiki's own pages return a
+bare 500 rather than saying which wiki is unreadable or what to do about it.
+
+### A corrupt default wiki
+
+The app **does not start**:
+
+```
+File ".../waikiki/api.py", line 33, in lifespan
+    db.init_db()
+apsw.CorruptError: database disk image is malformed
+ERROR:    Application startup failed. Exiting.
+```
+
+Every other wiki — including a healthy 215-page family wiki — becomes
+unreachable, though its file is fine. This is exactly the outcome the registry
+was supposed to prevent. Filed as
+[#71](https://github.com/VerinFast/waikiki/issues/71) rather than fixed here: a
+per-wiki "couldn't be opened" state is a feature, not a one-liner, and this PR
+stays an audit.
+
+### The registry itself
+
+`wikis.json` is a plain JSON file, and `_load` treats anything unparseable as
+"no wikis". A torn write there made a user-created wiki vanish from the app
+entirely while its database sat untouched on disk:
+
+```
+registry now: []
+file still on disk: True
+reachable through the app: False
+```
+
+The seeded wikis came back (because `ensure_initialized` re-seeds the same
+names), which is what made this easy to miss — only wikis the *user* created
+disappear.
+
+**Fixed in this PR**, because it is small and obviously correct: `wikis._save`
+and `appconfig.set` now write beside the file and `os.replace` it, so a reader
+sees either the old registry or the new one and never a torn one. The same
+applies to `app_config.json`, which holds whether backups run at all. Pinned by
+`test_a_torn_registry_write_cannot_lose_a_wiki` and
+`test_a_torn_app_config_write_cannot_turn_backups_off`.
+
+---
+
+## 3. Restore
+
+### What actually exists
+
+`waikiki/backups.py` snapshots **every** registered wiki on a schedule, using
+SQLite's online backup API (`db.backup_db`) rather than a file copy, so a
+snapshot taken mid-write is consistent. Images live in the `images` table as
+BLOBs, so a database snapshot is a complete copy.
+
+* **On by default.** `backup_enabled` is `True` unless explicitly set otherwise.
+* **Every 24 hours**, keeping the last **7**, both configurable in Settings.
+* **Landing at `<data>/backups/<YYYY-MM-DD_HHMM>/<slug>.db`.**
+* Written in full or not at all — a failed run removes its directory rather than
+  leaving a partial snapshot that looks like a good one.
+
+Confirmed on the developer's real install: seven snapshot directories, newest
+from the previous day, 132MB of them. The gaps between dates are real and
+expected — the backup runs from the app's hourly maintenance loop, so **days
+when the app was never opened have no snapshot**.
+
+### Does restore actually work?
+
+Yes, proven on the real thing. The newest real snapshot of the 215-page wiki was
+copied out (never opened in place) and taken through the documented route —
+*Manage wikis → Open* on the `.db`:
+
+```
+newest snapshot: 2026-08-20_1631 (55.0 MB)
+is_wiki_db: True
+opened as: restored-beaconlight
+pages restored: 215
+first page: The Erasure | '\n![In game pixelart portrait of the demon](/image/75/...'
+search works: 20 hits
+images: 75 versions: 711
+.wiki bundle: 94.7 MB
+round-tripped pages: 215
+```
+
+Nothing was lost: pages, images and the full version history all came across,
+search worked immediately, and the restored wiki exported to a `.wiki` file and
+back in again intact. It opens as a **separate** wiki, so you can compare before
+replacing anything — the broken original is left alone. Pinned by three tests
+(`test_backups_are_on_by_default_and_land_where_the_docs_say`,
+`test_a_backup_snapshot_carries_images_and_history_too`,
+`test_restoring_a_backup_leaves_the_broken_wiki_alone`).
+
+### Is it documented anywhere they would find it?
+
+Partly, and this is the weak point.
+
+Settings → Backups says it plainly: *"To restore: quit Waikiki, then use Manage
+wikis → Open on a `.db` file from a backup folder"*, along with the folder path
+and the honest caveat that these are local copies. That is the right place — for
+someone whose app still runs.
+
+Two gaps, **both accepted for 1.0 and written down here rather than left
+implied**:
+
+1. **The instructions live inside the thing that might be broken.** If the app
+   will not start (see question 2), the user cannot read them. `README.md` does
+   not mention backups at all, and neither does the Help wiki. The mitigation
+   for now is this document plus the README pointer added alongside it; the real
+   fix is question 2's, which is to make the app start anyway.
+2. **Backups sit on the same disk, in the same folder tree, as the wikis.** They
+   protect against corruption, a bad import and human error. They do **not**
+   protect against losing the machine, or against someone deleting
+   `~/Library/Application Support/Waikiki`. Settings says this; it is worth
+   saying twice. Keep a `.wiki` export somewhere else.
+
+A footnote from the round-trip above: a `.wiki` bundle is *larger* than the
+database it came from (94.7 MB vs 55 MB), because it carries the database and a
+copy of each image as a separate file in the zip.
+
+---
+
+## 4. Import paths
+
+`store._read_bundle` decodes every page envelope, every section and every image
+blob — re-hashing each against the digest it was stored under — **before the
+first local write**. So a malformed, version-incompatible or tampered bundle
+leaves the wiki completely untouched. That is the realistic failure, since the
+bundle arrives from a peer, and it is already all-or-nothing.
+
+What is not covered is a failure of the **local writes** — a full disk, lock
+contention. `docs/vendoring.md` records this as a known limit. So: what does that
+actually leave behind?
+
+Measured. A 6-page bundle imported into a wiki that already held a differing
+`chapter-1`, with the third local write raising `OSError(28, "No space left on
+device")`:
+
+```
+import raised: [Errno 28] No space left on device
+after the failure, pages present: ['chapter-1', 'chapter-2', 'chapter-3']
+re-run result: {'pages': 6, 'elements': 1, 'templates': 3, 'images': 0}
+after the re-run, pages present: ['chapter-1' ... 'chapter-6']
+every page has its body back: True
+chapter-1 version count after two imports: 2
+```
+
+So the state after a failed import is **incomplete, but never destructive**:
+
+* nothing local is deleted — the import merges by slug and only ever creates or
+  updates;
+* every page that did land is an ordinary, rendered, versioned, indexed page —
+  not a half-written one;
+* the pre-import text of any page it overwrote is still in `page_versions`, one
+  click from being restored (question 5);
+* **re-running the same bundle completes it exactly**, with no duplicates,
+  because merge-by-slug is idempotent.
+
+### Does 1.0 need staging-and-swap?
+
+**No.** Recorded here as a decision, not an omission.
+
+Staging the whole wiki in a scratch database and swapping the file would buy
+atomicity for a failure whose current outcome is already "incomplete and
+retryable", never "corrupt or lost". Against that it would cost: a second full
+copy of the wiki on disk at import time (a real wiki is ~57MB, and the import is
+explicitly streamed one page at a time precisely to avoid holding it all), a
+file swap under a running app with live CRDT rooms and cached connections
+pointing at the old inode, and the loss of the merge semantics that make the
+retry work — a swap replaces, while today's import merges into whatever the user
+already has.
+
+Two cheaper things carry the risk instead, and both already hold: the dry run
+covers the failure that actually happens, and the retry is safe. The remaining
+gap is honesty about it — an import that fails should say what landed and that
+re-running is safe. That is a message, not an architecture.
+
+Pinned by `test_a_part_written_import_is_incomplete_but_never_destructive`, so
+the "never destructive, always retryable" property cannot quietly stop being
+true.
+
+---
+
+## 5. Version history as a safety net
+
+Every content write versions the page, retention keeps the last 50 per page by
+default, and the restore genuinely works. Driven end to end through the real
+app:
+
+```
+--- article page ---
+tabs                : ['Article', 'Metadata', 'Details']
+links to /details   : True
+--- details page ---
+history block       : <details class="history" id="history">
+open by default     : False
+summary             : History (2)
+--- version page ---
+shows a diff        : True
+restore button      : True
+restore POST        : 303
+text now            : "yesterday's careful list"
+versions kept       : 3
+```
+
+Restoring is itself a versioned write, so the text you just undid is still
+there — the safety net has a safety net.
+
+### Can they get there without knowing the word "version"?
+
+**Getting yesterday's text back is four interactions:** *Details* tab → expand
+*History (N)* → *Restore* → confirm. Or *Details* → *History* → click the
+timestamp → *Restore this version*, which is the better route because it shows a
+diff against the current page first.
+
+The count is fine. The **findability is not**, and this is the honest weakness:
+
+* Nothing on the article page names page history. You have to open a tab called
+  *Details* on a hunch.
+* The History block is a `<details>`, closed by default, so the count is not
+  even visible until you expand it.
+* The word "History" *does* appear in the rendered article — as
+  `aria-label="History"` on the browser back/forward buttons in the top bar.
+  That is actively misleading for someone hunting for undo.
+* The Help wiki never mentions versions or history. Only `README.md` does, and
+  someone trying to recover a page is not reading the README.
+
+Filed as [#73](https://github.com/VerinFast/waikiki/issues/73) — it is mostly
+labelling, but it is the app's undo, and undo you cannot find is not undo.
+`test_yesterdays_text_is_reachable_from_the_article_page` pins the chain of
+links as it stands, so it can be improved without silently breaking.
+
+---
+
+## Accepted risks, in one place
+
+Everything below is a deliberate 1.0 position, not an oversight:
+
+1. **Up to ~1.5–2.5 seconds of live typing** is lost to a power cut or
+   `SIGKILL`. A clean quit loses nothing.
+2. **A page save is not one transaction.** A crash between its parts leaves the
+   canonical Y.Doc a revision behind its markdown; the user's text survives, the
+   interchange export goes stale. Tracked as
+   [#72](https://github.com/VerinFast/waikiki/issues/72).
+3. **A corrupt default wiki stops the app from starting.** Tracked as
+   [#71](https://github.com/VerinFast/waikiki/issues/71).
+4. **Backups are local only** — same disk, same folder tree as the wikis, and
+   only taken on days the app was actually open. They are insurance against
+   corruption and mistakes, not against losing the machine.
+5. **A failed import leaves a partial wiki.** Nothing is destroyed and a retry
+   completes it; there is no staging-and-swap and 1.0 does not add one.
+6. **Version history is findable only via the Details tab.** Tracked as
+   [#73](https://github.com/VerinFast/waikiki/issues/73).

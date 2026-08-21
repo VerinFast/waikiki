@@ -116,6 +116,28 @@ def _no_doorman(monkeypatch):
     doorman.forget()
 
 
+@pytest.fixture(autouse=True)
+def _bare_machine(monkeypatch):
+    """The suite never looks at what the developer happens to have installed.
+
+    Capability probing runs on every page render now (the feature buttons are
+    gated on it), so without this the same test would report Chat as ready on a
+    machine with the ``claude`` CLI and unavailable on CI — the exact way a test
+    in this repo already broke once. The default is a machine with nothing on
+    it; a test that wants a tool present patches ``capabilities._which`` itself.
+
+    It also keeps the suite from spawning a login shell to recover the user's
+    PATH, which ``shellenv`` does on the first lookup in a process.
+    """
+    from waikiki import capabilities
+
+    capabilities.refresh()
+    monkeypatch.setattr(capabilities, "_which", lambda name: None)
+    monkeypatch.setattr(capabilities, "_reachable", lambda url, **k: False)
+    yield
+    capabilities.refresh()
+
+
 @pytest.fixture
 def wiki(tmp_path, monkeypatch):
     """Isolated temp data dir + fake embedder; active wiki = 'main'."""

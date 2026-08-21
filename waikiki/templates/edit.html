@@ -21,11 +21,27 @@
            value="{{ page.title }}" required>
 
     <div class="ai-bar">
+      {%- if cap_state.generation == 'unavailable' %}
+      {# No id="ai-go": the editor script binds on that id, and there is nothing
+         here for it to bind to. The control stays visible, greyed, and points at
+         the fix instead of streaming an error into the page. #}
+      <input id="ai-prompt" type="text" disabled
+             placeholder="Generation isn't set up on this machine">
+      <a class="btn cap-off" href="/settings#capabilities" role="button"
+         aria-disabled="true"
+         title="Nothing here can answer a generation — Settings › Capabilities says what's missing"
+         >✦ Generate</a>
+      {# Guests can't open Settings (auth.guest_may), so pointing one there would
+         be a dead end. They get the state without the link. #}
+      <span id="ai-status" class="muted">unavailable{% if role != 'guest' %} —
+        <a href="/settings#capabilities">see Capabilities</a>{% endif %}</span>
+      {%- else %}
       <input id="ai-prompt" type="text"
              placeholder="Ask AI to draft/expand… (pull a one-off draft via API)">
       <label class="rag-toggle"><input type="checkbox" id="ai-rag" checked> use RAG</label>
       <button type="button" id="ai-go" class="btn">✦ Generate</button>
       <span id="ai-status" class="muted"></span>
+      {%- endif %}
     </div>
 
     <div class="edit-tabs">
@@ -73,7 +89,10 @@
       wiki: {{ current_wiki | tojson }},
       wsBase: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host
               + '/collab/' + {{ current_wiki | tojson }},
-      imageStyle: {{ (image_style_prompt or '') | tojson }}
+      imageStyle: {{ (image_style_prompt or '') | tojson }},
+      // Probed server-side (waikiki/capabilities.py). The toolbar reads it so a
+      // tool that cannot run renders disabled instead of failing on click.
+      caps: {{ cap_state | tojson }}
     };
   </script>
   <script type="module" src="/static/app.js"></script>

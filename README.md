@@ -369,3 +369,15 @@ the registry's default wiki).
   esm.sh and EasyMDE from unpkg — an internet connection is needed for the
   editor libs (they can be vendored locally later). The read view, REST, and MCP
   work fully offline.
+
+## License
+
+[Elastic License 2.0](LICENSE) — **source-available, not open source.**
+
+You can read it, run it, modify it, and redistribute it. The one substantive
+restriction is that you may not offer Waikiki to third parties as a hosted or
+managed service. Use it yourself, inside your company, on your own machines,
+freely.
+
+The vendored `wiki_interchange` package (`waikiki/vendor/`) is first-party and
+covered by the same license — see [`docs/vendoring.md`](docs/vendoring.md).

@@ -16,7 +16,7 @@ must stay in lockstep:
 |---|---|
 | **Path** | `waikiki/vendor/wiki_interchange/` |
 | **Pinned version** | `0.2.0` (spec `SPEC_VERSION = 2`, floor `1`, Yjs sync protocol `1`) |
-| **Upstream** | `VerinFast/good-place`, `packages/wiki-interchange/wiki_interchange/` |
+| **Upstream** | `VerinFast/good-place`, `packages/wiki-interchange/wiki_interchange/` (**private repo** — first-party, same owner; the vendored copy here is the public one, under this project's Elastic License 2.0) |
 | **Upstream branch** | `dev` (PR good-place#3683, merged — it subsumed #3677) |
 | **Upstream revision** | `9ea72c8c` — the vendored tree is byte-identical to `packages/wiki-interchange/wiki_interchange/` at this commit |
 | **Runtime dep** | `pycrdt>=0.10,<0.15` (satisfied by Waikiki's own pin) |

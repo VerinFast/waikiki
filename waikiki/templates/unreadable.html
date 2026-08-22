@@ -1,0 +1,87 @@
+{# The page a wiki whose file cannot be read shows — issue #71.
+
+   Deliberately standalone rather than extending base.html: the chrome asks the
+   active wiki for its theme, its page list and its settings, and that is
+   exactly the wiki that just failed to open. This page needs nothing from any
+   database, so it renders when nothing else about this wiki does. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ wiki_name }} can’t be read — Waikiki</title>
+  <link rel="stylesheet" href="/static/themes/default.css">
+  <style>
+    .recover{max-width:44rem;margin:3rem auto;padding:0 1.2rem}
+    .recover h1{margin-bottom:.2rem}
+    .recover .why{margin:.2rem 0 1.4rem}
+    .recover code{word-break:break-all}
+    .recover ol{line-height:1.7}
+    .recover .switch{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+    .recover .switch form{display:inline}
+  </style>
+</head>
+<body>
+  <main class="recover">
+    <a class="brand" href="/wikis">🌺 Waikiki</a>
+    <h1>“{{ wiki_name }}” can’t be read</h1>
+    <p class="why muted">Waikiki opened <code>{{ path }}</code> and
+      {{ reason }}.</p>
+
+    <div class="banner err">
+      <strong>Your other wikis are unaffected.</strong> Each wiki is a separate
+      file, so only this one is involved — and this file has been left exactly as
+      it is. Nothing has been deleted, rewritten or “repaired”.
+    </div>
+
+    {% if others %}
+      <h4>Open a different wiki</h4>
+      <p class="switch">
+        {% for w in others %}
+          <form method="post" action="/switch-wiki">
+            <input type="hidden" name="wiki" value="{{ w.slug }}">
+            <button class="btn{{ ' primary' if loop.first }}" type="submit"
+                    {{ 'disabled' if not w.ok }}>{{ w.name }}</button>
+          </form>
+        {% endfor %}
+        <a class="btn" href="/wikis">Manage wikis…</a>
+      </p>
+    {% else %}
+      <p><a class="btn" href="/wikis">Manage wikis…</a></p>
+    {% endif %}
+
+    <h4>Restore this wiki from a backup</h4>
+    {% if backups.latest %}
+      <p>Waikiki keeps local snapshots of every wiki. The newest is
+        <strong>{{ backups.latest.when }}</strong>
+        ({{ (backups.latest.bytes / 1048576) | round(1) }} MB,
+        {{ backups.latest['wikis'] | length }} wiki(s)).</p>
+    {% elif backups.enabled %}
+      <p>Automatic backups are on, but no snapshot has been taken yet — they run
+        while the app is open, so a wiki that broke early may have none.</p>
+    {% else %}
+      <p>Automatic backups are switched off, so there may be no snapshot to go
+        back to. Any <code>.wiki</code> or <code>.db</code> file you exported
+        yourself works here just as well.</p>
+    {% endif %}
+    <ol>
+      <li>Find a snapshot in <code>{{ backups.dir }}</code> — one folder per
+        date, one <code>{{ wiki }}.db</code> file inside it per wiki.</li>
+      <li>Use <a href="/wikis">Manage wikis → Open wiki file…</a> on that
+        <code>{{ wiki }}.db</code>.</li>
+      <li>It opens as a <em>separate</em> wiki, so you can read it and compare
+        before deciding what to do with the damaged one. Neither the backup nor
+        the damaged file is changed.</li>
+    </ol>
+    <p class="muted">Backups sit on the same disk as your wikis, so they are
+      insurance against corruption and mistakes, not against losing the machine.
+      Keeping a <code>.wiki</code> export somewhere else is worth the minute it
+      takes.</p>
+
+    <details>
+      <summary class="muted">What SQLite said</summary>
+      <pre>{{ detail }}</pre>
+    </details>
+  </main>
+</body>
+</html>

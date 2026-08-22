@@ -55,6 +55,85 @@ except Exception:  # pragma: no cover
 import sqlite3  # stdlib fallback (always importable)
 
 
+# --- "this file cannot be read" ----------------------------------------------
+#
+# A wiki file can be damaged — a dying disk, a bad sync, a truncated copy — and
+# when it is, the app has to stay up and say so. That only works if a damaged
+# *file* is told apart from a bug in *our code*: a `KeyError` in store.py is not
+# corruption and must stay loud. So the test below is deliberately narrow, and
+# everything else is re-raised untouched.
+
+class WikiUnreadable(RuntimeError):
+    """SQLite cannot read this wiki's database file.
+
+    Carries the wiki slug and a plain-language reason, because this is shown to
+    someone whose family wiki has just stopped opening — not to a log.
+    """
+
+    def __init__(self, wiki: str, reason: str, path: Optional[str] = None):
+        super().__init__(f"{wiki}: {reason}")
+        self.wiki = wiki
+        self.reason = reason
+        self.path = path
+
+
+# apsw raises one class per SQLite result code. These are the ones that mean the
+# file itself is unusable; apsw.SQLError ("no such table: pages") is ours to fix.
+_UNREADABLE_APSW = {"CorruptError", "NotADBError", "IOError", "CantOpenError",
+                    "PermissionsError", "ReadOnlyError"}
+
+# The stdlib collapses those onto sqlite3.DatabaseError and its subclasses, so
+# the subclasses are only believed when SQLite says what is actually wrong.
+_UNREADABLE_PHRASES = ("malformed", "not a database", "file is encrypted",
+                       "unable to open database file", "disk i/o error",
+                       "database disk image")
+
+
+def unreadable_reason(exc: BaseException) -> Optional[str]:
+    """A plain reason if `exc` is SQLite refusing a file, else None.
+
+    None means "not corruption" — the caller must re-raise, so a programming
+    error never arrives dressed up as damaged data.
+    """
+    if isinstance(exc, WikiUnreadable):
+        return exc.reason
+    name = type(exc).__name__
+    low = str(exc).lower()
+    if _HAS_APSW and isinstance(exc, apsw.Error):
+        if name not in _UNREADABLE_APSW:
+            return None
+    elif isinstance(exc, sqlite3.DatabaseError):
+        # A bare DatabaseError is what the stdlib raises for a damaged file.
+        if (type(exc) is not sqlite3.DatabaseError
+                and not any(p in low for p in _UNREADABLE_PHRASES)):
+            return None
+    else:
+        return None
+    if name == "NotADBError" or "not a database" in low or "encrypted" in low:
+        return ("the file does not look like a SQLite database — its header is "
+                "damaged, or it was never a wiki")
+    if name == "CorruptError" or "malformed" in low or "database disk image" in low:
+        return "SQLite reports the database file as damaged (disk image is malformed)"
+    if name in ("CantOpenError", "PermissionsError", "ReadOnlyError"):
+        return "the database file could not be opened (permissions, or it moved)"
+    if "disk i/o error" in low:
+        return "the disk reported an I/O error reading the file"
+    return f"SQLite could not read the file ({exc})"
+
+
+def _as_unreadable(exc: BaseException, wiki: str) -> WikiUnreadable:
+    """Translate `exc` into a WikiUnreadable, or re-raise it unchanged."""
+    reason = unreadable_reason(exc)
+    if reason is None:
+        raise exc
+    if isinstance(exc, WikiUnreadable):
+        return exc
+    from . import wikis
+
+    path = str(wikis.db_path(wiki)) if wiki else None
+    return WikiUnreadable(wiki or "this wiki", reason, path)
+
+
 class _Result:
     """Eagerly-materialized dict rows over an apsw cursor, DB-API-ish."""
 
@@ -79,23 +158,42 @@ class _Result:
 
 
 class _ApswConn:
-    """Minimal sqlite3-compatible wrapper around an apsw.Connection."""
+    """Minimal sqlite3-compatible wrapper around an apsw.Connection.
 
-    def __init__(self, path: str):
+    It also names the wiki on every statement it runs, so damage found *after*
+    the file opens — a truncated tail whose header is still intact — surfaces as
+    a `WikiUnreadable` for that wiki rather than a bare `apsw.CorruptError`.
+    """
+
+    def __init__(self, path: str, wiki: str = ""):
+        self.wiki = wiki
         self._c = apsw.Connection(path)
+        # busy_timeout FIRST: setting journal_mode needs a brief exclusive lock,
+        # so with the timeout still at 0 another connection mid-write turned a
+        # normal open into `BusyError: database is locked` — which is contention,
+        # not damage, and must not be mistaken for it.
+        self._c.cursor().execute("PRAGMA busy_timeout=5000")
         self._c.cursor().execute("PRAGMA journal_mode=WAL")
         self._c.cursor().execute("PRAGMA foreign_keys=ON")
-        self._c.cursor().execute("PRAGMA busy_timeout=5000")
 
     def execute(self, sql: str, params=()):
-        return _Result(self._c, sql, params)
+        try:
+            return _Result(self._c, sql, params)
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
 
     def executemany(self, sql: str, seq):
-        self._c.cursor().executemany(sql, [tuple(p) for p in seq])
+        try:
+            self._c.cursor().executemany(sql, [tuple(p) for p in seq])
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
         return self
 
     def executescript(self, script: str):
-        self._c.cursor().execute(script)  # apsw runs multi-statement scripts
+        try:
+            self._c.cursor().execute(script)  # apsw runs multi-statement scripts
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
         return self
 
     def commit(self):  # apsw autocommits outside explicit transactions
@@ -107,6 +205,35 @@ class _ApswConn:
 
     def load_extension(self, path: str):
         self._c.loadextension(path)
+
+
+class _Sqlite3Conn(sqlite3.Connection):
+    """The stdlib fallback, saying the same thing as the apsw shim above.
+
+    The packaged app ships apsw, but a stock CPython without loadable-extension
+    support falls back here — and "a corrupt wiki does not stop the app" cannot
+    be a property of one backend only.
+    """
+
+    wiki = ""
+
+    def execute(self, sql, params=()):
+        try:
+            return super().execute(sql, params)
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
+
+    def executemany(self, sql, seq):
+        try:
+            return super().executemany(sql, seq)
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
+
+    def executescript(self, script):
+        try:
+            return super().executescript(script)
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
 
 
 def _load_sqlite_vec(conn) -> bool:
@@ -141,17 +268,30 @@ def get_conn():
     conn = conns.get(wiki)
     if conn is None:
         path = str(wikis.db_path(wiki))
-        if _HAS_APSW:
-            conn = _ApswConn(path)
-        else:
-            conn = sqlite3.connect(path, check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            if _HAS_APSW:
+                conn = _ApswConn(path, wiki)
+            else:
+                conn = sqlite3.connect(path, check_same_thread=False,
+                                       factory=_Sqlite3Conn)
+                conn.wiki = wiki
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA foreign_keys=ON")
+        except Exception as exc:
+            # A damaged file is a WikiUnreadable naming this wiki; anything else
+            # is a bug and keeps its own traceback.
+            raise _as_unreadable(exc, wiki) from exc
         _load_sqlite_vec(conn)
         conns[wiki] = conn
     if wiki not in _schema_ready:
-        _ensure_schema(conn)
+        try:
+            _ensure_schema(conn)
+        except WikiUnreadable:
+            # Don't keep a handle on a file we can't use: if the user restores a
+            # good copy over it, the next call should open the new one.
+            conns.pop(wiki, None)
+            raise
         _schema_ready.add(wiki)
     return conn
 
@@ -318,6 +458,8 @@ def _ensure_schema(conn) -> None:
     ):
         try:
             conn.execute(stmt)
+        except WikiUnreadable:
+            raise          # a damaged file is not "that column already exists"
         except Exception:
             pass  # already present
     for key, value in config.DEFAULT_SETTINGS.items():
@@ -338,11 +480,28 @@ def _ensure_schema(conn) -> None:
 
 
 def init_db() -> None:
-    """Ensure the wiki registry exists and the active/default wiki is schema-ready."""
+    """Ensure the wiki registry exists and the active/default wiki is schema-ready.
+
+    A wiki whose file cannot be read is **reported, not raised**. This runs
+    inside the FastAPI lifespan, so raising here meant the app did not start at
+    all: one damaged `main.db` took down a UI through which every other wiki —
+    each a separate, perfectly healthy file — would have been reachable, and the
+    restore instructions live inside that UI (issue #71). Isolation has to hold
+    for failure, not only for content.
+
+    Nothing is repaired, moved or deleted: the damaged file is the user's data,
+    and it may still be recoverable.
+    """
     from . import wikis
 
     wikis.ensure_initialized()
-    get_conn()  # lazily runs _ensure_schema for the active wiki
+    try:
+        get_conn()  # lazily runs _ensure_schema for the active wiki
+    except WikiUnreadable as exc:
+        # stderr, not stdout — see _load_sqlite_vec. The app says this properly
+        # in the browser; a packaged, Finder-launched app has no console.
+        print(f"[waikiki] wiki '{exc.wiki}' is unreadable: {exc.reason}. "
+              f"Starting anyway — other wikis are unaffected.", file=sys.stderr)
 
 
 def backup_db(src_path: str, dest_path: str) -> None:

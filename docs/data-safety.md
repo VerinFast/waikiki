@@ -22,7 +22,7 @@ directory.
 | # | Question | Verdict |
 |---|---|---|
 | 1 | Crash / power loss mid-write | WAL and `synchronous=FULL` confirmed on every file; no committed write was lost. But one page save is **several** transactions, so a crash between them leaves the canonical Y.Doc behind its markdown projection ([#72](https://github.com/VerinFast/waikiki/issues/72)). Live typing is durable ~1.5–2.5s after you stop. |
-| 2 | A corrupted wiki file | A corrupt *non-default* wiki does not stop the app or its neighbours — but *Manage wikis* 500s, and a corrupt **default** wiki stops the app from starting at all ([#71](https://github.com/VerinFast/waikiki/issues/71)). |
+| 2 | A corrupted wiki file | **Fixed since this audit ([#71](https://github.com/VerinFast/waikiki/issues/71)).** The app now starts whichever wiki is damaged, including the default; the neighbours are unaffected; *Manage wikis* lists what it can and marks what it can't read; and the damaged file is named, explained and left byte-for-byte alone. |
 | 3 | Restore | Works, proven on a real 55MB backup: 215 pages, 75 images, 711 versions. Backups are on by default. Documented only inside the app, and they live on the same disk as the wikis. |
 | 4 | Import paths | A part-written import is incomplete but never destructive, and re-running the same bundle finishes it exactly. **1.0 does not need staging-and-swap.** |
 | 5 | Version history | Reachable and it works — 4 interactions. But nothing on an article says it has a history ([#73](https://github.com/VerinFast/waikiki/issues/73)). |
@@ -151,7 +151,7 @@ The app **starts**, and the other wikis are completely unaffected — pages,
 search and links all work. Physical separation earns its keep. Pinned by
 `test_a_corrupt_wiki_does_not_take_its_neighbours_with_it`.
 
-Two things still go wrong:
+Two things still went wrong at the time of the audit:
 
 ```
 GET /                                    -> 200
@@ -162,13 +162,15 @@ GET /wiki/home        wiki=beaconlight   -> 500   (bare "Internal Server Error")
 ```
 
 `/wikis` — *Manage wikis*, the one page a user would go to in order to get away
-from the broken wiki, or to open a backup — builds stats for **every** wiki, so
-one bad file takes the whole page down. And the broken wiki's own pages return a
+from the broken wiki, or to open a backup — built stats for **every** wiki, so
+one bad file took the whole page down. And the broken wiki's own pages returned a
 bare 500 rather than saying which wiki is unreadable or what to do about it.
+Both are fixed in [#71](https://github.com/VerinFast/waikiki/issues/71) — see
+*What #71 changed*, below.
 
 ### A corrupt default wiki
 
-The app **does not start**:
+The app **did not start**:
 
 ```
 File ".../waikiki/api.py", line 33, in lifespan
@@ -177,12 +179,60 @@ apsw.CorruptError: database disk image is malformed
 ERROR:    Application startup failed. Exiting.
 ```
 
-Every other wiki — including a healthy 215-page family wiki — becomes
-unreachable, though its file is fine. This is exactly the outcome the registry
-was supposed to prevent. Filed as
-[#71](https://github.com/VerinFast/waikiki/issues/71) rather than fixed here: a
-per-wiki "couldn't be opened" state is a feature, not a one-liner, and this PR
-stays an audit.
+Every other wiki — including a healthy 215-page family wiki — became
+unreachable, though its file was fine. That is exactly the outcome the registry
+was supposed to prevent, so it was filed as
+[#71](https://github.com/VerinFast/waikiki/issues/71) rather than fixed inside
+an audit.
+
+### What #71 changed
+
+Same scratch install, same damage to `main.db` (the default), after the fix:
+
+```
+GET /                                    -> 503   "Main can’t be read" + how to recover
+GET /wikis                               -> 200   healthy wikis listed, Main flagged
+GET /wiki/home        wiki=beaconlight   -> 200
+GET /search?q=…       wiki=beaconlight   -> 200
+GET /api/pages        wiki=beaconlight   -> 200
+main.db unchanged: True (591189 bytes, sha256 identical)
+backup after corruption: {'ok': True, 'wikis': [...4 healthy...], 'skipped': ['main']}
+```
+
+Four things carry it, and each is deliberately narrow:
+
+1. **`db.unreadable_reason(exc)`** decides whether SQLite is refusing a *file*
+   or our own code is wrong. apsw raises one class per result code
+   (`CorruptError`, `NotADBError`, `IOError`, `CantOpenError`…); the stdlib
+   collapses them onto `sqlite3.DatabaseError` and its subclasses, so a subclass
+   is only believed when the message says what is wrong. `apsw.SQLError: no such
+   table: pages` and a `KeyError` in `store.py` are **not** corruption and stay
+   loud — pinned by `test_a_bug_is_never_mistaken_for_a_corrupt_file`.
+2. **`db.get_conn` raises `WikiUnreadable`** naming the wiki, and both
+   connection shims classify per statement, so damage found *after* the header
+   opens surfaces the same way. `init_db` reports it and comes up anyway.
+3. **The routes say it.** `wikis.health()`/`wikis.stats()` report rather than
+   raise, so `/wikis` renders with the healthy wikis intact; a request that
+   really needs the damaged wiki gets a 503 page naming it, the file path, the
+   reason, buttons to the other wikis, and the restore steps — the packaged app
+   is Finder-launched, so a traceback on stderr is invisible and everything
+   knowable has to be said in the window. `/api/*` gets the same as JSON, and
+   `switch_wiki` refuses over MCP with the reason (rule 5).
+4. **Nothing touches the file.** No delete, truncate, rename or in-place
+   "repair": it is the user's data in a damaged state and may be recoverable.
+   `test_a_corrupt_wiki_file_is_left_exactly_as_it_was` hashes it before and
+   after a full browse.
+
+The scheduled backup used to abort the entire run — and delete the directory —
+when any wiki failed to copy, so one damaged file meant no snapshot for *any*
+wiki on the day one was most needed. It now skips that wiki and reports it in
+`skipped`.
+
+Known limit, accepted: **Settings is a per-wiki page**, so while a damaged wiki
+is the active one, `/settings` answers with the same 503 explanation rather than
+the settings form. The recovery route does not depend on it — *Manage wikis*
+carries the backups folder and the restore steps inline — and switching to any
+healthy wiki brings Settings back.
 
 ### The registry itself
 
@@ -267,11 +317,16 @@ someone whose app still runs.
 Two gaps, **both accepted for 1.0 and written down here rather than left
 implied**:
 
-1. **The instructions live inside the thing that might be broken.** If the app
-   will not start (see question 2), the user cannot read them. `README.md` does
-   not mention backups at all, and neither does the Help wiki. The mitigation
-   for now is this document plus the README pointer added alongside it; the real
-   fix is question 2's, which is to make the app start anyway.
+1. **The instructions live inside the thing that might be broken.** ~~If the app
+   will not start (see question 2), the user cannot read them.~~ Largely closed
+   by [#71](https://github.com/VerinFast/waikiki/issues/71): the app now starts
+   with a damaged wiki, and the restore steps — the backups folder path, the
+   newest snapshot, *Open wiki file…* — are printed **on the failure itself**,
+   both on *Manage wikis* and on the page that reports the damage, so they are
+   read exactly when they are needed rather than found beforehand. `README.md`
+   now covers backups and the damaged-file behaviour too. What remains: the Help
+   wiki still says nothing about either, and instructions inside an app still
+   cannot help someone whose whole install is gone — which is what gap 2 is for.
 2. **Backups sit on the same disk, in the same folder tree, as the wikis.** They
    protect against corruption, a bad import and human error. They do **not**
    protect against losing the machine, or against someone deleting
@@ -406,8 +461,12 @@ Everything below is a deliberate 1.0 position, not an oversight:
    canonical Y.Doc a revision behind its markdown; the user's text survives, the
    interchange export goes stale. Tracked as
    [#72](https://github.com/VerinFast/waikiki/issues/72).
-3. **A corrupt default wiki stops the app from starting.** Tracked as
-   [#71](https://github.com/VerinFast/waikiki/issues/71).
+3. ~~**A corrupt default wiki stops the app from starting.**~~ Fixed in
+   [#71](https://github.com/VerinFast/waikiki/issues/71). What is accepted now is
+   narrower: a damaged wiki's **own** pages cannot be shown (there is nothing to
+   show), and while it is the active wiki, Settings answers with the explanation
+   page instead of the settings form. The app starts, every other wiki works, the
+   damaged file is left untouched, and the way back is on screen.
 4. **Backups are local only** — same disk, same folder tree as the wikis, and
    only taken on days the app was actually open. They are insurance against
    corruption and mistakes, not against losing the machine.

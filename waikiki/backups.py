@@ -83,6 +83,22 @@ def last_backup_at() -> datetime.datetime | None:
         return None
 
 
+def restore_hint() -> dict:
+    """The restore route as data: where snapshots live and what the newest is.
+
+    Settings explains restoring in prose, which is fine for someone whose app
+    still works. A wiki that cannot be opened needs to say it on the spot, so the
+    page that reports the damage builds its instructions from this (#71).
+    """
+    items = list_backups()
+    return {
+        "dir": str(_root()),
+        "enabled": enabled(),
+        "count": len(items),
+        "latest": items[0] if items else None,
+    }
+
+
 def due() -> bool:
     if not enabled():
         return False
@@ -94,25 +110,43 @@ def due() -> bool:
 
 
 def run_backup() -> dict:
-    """Snapshot every wiki. Returns {ok, name, wikis, error?}. Never raises."""
+    """Snapshot every wiki. Returns {ok, name, wikis, skipped, error?}. Never raises.
+
+    A wiki whose file SQLite cannot read is **skipped**, not fatal: this used to
+    abort the whole run and delete the directory, so one damaged file meant no
+    snapshot at all — for any wiki — on exactly the day one was needed (#71).
+    Nothing is written for the damaged wiki, because a file that cannot be read
+    cannot be copied, and half a database that looks like a good backup is worse
+    than an absent one.
+    """
     with _lock:
         stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M")
         dest = _root() / stamp
         try:
             dest.mkdir(parents=True, exist_ok=True)
-            done = []
+            done, skipped = [], []
             for w in wikis.list_wikis():
                 slug = w["slug"]
                 src = wikis.db_path(slug)
                 if not src.exists():
                     continue                      # wiki never opened; nothing to save
-                db.backup_db(str(src), str(dest / f"{slug}.db"))
+                try:
+                    db.backup_db(str(src), str(dest / f"{slug}.db"))
+                except Exception as exc:
+                    if db.unreadable_reason(exc) is None:
+                        raise
+                    (dest / f"{slug}.db").unlink(missing_ok=True)
+                    skipped.append(slug)
+                    print(f"[waikiki] backup skipped unreadable wiki '{slug}': {exc}",
+                          file=sys.stderr)
+                    continue
                 done.append(slug)
             if not done:
                 shutil.rmtree(dest, ignore_errors=True)
-                return {"ok": False, "error": "no wiki databases to back up"}
+                return {"ok": False, "error": "no wiki databases to back up",
+                        "skipped": skipped}
             _rotate()
-            return {"ok": True, "name": stamp, "wikis": done}
+            return {"ok": True, "name": stamp, "wikis": done, "skipped": skipped}
         except Exception as exc:
             # Never leave a half-written snapshot looking like a good one.
             shutil.rmtree(dest, ignore_errors=True)

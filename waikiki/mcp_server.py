@@ -252,6 +252,17 @@ def switch_wiki(slug: str) -> dict:
     rather than inheriting one."""
     if not wikis.exists(slug):
         return {"error": f"no wiki '{slug}'", "wikis": [w["slug"] for w in wikis.list_wikis()]}
+    # A wiki whose file SQLite cannot open is refused here, with the reason,
+    # rather than accepted so that every later call fails obscurely (issue #71).
+    # The file is never touched: it is the human's data, damaged, and possibly
+    # recoverable from a backup — which is theirs to do, not this server's.
+    state = wikis.health(slug)
+    if not state["ok"]:
+        return {"error": f"wiki '{slug}' can't be read: {state['reason']}",
+                "wiki": slug, "path": state["path"],
+                "hint": "Left untouched. In Waikiki: Manage wikis → Open a .db "
+                        "from a backup folder. Other wikis are unaffected.",
+                "wikis": [w["slug"] for w in wikis.list_wikis() if w["slug"] != slug]}
     _set_active_wiki(slug)
     return {"active": slug, "name": wikis.name_of(slug)}
 

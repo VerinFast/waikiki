@@ -8,6 +8,7 @@ features: the worst outcome this app has is a family wiki losing content.
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import sqlite3
 import threading
@@ -176,6 +177,252 @@ def test_a_corrupt_wiki_does_not_take_its_neighbours_with_it(wiki):
         assert store.list_pages()
     finally:
         db.current_wiki.reset(tok)
+
+
+def _seed(slug: str, text: str) -> None:
+    tok = db.current_wiki.set(slug)
+    try:
+        store.create_page("Home", text)
+    finally:
+        db.current_wiki.reset(tok)
+
+
+def test_the_app_starts_with_a_corrupt_default_wiki(wiki):
+    """One unreadable file must never stop the app — issue #71.
+
+    `db.init_db()` opened the default wiki inside the FastAPI lifespan, so a
+    damaged `main.db` raised there and startup failed: a healthy 215-page wiki
+    sitting next to it became unreachable through a UI that would not come up.
+    """
+    _seed("main", "main text")
+    _seed("beaconlight", "beacon text")
+    _corrupt("main")
+    assert wikis.default_slug() == "main"        # the broken one is the default
+
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:  # used to raise
+        resp = client.get("/")
+        # 503, not 500: this wiki really is unavailable, and unlike a bare
+        # "Internal Server Error" the body says which one and what to do.
+        assert resp.status_code == 503, resp.status_code
+        body = resp.text
+        # It says which wiki, and does not pretend the wiki is fine.
+        assert "Main" in body
+        assert "can’t be read" in body or "can't be read" in body
+        # ...and points at the way out: the other wikis, and a backup.
+        assert "/wikis" in body
+        assert "backup" in body.lower()
+
+
+def test_other_wikis_stay_usable_when_the_default_is_corrupt(wiki):
+    """Isolation is a failure property too, not only a content one."""
+    _seed("main", "main text")
+    _seed("beaconlight", "beacon text")
+    _corrupt("main")
+
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        page = client.get("/wiki/home?wiki=beaconlight")
+        assert page.status_code == 200
+        assert "beacon text" in page.text
+        found = client.get("/search?q=beacon&wiki=beaconlight")
+        assert found.status_code == 200
+        assert "Home" in found.text
+        made = client.post("/api/pages", json={"title": "Still Writable",
+                                               "markdown": "yes"},
+                           headers={"X-Waikiki-Wiki": "beaconlight"})
+        assert made.status_code == 200, made.text
+
+
+def test_manage_wikis_lists_what_it_can_when_a_wiki_is_corrupt(wiki):
+    """/wikis is the recovery page. It must not be the page that dies."""
+    _seed("main", "main text")
+    _seed("beaconlight", "beacon text")
+    _corrupt("main")
+
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        resp = client.get("/wikis")             # used to 500 (wikis.stats raised)
+        assert resp.status_code == 200, resp.text
+        assert "Beaconlight" in resp.text
+        assert "1 article" in resp.text         # the healthy wiki still counted
+        assert "can’t be read" in resp.text or "can't be read" in resp.text
+
+        # ...and from a healthy wiki too, once the cookie has moved on.
+        resp = client.get("/wikis?wiki=beaconlight")
+        assert resp.status_code == 200
+
+
+def test_a_corrupt_wiki_file_is_left_exactly_as_it_was(wiki):
+    """A corrupt database is the user's data in a damaged state.
+
+    It may still be recoverable — by a later Waikiki, by `sqlite3 .recover`, by
+    a specialist. Nothing here may delete it, truncate it, overwrite it or
+    "repair" it in place.
+    """
+    _seed("main", "main text")
+    _seed("beaconlight", "beacon text")
+    _corrupt("main")
+    path = config.WIKIS_DIR / "main.db"
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        client.get("/")
+        client.get("/wikis")
+        client.get("/wiki/home")
+        client.get("/search?q=text")
+
+    assert path.exists()
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before
+
+
+def test_a_bug_is_never_mistaken_for_a_corrupt_file(wiki):
+    """The narrowness is the point: only SQLite refusing a *file* counts.
+
+    Catch-and-continue that also swallows a `KeyError` in our own code turns
+    every programming error into a friendly "restore from a backup" page.
+    """
+    assert db.unreadable_reason(KeyError("slug")) is None
+    assert db.unreadable_reason(ValueError("nope")) is None
+    assert db.unreadable_reason(
+        sqlite3.OperationalError("no such table: pages")) is None
+    assert db.unreadable_reason(
+        sqlite3.DatabaseError("database disk image is malformed"))
+    assert db.unreadable_reason(sqlite3.DatabaseError("file is not a database"))
+    if db._HAS_APSW:
+        import apsw
+        assert db.unreadable_reason(apsw.CorruptError("malformed"))
+        assert db.unreadable_reason(apsw.NotADBError("not a database"))
+        assert db.unreadable_reason(apsw.SQLError("no such table: pages")) is None
+
+
+def test_wiki_health_reports_the_broken_one_and_only_that_one(wiki):
+    _seed("main", "main text")
+    _seed("beaconlight", "beacon text")
+    _corrupt("main")
+
+    assert wikis.health("main")["ok"] is False
+    assert wikis.health("main")["reason"]
+    assert wikis.health("beaconlight")["ok"] is True
+
+    broken = wikis.stats("main")                 # used to raise
+    assert broken["unreadable"] is True
+    assert broken["articles"] == 0
+    assert wikis.stats("beaconlight")["articles"] == 1
+
+
+def test_damage_past_the_header_is_caught_too(wiki):
+    """The other shape: a file that opens fine and falls apart while being read.
+
+    `_corrupt` scribbles the header, so SQLite refuses at open. A half-copied or
+    truncated file keeps a valid header and only fails on the pages that are
+    gone — which is why both connection shims classify per statement, not just
+    at open.
+    """
+    tok = db.current_wiki.set("main")
+    try:
+        for i in range(200):
+            store.create_page(f"Page {i}", "body " * 200)
+    finally:
+        db.current_wiki.reset(tok)
+
+    db._local = threading.local()
+    db._schema_ready.clear()
+    gc.collect()
+    path = config.WIKIS_DIR / "main.db"
+    for suffix in ("-wal", "-shm"):
+        extra = config.WIKIS_DIR / ("main.db" + suffix)
+        if extra.exists():
+            extra.unlink()
+    with open(path, "r+b") as handle:
+        handle.truncate(path.stat().st_size // 2)   # header intact, tail gone
+
+    assert wikis.health("main")["ok"] is False
+    assert wikis.stats("main")["unreadable"] is True
+    tok = db.current_wiki.set("main")
+    try:
+        with pytest.raises(db.WikiUnreadable):
+            store.list_pages()
+    finally:
+        db.current_wiki.reset(tok)
+
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        assert client.get("/wikis").status_code == 200
+
+
+def test_an_agent_is_told_a_wiki_is_unreadable_rather_than_switched_into_it(
+        wiki, monkeypatch):
+    """Rule 5 — one code path for Human and LLM — holds in failure too.
+
+    Switching into a wiki that cannot be opened would make every later tool call
+    fail obscurely, one at a time. Say it once, at the point of the decision, and
+    name the other wikis that do work.
+    """
+    from waikiki import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ACTIVE", None)
+    _seed("main", "main text")
+    _seed("beaconlight", "beacon text")
+    _corrupt("main")
+
+    refused = mcp_server.switch_wiki("main")
+    assert "can’t be read" in refused["error"] or "can't be read" in refused["error"]
+    assert refused.get("active") is None
+    assert "beaconlight" in refused["wikis"]
+    assert mcp_server.current_wiki()["active"] is None      # it did not move
+
+    assert mcp_server.switch_wiki("beaconlight")["active"] == "beaconlight"
+
+
+def test_a_corrupt_wiki_is_recognised_on_the_stdlib_backend_too(wiki, monkeypatch):
+    """apsw ships with the app; a stock CPython falls back to `sqlite3`.
+
+    The two raise different exception types for the same damaged file
+    (`apsw.NotADBError` vs `sqlite3.DatabaseError`), so "one bad file does not
+    take the app down" cannot be a property of one backend only.
+    """
+    _seed("main", "main text")
+    _seed("beaconlight", "beacon text")
+    _corrupt("main")
+    monkeypatch.setattr(db, "_HAS_APSW", False)
+    monkeypatch.setattr(db, "_local", threading.local())
+    monkeypatch.setattr(db, "_schema_ready", set())
+    # sqlite-vec won't load on this backend; monkeypatch records the current
+    # value so the flag it flips doesn't leak into the next test.
+    monkeypatch.setattr(db, "VEC_AVAILABLE", db.VEC_AVAILABLE)
+
+    assert wikis.health("main")["ok"] is False
+    assert wikis.stats("main")["unreadable"] is True
+
+    tok = db.current_wiki.set("main")
+    try:
+        with pytest.raises(db.WikiUnreadable):
+            store.list_pages()
+    finally:
+        db.current_wiki.reset(tok)
+
+    tok = db.current_wiki.set("beaconlight")     # the neighbour still opens
+    try:
+        assert store.get_page("home")["markdown"] == "beacon text"
+    finally:
+        db.current_wiki.reset(tok)
+
+
+def test_a_corrupt_wiki_does_not_stop_the_others_being_backed_up(wiki):
+    """The backup is the restore path. One bad file must not cancel it.
+
+    `run_backup` wrote every wiki into one directory and removed the whole
+    directory on any failure — so a corrupt wiki meant no snapshot at all, for
+    any wiki, on the day you most needed one.
+    """
+    _seed("main", "main text")
+    _seed("beaconlight", "beacon text")
+    _corrupt("main")
+
+    res = backups.run_backup()
+    assert res["ok"] is True, res
+    assert "beaconlight" in res["wikis"]
+    assert "main" in res.get("skipped", [])
+    snapshot = backups._root() / res["name"]
+    assert (snapshot / "beaconlight.db").exists()
+    assert not (snapshot / "main.db").exists()   # never a broken file that looks good
 
 
 def test_a_torn_registry_write_cannot_lose_a_wiki(wiki):

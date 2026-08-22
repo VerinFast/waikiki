@@ -15,7 +15,9 @@ two in parity (same substance, different voice) whenever you change either.
 - `waikiki/elements.py`, `wikis.py`, `rag.py` — sibling repositories (custom
   elements, the wiki registry, hybrid retrieval).
 - `waikiki/db.py` — infrastructure chokepoint: SQLite connection cache, schema,
-  FTS5, sqlite-vec load, apsw/stdlib backend shim, low-level settings SQL.
+  FTS5, sqlite-vec load, apsw/stdlib backend shim, low-level settings SQL, and
+  the **damaged-file judgement** (`unreadable_reason` / `WikiUnreadable`) that
+  keeps one bad wiki from taking the app down (rule 4).
 - `waikiki/mcp_server.py` — FastMCP tool surface; shares `store`/`rag` with the API.
 - `waikiki/collab.py` — CRDT rooms + the debounced snapshot flusher.
 - `waikiki/metaschema.py` — the metadata declaration a template may carry
@@ -44,9 +46,10 @@ two in parity (same substance, different voice) whenever you change either.
   treats exit 0 as a claim rather than proof. Sits below `capabilities`.
 - `waikiki/backups.py` — scheduled local snapshots of **every** wiki, on by
   default, taken with SQLite's online backup API (never a file copy of a live WAL
-  database) and written whole-or-not-at-all. Same disk as the wikis, so it is
-  insurance against corruption and mistakes, not against losing the machine — see
-  `docs/data-safety.md`.
+  database) and written whole-or-not-at-all. A wiki whose file cannot be read is
+  skipped and reported (`skipped`), never fatal to the run. Same disk as the
+  wikis, so it is insurance against corruption and mistakes, not against losing
+  the machine — see `docs/data-safety.md`.
 - `waikiki/deeplink.py` — `waikiki://` deep links: the allow-list that turns an
   external URL into an in-app destination (see `docs/deep-links.md`).
 - `waikiki/updater.py` — self-update for the packaged `.app`: signature-verified
@@ -87,6 +90,21 @@ two in parity (same substance, different voice) whenever you change either.
    wrote pages into it (issue #11). A fresh session has no active wiki and must
    call `switch_wiki`; refusing is correct, silently inheriting is not.
    `tests/test_cross_wiki_isolation.py` guards this end to end.
+   **Isolation covers failure, not just content (issue #71).** One unreadable
+   `.db` must never stop the app or its neighbours — a corrupt *default* wiki
+   used to raise inside `db.init_db()` in the lifespan, so the app did not start
+   and a healthy 215-page wiki became unreachable. Four things are load-bearing:
+   the judgement is **narrow** (`db.unreadable_reason` — apsw's per-code classes
+   and a bare `sqlite3.DatabaseError` count; `apsw.SQLError: no such table` and a
+   `KeyError` of ours do not, and must stay loud); `db.get_conn` raises
+   `db.WikiUnreadable` naming the wiki while `init_db` reports and continues;
+   the state is **surfaced, never guessed** (`wikis.health`/`wikis.stats` report
+   instead of raising, so `/wikis` — the recovery page — renders, and everything
+   else gets a 503 page naming the wiki, the file and the restore route, because
+   a Finder-launched app has no console); and the file is **never touched** — no
+   delete, truncate, rename or in-place repair, because it is the user's data and
+   may be recoverable. `backups.run_backup` skips it and snapshots the rest.
+   `tests/test_data_safety.py` guards all of it, on both backends.
 5. **One code path for Human and LLM.** REST, HTML views, and MCP tools all go
    through `store`/`rag` so both callers get identical render + version + index.
    The same applies to *which model answers*: the Doorman-or-local decision lives

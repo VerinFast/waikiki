@@ -90,6 +90,15 @@ corruption, a bad import, or a mistake — **not** against losing the machine. K
 a `.wiki` export somewhere else too. Backups only run while the app is open, so
 days you never launched it have no snapshot.
 
+**If a wiki file is damaged**, the app still starts and every other wiki keeps
+working — each wiki is a separate file, and one bad file is not allowed to take
+the app down with it. The broken wiki says so where you meet it: *Manage wikis*
+lists it as *can't be read*, with the reason, the backups folder, and the steps
+to open a snapshot; visiting one of its pages explains the same thing instead of
+showing an error. Nothing is deleted, rewritten or "repaired" — the damaged file
+is your data, and it may still be recoverable. The scheduled backup skips it and
+still snapshots everything else.
+
 What survives a crash, a corrupt file, a failed import or a bad edit — and what
 doesn't — is audited end to end, with the experiments that established each
 answer, in **[docs/data-safety.md](docs/data-safety.md)**.

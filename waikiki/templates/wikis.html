@@ -26,6 +26,38 @@
         <td><strong>{{ w.name }}</strong> <span class="muted">/{{ w.slug }}</span>
           {% if w.slug == current_wiki %}<span class="badge human">active</span>{% endif %}
           {% set s = stats[w.slug] %}
+          {% if s.unreadable %}
+            {# A file SQLite can't open. Say so here rather than 500 the page:
+               this is where someone comes to open a backup or move to a wiki
+               that works, so it has to render. See issue #71. #}
+            <span class="badge ai">can’t be read</span>
+            <div class="muted wikistats">
+              {{ s.reason }} · {{ (s.bytes / 1048576) | round(1) }} MB on disk,
+              left untouched
+            </div>
+            {# The restore route, spelled out where the damage is reported.
+               Settings explains it too, but Settings reads the active wiki —
+               which may be this one. #}
+            <details class="muted wikistats">
+              <summary>How to get this wiki back</summary>
+              <ol>
+                {% if restore.latest %}
+                  <li>Open <code>{{ restore.dir }}</code> and take the newest
+                    folder — <strong>{{ restore.latest.when }}</strong>.</li>
+                {% else %}
+                  <li>Open <code>{{ restore.dir }}</code>: one folder per date,
+                    each holding a <code>{{ w.slug }}.db</code>.
+                    {% if not restore.enabled %}Automatic backups are currently
+                    switched off, so there may be none — any <code>.wiki</code>
+                    file you exported works here too.{% endif %}</li>
+                {% endif %}
+                <li>Use <em>Open wiki file…</em> above on its
+                  <code>{{ w.slug }}.db</code>.</li>
+                <li>It opens as a separate wiki, so you can compare before
+                  deciding anything. The damaged file is left as it is.</li>
+              </ol>
+            </details>
+          {% else %}
           <div class="muted wikistats">
             {{ s.articles }} article{{ '' if s.articles == 1 else 's' }} ·
             {{ s.links }} link{{ '' if s.links == 1 else 's' }}
@@ -33,6 +65,7 @@
             {{ (s.bytes / 1048576) | round(1) }} MB
             {% if s.trashed %} · {{ s.trashed }} in trash{% endif %}
           </div>
+          {% endif %}
         </td>
         <td>
           <form method="post" action="/switch-wiki">
@@ -41,8 +74,13 @@
           </form>
         </td>
         <td>
-          <button class="btn" type="button" data-save="{{ w.slug }}">Save to file…</button>
-          <a class="btn" href="/wikis/{{ w.slug }}/export-md">Export .md</a>
+          <button class="btn" type="button" data-save="{{ w.slug }}"
+                  {{ 'disabled' if s.unreadable }}>Save to file…</button>
+          {% if s.unreadable %}
+            <span class="btn" aria-disabled="true">Export .md</span>
+          {% else %}
+            <a class="btn" href="/wikis/{{ w.slug }}/export-md">Export .md</a>
+          {% endif %}
         </td>
         <td>
           <form method="post" action="/wikis/{{ w.slug }}/delete"

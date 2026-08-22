@@ -186,6 +186,17 @@
          aria-label="Resize sidebar" tabindex="-1"></div>
     <main class="content">
       <div class="content-inner">
+        {% if wiki_unreadable %}
+          {# The active wiki's file cannot be opened. Views that don't need its
+             contents (Manage wikis, Settings) still render — with this. #}
+          <div class="banner err">
+            <strong>“{{ current_wiki_name }}” can’t be read.</strong>
+            {{ wiki_unreadable }}. The file has been left untouched at
+            <code>{{ wiki_unreadable_path }}</code>. Your other wikis are
+            unaffected — switch to one above, or
+            <a href="/wikis">open a backup from Manage wikis</a>.
+          </div>
+        {% endif %}
         {% block content %}{% endblock %}
       </div>
     </main>

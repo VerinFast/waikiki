@@ -15,8 +15,8 @@ from pathlib import Path
 
 from fastapi import (FastAPI, File, Form, HTTPException, Request, UploadFile,
                      WebSocket, WebSocketDisconnect)
-from fastapi.responses import (FileResponse, HTMLResponse, RedirectResponse,
-                               StreamingResponse, Response)
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               RedirectResponse, StreamingResponse, Response)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -102,8 +102,12 @@ async def lifespan(app: FastAPI):
             try:
                 res = await anyio.to_thread.run_sync(backups.maybe_run)
                 if res and res.get("ok"):
-                    accesslog.record("BACKUP ok", status=200,
-                                     detail=f"{res['name']} ({len(res['wikis'])} wikis)")
+                    skipped = res.get("skipped") or []
+                    accesslog.record(
+                        "BACKUP ok", status=200,
+                        detail=f"{res['name']} ({len(res['wikis'])} wikis"
+                               + (f", skipped unreadable: {', '.join(skipped)}"
+                                  if skipped else "") + ")")
             except Exception as exc:
                 print(f"[waikiki] scheduled backup failed: {exc}")
             try:
@@ -373,6 +377,45 @@ app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 
+@app.exception_handler(db.WikiUnreadable)
+def wiki_unreadable(request: Request, exc: db.WikiUnreadable):
+    """Say which wiki can't be opened, and how to get its content back.
+
+    A damaged wiki file used to surface as a bare "Internal Server Error", which
+    tells someone whose family wiki won't open precisely nothing. The app is
+    packaged and launched from the Finder, so the traceback on stderr is
+    invisible: whatever we know has to be said in the browser (issue #71).
+
+    Anything else — a `KeyError` in our own code — never reaches here; `db`
+    raises this type only for SQLite refusing a file.
+    """
+    slug = exc.wiki or db.active_wiki()
+    path = exc.path or str(wikis.db_path(slug))
+    if request.url.path.startswith("/api/") or request.url.path.startswith("/mcp"):
+        return JSONResponse(status_code=503, content={
+            "error": "wiki_unreadable", "wiki": slug, "reason": exc.reason,
+            "path": path, "detail": str(exc)})
+    try:
+        others = [dict(w, **{"ok": wikis.health(w["slug"])["ok"]})
+                  for w in wikis.list_wikis() if w["slug"] != slug]
+        return templates.TemplateResponse(request, "unreadable.html", {
+            "wiki": slug,
+            "wiki_name": wikis.name_of(slug),
+            "reason": exc.reason,
+            "path": path,
+            "others": others,
+            "backups": backups.restore_hint(),
+            "detail": str(exc),
+        }, status_code=503)
+    except Exception as inner:  # pragma: no cover - the page of last resort
+        return HTMLResponse(status_code=503, content=(
+            f"<h1>{slug} can’t be read</h1><p>{exc.reason}</p>"
+            f"<p><code>{path}</code></p>"
+            f"<p><a href=\"/wikis\">Manage wikis</a> to switch wiki or open a "
+            f"backup. The file has been left untouched.</p>"
+            f"<!-- {inner} -->"))
+
+
 class _StarletteChannel:
     """Adapts a Starlette WebSocket to the pycrdt-websocket Channel protocol.
 
@@ -407,7 +450,13 @@ async def collab_ws(websocket: WebSocket, wiki: str, slug: str):
         return
     await websocket.accept()
     db.current_wiki.set(wiki)
-    await collab.ensure_room(wiki, slug)  # seed from the wiki's DB before serving
+    try:
+        await collab.ensure_room(wiki, slug)  # seed from the wiki's DB first
+    except db.WikiUnreadable:
+        # Nothing to co-edit if the file can't be opened. Closing is the honest
+        # answer; the HTML view of the same page explains why (see above).
+        await websocket.close(code=4004)
+        return
     channel = _StarletteChannel(websocket, collab.room_key(wiki, slug))
     try:
         await collab.server.serve(channel)
@@ -416,15 +465,29 @@ async def collab_ws(websocket: WebSocket, wiki: str, slug: str):
 
 
 def _ctx(request: Request, **extra) -> dict:
-    """Common template context: active wiki, theme, nav pages, pygments styles."""
+    """Common template context: active wiki, theme, nav pages, pygments styles.
+
+    The active wiki's own reads are allowed to fail here: if its file is
+    unreadable, the chrome renders without a page list and carries a banner
+    saying so, rather than taking down pages that don't need that wiki's
+    contents — *Manage wikis* above all, which is where recovery starts."""
     wiki = db.active_wiki()
     nav_filter = request.cookies.get("waikiki_nav_filter", "all")
     nav_sort = request.cookies.get("waikiki_nav_sort", "updated")
+    unreadable = wikis.health(wiki)
+    if unreadable["ok"]:
+        theme = store.get_setting("theme", "default")
+        nav_pages = store.list_pages(
+            sort=nav_sort, starred_only=(nav_filter == "starred"))[:500]
+    else:
+        theme, nav_pages = "default", []
     base = {
         "request": request,
-        "theme": store.get_setting("theme", "default"),
-        "nav_pages": store.list_pages(sort=nav_sort,
-                                      starred_only=(nav_filter == "starred"))[:500],
+        "theme": theme,
+        "nav_pages": nav_pages,
+        # None when the wiki is fine; a plain reason when it can't be opened.
+        "wiki_unreadable": None if unreadable["ok"] else unreadable["reason"],
+        "wiki_unreadable_path": unreadable.get("path"),
         "nav_filter": nav_filter,
         "nav_sort": nav_sort,
         "current_path": request.url.path,
@@ -565,9 +628,12 @@ def connect_page(request: Request):
 
 @app.get("/wikis", response_class=HTMLResponse)
 def wikis_manage(request: Request, error: str = ""):
+    # stats() reports a wiki it cannot open rather than raising — this page is
+    # where someone comes to escape a broken wiki or open a backup, so it has to
+    # render even when one of the files is damaged (issue #71).
     stats = {w["slug"]: wikis.stats(w["slug"]) for w in wikis.list_wikis()}
-    return templates.TemplateResponse(request,
-        "wikis.html", _ctx(request, error=error, stats=stats))
+    return templates.TemplateResponse(request, "wikis.html", _ctx(
+        request, error=error, stats=stats, restore=backups.restore_hint()))
 
 
 @app.post("/switch-wiki")
@@ -1372,8 +1438,13 @@ async def backups_run_now(request: Request):
     if not res.get("ok"):
         return RedirectResponse(f"/settings?error={quote(res.get('error', 'failed'))}",
                                 status_code=303)
-    return RedirectResponse(
-        f"/settings?msg=Backed+up+{len(res['wikis'])}+wiki(s)", status_code=303)
+    msg = f"Backed up {len(res['wikis'])} wiki(s)"
+    if res.get("skipped"):
+        # Say what was left out, and why it was left out — a backup that quietly
+        # covers less than you think is worse than one that failed loudly.
+        msg += (f" — skipped {', '.join(res['skipped'])}: "
+                f"the file could not be read")
+    return RedirectResponse(f"/settings?msg={quote(msg)}", status_code=303)
 
 
 @app.post("/settings/backups")

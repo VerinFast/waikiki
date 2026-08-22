@@ -134,9 +134,35 @@ def disk_bytes(slug: str) -> int:
     return total
 
 
+def health(slug: str) -> dict:
+    """Can this wiki's file actually be opened? ``{slug, ok, reason, path}``.
+
+    Probed live rather than remembered: an open wiki costs a dict lookup, a
+    damaged one fails fast on its header, and a wiki the user has just restored
+    from a backup starts working again without a restart. A wiki that has never
+    been opened is created here, exactly as any other read would.
+    """
+    token = db.current_wiki.set(slug)
+    try:
+        db.get_conn()
+        return {"slug": slug, "ok": True, "reason": None,
+                "path": str(db_path(slug))}
+    except db.WikiUnreadable as exc:
+        return {"slug": slug, "ok": False, "reason": exc.reason,
+                "path": exc.path or str(db_path(slug))}
+    finally:
+        db.current_wiki.reset(token)
+
+
 def stats(slug: str) -> dict:
     """Summary for a wiki: articles, internal links (resolved vs broken),
-    trashed count, and size on disk."""
+    trashed count, and size on disk.
+
+    A wiki whose file cannot be read reports ``unreadable`` with a reason
+    instead of raising. *Manage wikis* builds this for every registered wiki, so
+    raising here took down the one page a user would go to in order to open a
+    backup or move to a working wiki — the page whose whole job is recovery.
+    """
     token = db.current_wiki.set(slug)
     try:
         conn = db.get_conn()
@@ -155,10 +181,24 @@ def stats(slug: str) -> dict:
                     resolved += 1
                 else:
                     broken += 1
+    except Exception as exc:
+        if db.unreadable_reason(exc) is None:
+            raise                       # a bug in our own code stays loud
+        return {
+            "slug": slug,
+            "unreadable": True,
+            "reason": db.unreadable_reason(exc),
+            "path": str(db_path(slug)),
+            "articles": 0, "trashed": 0,
+            "links": 0, "links_resolved": 0, "links_broken": 0,
+            "bytes": disk_bytes(slug),   # the file is still there; say how big
+        }
     finally:
         db.current_wiki.reset(token)
     return {
         "slug": slug,
+        "unreadable": False,
+        "reason": None,
         "articles": articles,
         "trashed": trashed,
         "links": resolved + broken,

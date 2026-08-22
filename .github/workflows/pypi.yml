@@ -1,0 +1,62 @@
+# Publishes the *server and MCP* half of Waikiki to PyPI. The macOS .app is not
+# pip-installable (pywebview + a PyInstaller bundle) and ships via the Homebrew
+# cask instead; what this puts on PyPI is `waikiki` (the web app) and
+# `waikiki-mcp` (the stdio MCP server), which run anywhere Python does.
+#
+# Trusted Publishing (OIDC), NOT an API token: nothing long-lived is stored in
+# repo secrets, and the token PyPI mints is scoped to this workflow in this repo
+# and expires. That matters more now the repo is public.
+name: pypi
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python3 -m pip install -q --upgrade build
+      - run: python3 -m build
+
+      # The wheel is useless without templates and static — the server 500s
+      # without them and it would ship green. Assert they are in there rather
+      # than trusting the build config.
+      - name: Check the wheel carries its runtime data
+        run: |
+          python3 - <<'PY'
+          import glob, sys, zipfile
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          missing = [p for p in ("waikiki/templates/", "waikiki/static/",
+                                 "waikiki/vendor/wiki_interchange/")
+                     if not any(n.startswith(p) for n in names)]
+          sys.exit("wheel is missing: " + ", ".join(missing) if missing else 0)
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # The environment is the gate: PyPI's trusted publisher can be pinned to it,
+    # and it can require a human approval before anything is pushed.
+    environment: pypi
+    permissions:
+      id-token: write        # OIDC — this is what mints the PyPI token
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

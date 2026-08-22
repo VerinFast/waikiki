@@ -1,12 +1,70 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
 [project]
 name = "waikiki"
 version = "1.0.0"
 description = "A small local wiki for Human/LLM collaboration (SQLite, hybrid RAG, MCP, CRDT co-editing)."
+readme = "README.md"
 requires-python = ">=3.10"
 # Source-available, not open source: use it, copy it, modify it — but do not
 # offer it to others as a hosted or managed service. Full text in LICENSE.
 license = "Elastic-2.0"
 license-files = ["LICENSE"]
+authors = [{ name = "VerinFast" }]
+keywords = ["wiki", "mcp", "llm", "crdt", "rag", "sqlite"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Intended Audience :: End Users/Desktop",
+    "License :: Other/Proprietary License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Groupware",
+]
+dependencies = [
+    "fastapi>=0.140.13",
+    "uvicorn[standard]>=0.52.3",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.32",
+    "pydantic>=2.7",
+    "markdown-it-py>=4.2.0",
+    "mdit-py-plugins>=0.6.1",
+    "linkify-it-py>=2.0",
+    "pygments>=2.18",
+    "sqlite-vec>=0.1.9",
+    "apsw>=3.53.4.0",
+    "fastembed>=0.3",
+    "httpx>=0.28.1",
+    "cryptography>=42.0",
+    "xhtml2pdf>=0.2.17",
+    "anthropic>=0.122.0",
+    "fastmcp>=3.4.6",
+    "pycrdt>=0.14.2,<0.15",
+    "pycrdt-websocket>=0.16.4",
+]
+
+[project.urls]
+Homepage = "https://github.com/VerinFast/waikiki"
+Source = "https://github.com/VerinFast/waikiki"
+Issues = "https://github.com/VerinFast/waikiki/issues"
+
+# The .app is not what pip ships: this is the server and the MCP stdio endpoint,
+# which is the half that runs anywhere. The desktop window lives in the cask.
+[project.scripts]
+waikiki = "waikiki.__main__:serve"
+waikiki-mcp = "waikiki.__main__:mcp"
+
+# Templates, static assets and the vendored interchange library are runtime
+# data, not incidental files — the server 500s without the first two, and the
+# Kahala round-trip needs the third. Hatchling ships only .py by default.
+[tool.hatch.build.targets.wheel]
+packages = ["waikiki"]
+
+[tool.hatch.build.targets.sdist]
+include = ["waikiki", "README.md", "LICENSE", "docs", "tests", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

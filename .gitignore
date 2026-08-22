@@ -35,3 +35,4 @@ models/
 assets/Waikiki.iconset/
 assets/icon-1024.png
 .venv-build/
+dist-pypi/

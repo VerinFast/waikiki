@@ -10,7 +10,11 @@ from __future__ import annotations
 import gc
 import hashlib
 import json
+import os
 import sqlite3
+import subprocess
+import sys
+import textwrap
 import threading
 
 import pytest
@@ -125,6 +129,252 @@ def test_the_canonical_ydoc_blob_is_written_in_one_statement(wiki):
 
     store.create_page("Long", "x" * 200_000)
     page = store.get_page("long")
+    assert ydoc.content_of(ydoc.canonical_doc(page)) == page["markdown"]
+
+
+
+# A page save writes four things — the `pages` projection, the `page_versions`
+# snapshot, the tag index and the canonical Y.Doc — and issue #72 was that they
+# were four separate autocommitted statements. These are the seams between them,
+# named the way the crash table in `docs/data-safety.md` names them.
+_SAVE_SEAMS = {
+    "after the projection": "_snapshot",
+    "after the version row": "_index_meta",
+    "before the canonical write": "_sync_ydoc",
+}
+
+
+def _page_row(slug: str = "ledger") -> dict:
+    """Everything a save touches, read back for comparison."""
+    page = store.get_page(slug)
+    return {
+        "title": page["title"],
+        "markdown": page["markdown"],
+        "html": page["html"],
+        "updated_at": page["updated_at"],
+        "versions": len(store.page_versions(slug)),
+        "tags": store.tags_of(slug),
+        "canonical": ydoc.content_of(ydoc.canonical_doc(page)),
+        "state": ydoc._load_state(page["id"]),
+    }
+
+
+@pytest.mark.parametrize("seam", list(_SAVE_SEAMS))
+def test_a_save_that_fails_part_way_leaves_the_page_exactly_as_it_was(
+        wiki, monkeypatch, seam):
+    """One page save is one transaction (issue #72): all of it, or none of it.
+
+    Failure is injected at each seam between the writes, which is what a crash
+    between them looks like from the database's point of view — the statements
+    before it either committed on their own or they didn't. Before this was one
+    transaction, breaking the *last* seam still left `pages.markdown` holding the
+    new text with the canonical Y.Doc a revision behind, and the projection is
+    what every read path returns. Rule 6 says the Y.Doc is the truth; that is
+    only true if the two land together.
+    """
+    store.create_page("Ledger", "version one\n\nfirst draft")
+    store.set_tags("ledger", ["ledgers"])
+    before = _page_row()
+
+    def boom(*a, **k):
+        raise RuntimeError(f"crash {seam}")
+
+    monkeypatch.setattr(store, _SAVE_SEAMS[seam], boom)
+    with pytest.raises(RuntimeError):
+        store.update_page("ledger", "Ledger Renamed", "version two")
+
+    assert _page_row() == before, f"the save tore at the seam {seam!r}"
+    # The FTS projection is rebuilt by trigger from `pages`, so a rolled-back
+    # save must not leave the new title findable either.
+    assert not [p for p in store.list_pages() if p["title"] == "Ledger Renamed"]
+
+
+def test_a_failed_create_leaves_no_page_and_no_orphan_rows(wiki, monkeypatch):
+    """The same rule for a brand-new page: no half-created page, no debris.
+
+    A page row that committed on its own while its canonical Y.Doc never did is
+    a page whose source of truth is missing — the interchange round-trip would
+    ship an empty document for it.
+    """
+    def boom(*a, **k):
+        raise RuntimeError("crash before the canonical write")
+
+    monkeypatch.setattr(store, "_sync_ydoc", boom)
+    with pytest.raises(RuntimeError):
+        store.create_page("Nana's Pie", "the only copy")
+
+    conn = db.get_conn()
+    assert store.get_page("nanas-pie") is None
+    assert conn.execute("SELECT COUNT(*) AS n FROM pages").fetchone()["n"] == 0
+    assert conn.execute("SELECT COUNT(*) AS n FROM page_versions").fetchone()["n"] == 0
+    assert conn.execute("SELECT COUNT(*) AS n FROM page_ydoc").fetchone()["n"] == 0
+
+
+def test_a_real_kill_between_the_writes_lands_nothing(wiki):
+    """Not a simulated failure: a separate process is killed mid-save.
+
+    `os._exit` inside the call that would write the canonical Y.Doc — the second
+    row of the crash table in `docs/data-safety.md`, which used to leave
+    `pages.markdown` at `v2`, a `v2` version row, and the canonical doc at `v1`.
+    The database is then read back on a cold handle, which is what a recovering
+    process sees: an uncommitted transaction leaves no commit frame in the WAL,
+    so none of it is there.
+    """
+    store.create_page("Ledger", "version one")
+    page = store.get_page("ledger")
+
+    script = textwrap.dedent("""
+        import os
+        from waikiki import db, store
+        db.current_wiki.set("main")
+        store._sync_ydoc = lambda *a, **k: os._exit(9)   # die mid-save
+        store.update_page("ledger", "Ledger", "version two")
+        os._exit(0)                                      # never reached
+    """)
+    env = dict(os.environ, WAIKIKI_DATA=str(config.DATA_DIR))
+    proc = subprocess.run([sys.executable, "-c", script], cwd=str(config.ROOT),
+                          env=env, capture_output=True, timeout=120)
+    assert proc.returncode == 9, (proc.returncode, proc.stderr.decode()[-2000:])
+
+    cold = sqlite3.connect(f"file:{config.WIKIS_DIR / 'main.db'}?mode=ro", uri=True)
+    cold.row_factory = sqlite3.Row
+    try:
+        assert cold.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        row = cold.execute("SELECT markdown FROM pages WHERE slug='ledger'").fetchone()
+        assert row["markdown"] == "version one"
+        versions = cold.execute(
+            "SELECT COUNT(*) FROM page_versions WHERE page_id=?", (page["id"],)
+        ).fetchone()[0]
+        assert versions == 1
+        blob = cold.execute("SELECT ydoc_state FROM page_ydoc WHERE page_id=?",
+                            (page["id"],)).fetchone()["ydoc_state"]
+    finally:
+        cold.close()
+
+    from pycrdt import Doc
+
+    doc = Doc()
+    doc.apply_update(bytes(blob))
+    assert ydoc.content_of(doc) == "version one"
+
+
+def test_the_derived_index_is_rebuilt_outside_the_write_transaction(wiki, monkeypatch):
+    """The RAG index is a cache, and it must never hold the write lock.
+
+    `rag.reindex_page` chunks, embeds — which can load a model — and writes
+    vectors. Inside the save's transaction that would queue the human, the MCP
+    agent and the collab flusher behind an embedding run, and invite lock
+    timeouts. It is rebuildable from the markdown, so it is not part of the
+    atomic unit: it runs *after* the outermost commit, at whatever depth the
+    caller happens to be.
+    """
+    inside = []
+    real = store.rag.reindex_page
+
+    def spy(page_id, markdown):
+        inside.append(db.in_transaction())
+        return real(page_id, markdown)
+
+    monkeypatch.setattr(store.rag, "reindex_page", spy)
+    store.create_page("Ledger", "version one")
+    store.update_page("ledger", "Ledger", "version two")
+    assert inside == [False, False]
+
+    inside.clear()
+    with db.transaction():
+        store.update_page("ledger", "Ledger", "version three")
+        assert inside == []          # deferred past the enclosing commit...
+    assert inside == [False]         # ...and still not inside a transaction
+
+
+def test_a_nested_failure_rolls_back_only_its_own_work(wiki):
+    """`transaction()` is re-entrant, so a save can be wrapped in a bigger one.
+
+    The import paths do exactly that (a page's projection and the *sender's*
+    canonical doc commit together). A nested scope is a SAVEPOINT: it rolls back
+    its own work and leaves the enclosing transaction intact, instead of
+    committing it early or aborting it.
+    """
+    store.create_page("Ledger", "version one")
+
+    with db.transaction():
+        store.update_page("ledger", "Ledger", "version two")
+        with pytest.raises(RuntimeError):
+            with db.transaction():
+                store.create_page("Scratch", "never mind")
+                raise RuntimeError("boom")
+
+    assert store.get_page("ledger")["markdown"] == "version two"
+    assert store.get_page("scratch") is None
+    conn = db.get_conn()
+    orphans = conn.execute(
+        "SELECT COUNT(*) AS n FROM chunks WHERE page_id NOT IN (SELECT id FROM pages)"
+    ).fetchone()["n"]
+    assert orphans == 0          # the rolled-back page never got indexed either
+
+
+def test_a_save_is_one_transaction_on_the_stdlib_backend_too(wiki, monkeypatch):
+    """apsw ships with the app; a stock CPython falls back to `sqlite3`.
+
+    The two reach a transaction differently — apsw autocommits unless a `BEGIN`
+    is issued, the stdlib has its own implicit-transaction behaviour driven by
+    `isolation_level` — so "a page save is atomic" cannot be a property of one
+    backend only.
+    """
+    monkeypatch.setattr(db, "_HAS_APSW", False)
+    monkeypatch.setattr(db, "_local", threading.local())
+    monkeypatch.setattr(db, "_schema_ready", set())
+    # sqlite-vec won't load on this backend; record the current value so the flag
+    # it flips doesn't leak into the next test.
+    monkeypatch.setattr(db, "VEC_AVAILABLE", db.VEC_AVAILABLE)
+
+    store.create_page("Ledger", "version one")
+    assert type(db.get_conn()) is db._Sqlite3Conn
+    before = _page_row()
+
+    def boom(*a, **k):
+        raise RuntimeError("crash before the canonical write")
+
+    monkeypatch.setattr(store, "_sync_ydoc", boom)
+    with pytest.raises(RuntimeError):
+        store.update_page("ledger", "Ledger", "version two")
+    assert _page_row() == before
+
+
+def test_two_writers_at_once_neither_deadlock_nor_lose_a_save(wiki):
+    """A human, an agent and the collab flusher all write the same file.
+
+    Taking the write lock up front (`BEGIN IMMEDIATE`) rather than upgrading a
+    read lock mid-transaction is what keeps that safe: the second writer queues
+    on the busy timeout instead of failing the upgrade. Two threads, each with
+    its own connection, exactly as the collab flusher gets (it persists through
+    `anyio.to_thread.run_sync`).
+    """
+    store.create_page("Ledger", "version one")
+    errors: list = []
+
+    def hammer(tag: str) -> None:
+        try:
+            for i in range(6):
+                store.update_page("ledger", "Ledger", f"{tag} {i}")
+        except Exception as exc:                      # reported, not swallowed
+            errors.append(f"{tag}: {exc!r}")
+
+    threads = [threading.Thread(target=hammer, args=(t,))
+               for t in ("human", "agent")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+
+    assert errors == []
+    assert not [t for t in threads if t.is_alive()]
+    page = store.get_page("ledger")
+    assert len(store.page_versions("ledger")) == 13     # 1 create + 12 saves
+    # Whoever wrote last, the page is one of the writes — never a mix of two —
+    # and its canonical doc agrees with it.
+    assert page["markdown"] in {f"{t} {i}" for t in ("human", "agent")
+                                for i in range(6)}
     assert ydoc.content_of(ydoc.canonical_doc(page)) == page["markdown"]
 
 

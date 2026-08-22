@@ -21,7 +21,7 @@ directory.
 
 | # | Question | Verdict |
 |---|---|---|
-| 1 | Crash / power loss mid-write | WAL and `synchronous=FULL` confirmed on every file; no committed write was lost. But one page save is **several** transactions, so a crash between them leaves the canonical Y.Doc behind its markdown projection ([#72](https://github.com/VerinFast/waikiki/issues/72)). Live typing is durable ~1.5–2.5s after you stop. |
+| 1 | Crash / power loss mid-write | WAL and `synchronous=FULL` confirmed on every file; no committed write was lost. A page save was **several** transactions, so a crash between them left the canonical Y.Doc behind its markdown projection — **fixed since this audit ([#72](https://github.com/VerinFast/waikiki/issues/72))**: one save is now one transaction on both backends. Live typing is still durable only ~1.5–2.5s after you stop. |
 | 2 | A corrupted wiki file | **Fixed since this audit ([#71](https://github.com/VerinFast/waikiki/issues/71)).** The app now starts whichever wiki is damaged, including the default; the neighbours are unaffected; *Manage wikis* lists what it can and marks what it can't read; and the damaged file is named, explained and left byte-for-byte alone. |
 | 3 | Restore | Works, proven on a real 55MB backup: 215 pages, 75 images, 711 versions. Backups are on by default. Documented only inside the app, and they live on the same disk as the wikis. |
 | 4 | Import paths | A part-written import is incomplete but never destructive, and re-running the same bundle finishes it exactly. **1.0 does not need staging-and-swap.** |
@@ -65,12 +65,18 @@ The Y.Doc side cannot be half-written: `ydoc._store_state` is a single
 `INSERT ... ON CONFLICT`, which SQLite makes atomic on either backend. All 116
 canonical Y.Doc blobs in the real install decode cleanly — none is torn.
 
-But **the two can get out of step, and the projection is the one that wins.**
-`store._set_body` performs the projection write, the version snapshot, the
-metadata index, the canonical Y.Doc write and the RAG reindex as *separate*
+But **the two could get out of step, and the projection was the one that
+won.** `store._set_body` performed the projection write, the version snapshot,
+the metadata index, the canonical Y.Doc write and the RAG reindex as *separate*
 transactions — under apsw (the default backend, and the one the packaged app
-ships) `commit()` is a documented no-op and no `BEGIN` is ever issued, so every
-statement autocommits on its own.
+ships) `commit()` is a documented no-op and no `BEGIN` was ever issued, so every
+statement autocommitted on its own:
+
+```
+apsw 3.53.4.0
+in_transaction before insert: False
+in_transaction after  insert: False
+```
 
 Killing the process at two deliberate points, saving `v2` over `v1`:
 
@@ -115,13 +121,54 @@ source of truth and the RAG index is a cache that can be rebuilt from the
 markdown at any time. Guarded by
 `test_canonical_ydoc_is_written_before_the_derived_index`.
 
-**Not fixed here:** making one page save one transaction. That needs explicit
-`BEGIN`/`COMMIT`/`ROLLBACK` through the `db` shim on both backends, and
-`_set_body` is called from enough places that the seam has to tolerate being
-already inside a transaction. Filed as
-[#72](https://github.com/VerinFast/waikiki/issues/72), with a cheaper stopgap
-suggested (reconcile on read, so an existing divergence heals instead of being
-exported).
+**Also fixed since this audit ([#72](https://github.com/VerinFast/waikiki/issues/72)):
+one page save is now one transaction.** `db.transaction()` issues an explicit
+`BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` through the shim, and the stdlib
+connection is opened `isolation_level=None` so both backends reach a transaction
+by the same code path. The same measurement now reads:
+
+```
+apsw 3.53.4.0
+in_transaction outside transaction(): False
+in_transaction inside  transaction(): True
+in_transaction mid-save            : True
+in_transaction after   transaction(): False
+```
+
+The projection, the version snapshot, the tag index and the canonical Y.Doc
+commit together or not at all. `BEGIN IMMEDIATE` rather than deferred, because a
+save reads (`get_page`, the slug uniqueness loop) before it writes and a deferred
+transaction's lock upgrade can fail outright under a second writer — and this app
+has a human, an MCP agent and the collab flusher writing the same file. The seam
+is re-entrant through savepoints, because store functions call each other and the
+import paths wrap a whole page write.
+
+Killing a *separate process* at the same seam as before now lands nothing: the
+markdown is still `v1`, there is one version row, the canonical doc is `v1`, and
+`integrity_check` is `ok`. `test_a_real_kill_between_the_writes_lands_nothing`
+does exactly that on every run, and
+`test_a_save_that_fails_part_way_leaves_the_page_exactly_as_it_was` breaks each
+seam in turn.
+
+**What is deliberately still outside that transaction:** `rag.reindex_page`.
+Chunking and embedding can load a model and take seconds, and holding the write
+lock across that would queue every other writer behind an embedding run. The RAG
+index is a cache rebuildable from the markdown, so it runs *after* the commit
+(`db.after_commit`), and a crash in the gap leaves that page's search index stale
+until that page's next save — or until `rag.reindex_all()` rebuilds the lot, which
+is what Settings runs when the embedding model changes. The page itself is intact
+either way; only its place in the search index is behind. That is the trade,
+stated plainly.
+
+**Two smaller seams remain, and they are not repaired automatically:**
+
+* A **divergence that already exists** — like the Help wiki's About page above —
+  still heals only on that page's next ordinary save. Nothing rewrites canonical
+  state during a read: a read path that writes is its own hazard, and a wrong
+  "repair" would overwrite the truth with the projection.
+* A **title change** rewrites `[[links]]` in other pages, one ordinary save each
+  (`_rewrite_backlinks`). A crash part-way leaves some rewritten and some not.
+  No content is lost and every link still resolves, because slugs never move.
 
 ### How much live typing does a hard kill lose?
 
@@ -457,10 +504,12 @@ Everything below is a deliberate 1.0 position, not an oversight:
 
 1. **Up to ~1.5–2.5 seconds of live typing** is lost to a power cut or
    `SIGKILL`. A clean quit loses nothing.
-2. **A page save is not one transaction.** A crash between its parts leaves the
-   canonical Y.Doc a revision behind its markdown; the user's text survives, the
-   interchange export goes stale. Tracked as
-   [#72](https://github.com/VerinFast/waikiki/issues/72).
+2. ~~**A page save is not one transaction.**~~ Fixed in
+   [#72](https://github.com/VerinFast/waikiki/issues/72). What is accepted now is
+   narrower: the **RAG index** is rebuilt after the commit, on purpose, so a crash
+   in that gap leaves one page's search index stale until its next save (or a
+   rebuild from Settings). A divergence that predates the fix heals on the next
+   save of that page, not on read.
 3. ~~**A corrupt default wiki stops the app from starting.**~~ Fixed in
    [#71](https://github.com/VerinFast/waikiki/issues/71). What is accepted now is
    narrower: a damaged wiki's **own** pages cannot be shown (there is nothing to

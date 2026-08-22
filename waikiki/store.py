@@ -151,7 +151,6 @@ def ancestors(page: Optional[dict], limit: int = 32) -> List[dict]:
 def set_parent(slug: str, parent_slug: Optional[str]) -> Optional[dict]:
     """Make `slug` a child of `parent_slug` (or top-level if None). Re-indexes so
     its vectors move between the main and partitioned (child) indices."""
-    conn = db.get_conn()
     page = get_page(slug)
     if not page:
         return None
@@ -161,9 +160,12 @@ def set_parent(slug: str, parent_slug: Optional[str]) -> Optional[dict]:
         if not parent or parent["id"] == page["id"]:
             return None
         parent_id = parent["id"]
-    conn.execute("UPDATE pages SET parent_id=? WHERE slug=?", (parent_id, slug))
-    conn.commit()
-    rag.reindex_page(page["id"], page["markdown"])  # route vectors correctly
+    with db.transaction() as conn:
+        conn.execute("UPDATE pages SET parent_id=? WHERE slug=?", (parent_id, slug))
+        # Derived: the vectors move between the main and child indices, but that
+        # is a cache. `after_commit` keeps the embedding out of the write lock
+        # here too, and out of any transaction a caller has wrapped us in.
+        db.after_commit(rag.reindex_page, page["id"], page["markdown"])
     return get_page(slug)
 
 
@@ -239,24 +241,26 @@ def create_page(title: str, markdown: str = "", author: str = "human",
     landed under a title-derived slug would leave every ``parent_slug`` pointing
     at nothing. A requested slug still goes through the uniqueness loop.
     """
-    conn = db.get_conn()
     markdown = _normalize_newlines(markdown)
     base = render.slugify(slug or title) or "untitled"
-    slug, n = base, 2
-    while conn.execute("SELECT 1 FROM pages WHERE slug=?", (slug,)).fetchone():
-        slug, n = f"{base}-{n}", n + 1
     html = render_html(markdown)
-    cur = conn.execute(
-        "INSERT INTO pages(slug, title, markdown, html) VALUES (?,?,?,?)",
-        (slug, title, markdown, html),
-    )
-    page_id = cur.lastrowid
-    _snapshot(page_id, title, markdown, author)
-    _index_meta(page_id, markdown)
-    conn.commit()
-    # Canonical state before the derived index — see the note in `_set_body`.
-    _sync_ydoc(page_id, slug, title, markdown)
-    rag.reindex_page(page_id, markdown)
+    # One transaction, for the same reason `_set_body` has one: the row, its
+    # first version and its canonical Y.Doc are one fact about the page. Taking
+    # the write lock before the uniqueness loop also closes the check-then-insert
+    # race that let two concurrent writers pick the same slug.
+    with db.transaction() as conn:
+        slug, n = base, 2
+        while conn.execute("SELECT 1 FROM pages WHERE slug=?", (slug,)).fetchone():
+            slug, n = f"{base}-{n}", n + 1
+        cur = conn.execute(
+            "INSERT INTO pages(slug, title, markdown, html) VALUES (?,?,?,?)",
+            (slug, title, markdown, html),
+        )
+        page_id = cur.lastrowid
+        _snapshot(page_id, title, markdown, author)
+        _index_meta(page_id, markdown)
+        _sync_ydoc(page_id, slug, title, markdown)
+        db.after_commit(rag.reindex_page, page_id, markdown)
     if (b := _activity_bucket(author)):
         log_activity(b, "write")
     return get_page(slug)
@@ -264,10 +268,10 @@ def create_page(title: str, markdown: str = "", author: str = "human",
 
 def set_page_order(slugs: list[str]) -> None:
     """Persist the manual (Custom) sidebar order: sort_order = position."""
-    conn = db.get_conn()
-    for i, slug in enumerate(slugs):
-        conn.execute("UPDATE pages SET sort_order=? WHERE slug=?", (i, slug))
-    conn.commit()
+    # One transaction: a half-applied order is a sidebar nobody arranged.
+    with db.transaction() as conn:
+        for i, slug in enumerate(slugs):
+            conn.execute("UPDATE pages SET sort_order=? WHERE slug=?", (i, slug))
 
 
 def custom_order() -> List[str]:
@@ -348,30 +352,43 @@ def _sync_ydoc(page_id: int, slug: str, title: str, markdown: str) -> None:
 
 def _set_body(slug: str, title: str, markdown: str, author: str) -> None:
     """Core page write: render (link-by-title), save, snapshot, reindex."""
-    conn = db.get_conn()
     markdown = _normalize_newlines(markdown)
     page = get_page(slug)
     html = render_html(markdown)
-    conn.execute(
-        "UPDATE pages SET title=?, markdown=?, html=?, updated_at=datetime('now'), "
-        "deleted_at=NULL WHERE slug=?",
-        (title, markdown, html, slug),
-    )
-    _snapshot(page["id"], title, markdown, author)
-    _index_meta(page["id"], markdown)
-    conn.commit()
-    # The canonical Y.Doc is written *before* the search index, because the two
-    # are not the same kind of thing: `page_ydoc` is the source of truth (rule 6)
-    # while the RAG index is a derived cache that `reindex_page` can rebuild from
-    # the markdown at any time. With the old order, anything that raised in
-    # reindex — an embedder that isn't ready yet, a missing sqlite-vec, a model
-    # download failing — committed the projection and then skipped the canonical
-    # write, silently leaving the Y.Doc a revision behind. That is not
-    # hypothetical: the Help wiki's About page in this developer's install still
-    # carries version 0.18.0 in its Y.Doc and 0.21.0 in its markdown. See
-    # `docs/data-safety.md` (question 1).
-    _sync_ydoc(page["id"], slug, title, markdown)
-    rag.reindex_page(page["id"], markdown)
+    # ONE transaction (issue #72). The projection, the version snapshot, the tag
+    # index and the canonical Y.Doc are one fact about the page, and rule 6 —
+    # "the Y.Doc is the truth, the markdown is a projection of it" — is only true
+    # if they land together. They used to be four autocommitted statements, so a
+    # crash (or a raise) between them left the projection durable and the
+    # canonical doc a revision behind, with the projection winning every read.
+    # Now the whole group commits or none of it does.
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE pages SET title=?, markdown=?, html=?, updated_at=datetime('now'), "
+            "deleted_at=NULL WHERE slug=?",
+            (title, markdown, html, slug),
+        )
+        _snapshot(page["id"], title, markdown, author)
+        _index_meta(page["id"], markdown)
+        # The canonical Y.Doc is written *before* the search index, because the
+        # two are not the same kind of thing: `page_ydoc` is the source of truth
+        # (rule 6) while the RAG index is a derived cache that `reindex_page` can
+        # rebuild from the markdown at any time. With the old order, anything
+        # that raised in reindex — an embedder that isn't ready yet, a missing
+        # sqlite-vec, a model download failing — committed the projection and
+        # then skipped the canonical write, silently leaving the Y.Doc a revision
+        # behind. That is not hypothetical: the Help wiki's About page in this
+        # developer's install carried version 0.18.0 in its Y.Doc and 0.21.0 in
+        # its markdown. See `docs/data-safety.md` (question 1).
+        _sync_ydoc(page["id"], slug, title, markdown)
+        # The index also stays *outside* the transaction, not merely after the
+        # canonical write: chunking and embedding can be slow and can load a
+        # model, and holding the write lock across that would queue the human,
+        # the agent and the collab flusher behind an embedding run. `after_commit`
+        # runs it just past the outermost COMMIT — so it is still outside even
+        # when a caller (an import) has wrapped this whole write in a transaction
+        # of its own.
+        db.after_commit(rag.reindex_page, page["id"], markdown)
     if (b := _activity_bucket(author)):
         log_activity(b, "write")
 
@@ -405,28 +422,27 @@ def upsert_page(title: str, markdown: str, slug: Optional[str] = None,
 def soft_delete(slug: str) -> bool:
     """Move a page to the trash: hide from lists/search but keep it (restorable).
     Its search index is dropped so it stops surfacing in RAG."""
-    conn = db.get_conn()
     page = get_page(slug)
     if not page or page.get("deleted_at"):
         return False
-    conn.execute("UPDATE pages SET deleted_at=datetime('now') WHERE slug=?", (slug,))
-    conn.commit()
-    rag.remove_page(page["id"])
+    with db.transaction() as conn:
+        conn.execute("UPDATE pages SET deleted_at=datetime('now') WHERE slug=?",
+                     (slug,))
+        db.after_commit(rag.remove_page, page["id"])
     return True
 
 
 def restore(slug: str) -> bool:
     """Bring a page back from the trash and re-index it."""
-    conn = db.get_conn()
     page = get_page(slug)
     if not page or not page.get("deleted_at"):
         return False
-    conn.execute(
-        "UPDATE pages SET deleted_at=NULL, updated_at=datetime('now') WHERE slug=?",
-        (slug,),
-    )
-    conn.commit()
-    rag.reindex_page(page["id"], page["markdown"])
+    with db.transaction() as conn:
+        conn.execute(
+            "UPDATE pages SET deleted_at=NULL, updated_at=datetime('now') "
+            "WHERE slug=?", (slug,),
+        )
+        db.after_commit(rag.reindex_page, page["id"], page["markdown"])
     return True
 
 
@@ -449,15 +465,14 @@ def sweep_trash() -> int:
     days = int(db.get_setting("retention_trash_days", "30") or "0")
     if days <= 0:
         return 0
-    conn = db.get_conn()
-    rows = conn.execute(
-        "SELECT slug FROM pages WHERE deleted_at IS NOT NULL "
-        "AND deleted_at < datetime('now', ?)",
-        (f"-{days} days",),
-    ).fetchall()
-    for r in rows:
-        conn.execute("DELETE FROM pages WHERE slug=?", (r["slug"],))
-    conn.commit()
+    with db.transaction() as conn:
+        rows = conn.execute(
+            "SELECT slug FROM pages WHERE deleted_at IS NOT NULL "
+            "AND deleted_at < datetime('now', ?)",
+            (f"-{days} days",),
+        ).fetchall()
+        for r in rows:
+            conn.execute("DELETE FROM pages WHERE slug=?", (r["slug"],))
     return len(rows)
 
 
@@ -785,10 +800,11 @@ def rerender_all() -> int:
     """Re-render every page's HTML (after toggling allow_html). No new versions."""
     conn = db.get_conn()
     rows = conn.execute("SELECT slug, markdown FROM pages").fetchall()
-    for r in rows:
-        conn.execute("UPDATE pages SET html=? WHERE slug=?",
-                     (render_html(r["markdown"]), r["slug"]))
-    conn.commit()
+    # Rendering happens outside the write lock; only the writes are inside it.
+    html = [(render_html(r["markdown"]), r["slug"]) for r in rows]
+    with db.transaction() as conn:
+        for rendered, slug in html:
+            conn.execute("UPDATE pages SET html=? WHERE slug=?", (rendered, slug))
     return len(rows)
 
 
@@ -1157,8 +1173,14 @@ def import_snapshot(raw: bytes, author: str = "import") -> dict:
     # the schema defines as canonical) and lets frontmatter win only when it is
     # the sole source of tags.
     content = ydoc.reconcile_tags(imp.doc, before_root=[], before_frontmatter=[])
-    page = upsert_page(title, content, slug=imp.slug, author=author)
-    ydoc.persist(page["id"], imp.doc)   # keep the sender's lineage authoritative
+    # The projection write and the sender's canonical doc are one fact about the
+    # page, so they commit together: a crash between them would leave the page
+    # carrying a locally-derived doc instead of the peer's lineage. Nesting is
+    # safe — `upsert_page`'s own transaction becomes a savepoint inside this one,
+    # and its RAG reindex still runs after *this* commit, not inside it.
+    with db.transaction():
+        page = upsert_page(title, content, slug=imp.slug, author=author)
+        ydoc.persist(page["id"], imp.doc)   # keep the sender's lineage canonical
     return get_page(page["slug"])
 
 
@@ -1182,8 +1204,9 @@ def import_changelog(slug: str, raw: bytes, author: str = "import") -> Optional[
     # Project the MERGED doc, not the local row: the doc is the source of truth,
     # and reading the old title here dropped remote renames on the floor.
     title = ydoc.title_of(doc) or page["title"]
-    _set_body(slug, title, content, author=author)
-    ydoc.persist(page["id"], doc)           # keep the merged lineage authoritative
+    with db.transaction():                  # projection + merged lineage together
+        _set_body(slug, title, content, author=author)
+        ydoc.persist(page["id"], doc)       # keep the merged lineage authoritative
     return get_page(slug)
 
 
@@ -1260,12 +1283,11 @@ def export_wiki_bundle(dest: Optional[IO[bytes]] = None,
 def _place_page(slug: str, parent_slug: Optional[str],
                 sort_order: Optional[int], starred: bool) -> None:
     """Put an imported page where the bundle says it belongs."""
-    conn = db.get_conn()
-    conn.execute("UPDATE pages SET starred=?, sort_order=? WHERE slug=?",
-                 (1 if starred else 0,
-                  int(sort_order) if sort_order is not None else None, slug))
-    conn.commit()
-    set_parent(slug, parent_slug)      # None = top level; also re-routes vectors
+    with db.transaction() as conn:
+        conn.execute("UPDATE pages SET starred=?, sort_order=? WHERE slug=?",
+                     (1 if starred else 0,
+                      int(sort_order) if sort_order is not None else None, slug))
+        set_parent(slug, parent_slug)  # None = top level; also re-routes vectors
 
 
 def _upsert_by_slug(slug: str, title: str, markdown: str, author: str) -> dict:
@@ -1343,8 +1365,14 @@ def import_wiki_bundle(source, author: str = "import") -> dict:
             # reasoning in ``import_snapshot``).
             content = ydoc.reconcile_tags(imp.doc, before_root=[],
                                           before_frontmatter=[])
-            page = _upsert_by_slug(entry.slug, title, content, author)
-            ydoc.persist(page["id"], imp.doc)      # keep the sender's lineage
+            # Per page, not per bundle: a real bundle is 215 pages, and one
+            # transaction around all of them would hold the write lock for the
+            # whole import and defer every reindex to the end. Each page still
+            # lands whole — its projection, its version and the sender's
+            # canonical doc together — or not at all.
+            with db.transaction():
+                page = _upsert_by_slug(entry.slug, title, content, author)
+                ydoc.persist(page["id"], imp.doc)  # keep the sender's lineage
             landed[entry.slug] = page["slug"]
             placements.append((entry.slug, entry.parent_slug,
                                entry.sort_order, entry.starred))

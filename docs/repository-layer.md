@@ -33,7 +33,12 @@ SQLite file per wiki             data/wikis/<slug>.db
   own concerns (custom elements, the wiki registry, hybrid retrieval).
 - **`db.py` is the infrastructure chokepoint** — the one module that knows about
   SQLite: the per-`(thread, wiki)` connection cache, the schema, FTS5, the
-  `sqlite-vec` load, and the `apsw`/stdlib backend shim. It also holds the
+  `sqlite-vec` load, and the `apsw`/stdlib backend shim. **Transaction control
+  lives here too and nowhere else** (`transaction()` / `after_commit()`, issue
+  #72): the repository declares *what* belongs in one atomic write, the shim owns
+  `BEGIN IMMEDIATE`/`COMMIT`/`ROLLBACK` and the savepoints that make it
+  re-entrant, so neither backend's transaction quirks reach `store.py`. It also
+  holds the
   low-level `get_setting`/`set_setting`/`all_settings` accessors that the settings
   table needs; the repository's settings functions are thin seams over these, and
   infrastructure-internal callers (embeddings, imagegen, ai, the MCP server) call

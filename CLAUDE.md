@@ -15,7 +15,8 @@ two in parity (same substance, different voice) whenever you change either.
 - `waikiki/elements.py`, `wikis.py`, `rag.py` — sibling repositories (custom
   elements, the wiki registry, hybrid retrieval).
 - `waikiki/db.py` — infrastructure chokepoint: SQLite connection cache, schema,
-  FTS5, sqlite-vec load, apsw/stdlib backend shim, low-level settings SQL, and
+  FTS5, sqlite-vec load, apsw/stdlib backend shim, low-level settings SQL, the
+  **transaction seam** (`transaction()` / `after_commit()`, rule 6), and
   the **damaged-file judgement** (`unreadable_reason` / `WikiUnreadable`) that
   keeps one bad wiki from taking the app down (rule 4).
 - `waikiki/mcp_server.py` — FastMCP tool surface; shares `store`/`rag` with the API.
@@ -125,9 +126,17 @@ two in parity (same substance, different voice) whenever you change either.
    the RAG index is a cache rebuildable from the markdown. With the old order,
    anything raising in reindex committed the projection and skipped the canonical
    write, silently leaving the doc a revision behind — which is how the Help
-   wiki's About page ended up carrying two different versions at once. A page
-   save is still *not* one transaction (issue #72); `docs/data-safety.md`
-   question 1 has the measurements.
+   wiki's About page ended up carrying two different versions at once.
+   **One page save is also one transaction (issue #72).** The projection, the
+   version snapshot, the tag index and the canonical Y.Doc go through
+   `db.transaction()` — an explicit `BEGIN IMMEDIATE`, re-entrant via savepoints,
+   working the same on apsw and the stdlib (which is opened `isolation_level=None`
+   so transaction control lives in one place). What must stay *outside* it is
+   `rag.reindex_page`: it embeds, and holding the write lock across that would
+   queue every other writer, so it is deferred to `db.after_commit` — still
+   outside even when a caller has nested the save in a bigger transaction. The
+   index is a cache; truth is not. `docs/data-safety.md` question 1 has the
+   measurements, and `tests/test_data_safety.py` breaks each seam in turn.
 7. **The Kahala ⟷ Waikiki round-trip is content-only and version-gated.** Export
    (`store.export_snapshot` / `export_changelog` / `export_wiki_bundle`) and
    import (`store.import_snapshot` / `import_changelog` / `import_wiki_bundle`)

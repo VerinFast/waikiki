@@ -12,10 +12,11 @@ the rest of the app uses (dict rows, `.fetchone/.fetchall`, `.lastrowid`,
 """
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import sys
 import threading
-from typing import Optional
+from typing import Callable, Optional
 
 from . import config
 
@@ -196,8 +197,13 @@ class _ApswConn:
             raise _as_unreadable(exc, self.wiki) from exc
         return self
 
-    def commit(self):  # apsw autocommits outside explicit transactions
-        pass
+    def commit(self):
+        """A no-op: transaction control belongs to `transaction()` (see below).
+
+        apsw autocommits every statement outside an explicit transaction, and
+        inside one this must *not* end it early — the whole point of the seam is
+        that only the outermost `transaction()` commits.
+        """
 
     # sqlite3-style extension API, so sqlite_vec.load() works unchanged.
     def enable_load_extension(self, flag: bool):
@@ -234,6 +240,19 @@ class _Sqlite3Conn(sqlite3.Connection):
             return super().executescript(script)
         except Exception as exc:
             raise _as_unreadable(exc, self.wiki) from exc
+
+    def commit(self):
+        """Match apsw: a no-op inside a managed transaction, harmless outside.
+
+        The connection is opened with ``isolation_level=None``, so the stdlib
+        starts no implicit transaction of its own and every statement autocommits
+        — exactly what apsw does. That leaves `transaction()` as the *only* thing
+        that opens or closes a transaction on either backend, so a stray
+        `conn.commit()` deep inside a save cannot commit half of it.
+        """
+        if _tx(self).depth:
+            return
+        super().commit()
 
 
 def _load_sqlite_vec(conn) -> bool:
@@ -272,8 +291,17 @@ def get_conn():
             if _HAS_APSW:
                 conn = _ApswConn(path, wiki)
             else:
+                # isolation_level=None: no implicit transaction, so every
+                # statement autocommits and an explicit BEGIN is ours to issue —
+                # the same contract apsw has. Without it the stdlib opens a
+                # transaction of its own before the first DML and `BEGIN
+                # IMMEDIATE` fails with "cannot start a transaction within a
+                # transaction", so the two backends could not share one seam.
+                # `sqlite3.connect`'s default timeout=5.0 already sets a 5s busy
+                # timeout before any pragma runs, which is the same ordering the
+                # apsw shim spells out above.
                 conn = sqlite3.connect(path, check_same_thread=False,
-                                       factory=_Sqlite3Conn)
+                                       factory=_Sqlite3Conn, isolation_level=None)
                 conn.wiki = wiki
                 conn.row_factory = sqlite3.Row
                 conn.execute("PRAGMA journal_mode=WAL")
@@ -294,6 +322,136 @@ def get_conn():
             raise
         _schema_ready.add(wiki)
     return conn
+
+
+# --- Transactions -------------------------------------------------------------
+#
+# One page save writes several rows — the `pages` projection, a `page_versions`
+# snapshot, the page's tags, and the canonical Y.Doc in `page_ydoc`. Rule 6 says
+# the Y.Doc is the source of truth and the markdown is a projection of it, which
+# only holds if the two land together. They did not: apsw (the shipped backend)
+# autocommits every statement and its `commit()` is a documented no-op, so a
+# crash between statements left the projection durable and the canonical doc a
+# revision behind — with the projection winning every read (issue #72,
+# `docs/data-safety.md` question 1).
+#
+# `transaction()` is the seam that makes one save one transaction. Four things
+# are load-bearing:
+#
+# * **One code path, both backends.** apsw autocommits unless a `BEGIN` is
+#   issued; the stdlib connection is opened `isolation_level=None` so it behaves
+#   the same way. Transaction control then lives here and nowhere else, on either
+#   backend, and `conn.commit()` is a no-op inside a managed transaction so a
+#   stray call deep in a save cannot commit half of it.
+# * **`BEGIN IMMEDIATE`, never deferred.** A deferred transaction takes a read
+#   lock first and asks for the write lock only at the first write, and that
+#   upgrade can fail outright with SQLITE_BUSY — a busy *timeout* does not help,
+#   because the reader cannot be made to wait without risking deadlock. This app
+#   has a human, an MCP agent and the collab flusher writing the same file at
+#   once, so a save that begins by reading (`get_page`, the slug uniqueness loop)
+#   and then writes is exactly that case. IMMEDIATE takes the write lock up
+#   front, where the 5s busy timeout applies and writers simply queue.
+# * **Re-entrant, through savepoints.** Store functions call each other
+#   (`update_page` → `_set_body` → `_sync_ydoc`; the import paths wrap a whole
+#   page write), so a nested `transaction()` must not commit the outer one. The
+#   outermost owns BEGIN/COMMIT/ROLLBACK; a nested one is a SAVEPOINT, which
+#   rolls back its own work and leaves the enclosing transaction intact.
+# * **Derived work runs after the commit, never inside it.** `rag.reindex_page`
+#   chunks, embeds (possibly loading a model) and writes vectors; holding the
+#   write lock across that would queue every other writer behind an embedding
+#   run. The RAG index is a cache rebuildable from the markdown, so it does not
+#   belong in the atomic unit — `after_commit()` defers it to just past the
+#   outermost COMMIT, whatever depth the caller happens to be at.
+
+
+class _Tx:
+    """Transaction state for one connection (connections are per thread+wiki)."""
+
+    __slots__ = ("depth", "pending")
+
+    def __init__(self) -> None:
+        self.depth = 0
+        self.pending: list = []
+
+
+def _tx(conn) -> _Tx:
+    state = getattr(conn, "_wk_tx", None)
+    if state is None:
+        state = _Tx()
+        conn._wk_tx = state
+    return state
+
+
+def in_transaction() -> bool:
+    """Whether the active wiki's connection is inside a managed transaction."""
+    return _tx(get_conn()).depth > 0
+
+
+def after_commit(fn: Callable, *args, **kwargs) -> None:
+    """Run `fn` once the outermost transaction commits — immediately if there is
+    none, and not at all if the transaction rolls back.
+
+    This is where *derived* state goes: a search index that can be rebuilt from
+    the content is not part of the write's atomic unit, and must not hold the
+    write lock while it embeds. Deferring it here rather than calling it after
+    the `with` block keeps that true even when the caller is nested inside a
+    larger transaction.
+    """
+    conn = get_conn()
+    state = _tx(conn)
+    if state.depth == 0:
+        fn(*args, **kwargs)
+        return
+    state.pending.append((fn, args, kwargs))
+
+
+@contextlib.contextmanager
+def transaction():
+    """All-or-nothing write scope for the active wiki. Re-entrant.
+
+    Yields the connection, so `with db.transaction() as conn:` replaces a
+    `conn = db.get_conn()` line rather than adding one.
+    """
+    conn = get_conn()
+    state = _tx(conn)
+    outer = state.depth == 0
+    name = "" if outer else f"wk_sp_{state.depth}"
+    mark = len(state.pending)
+    conn.execute("BEGIN IMMEDIATE" if outer else f"SAVEPOINT {name}")
+    state.depth += 1
+    try:
+        yield conn
+    except BaseException:
+        state.depth -= 1
+        del state.pending[mark:]        # dropped with the work they belonged to
+        try:
+            if outer:
+                conn.execute("ROLLBACK")
+            else:
+                conn.execute(f"ROLLBACK TO {name}")
+                conn.execute(f"RELEASE {name}")
+        except Exception:
+            pass   # a failing rollback must not mask what actually went wrong
+        raise
+    state.depth -= 1
+    if not outer:
+        conn.execute(f"RELEASE {name}")
+        return
+    try:
+        conn.execute("COMMIT")
+    except BaseException:
+        # A commit that fails (a full disk, a lock lost) has landed nothing, so
+        # the deferred work has nothing to be derived from: drop it rather than
+        # let it fire on somebody else's commit.
+        state.pending.clear()
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    pending, state.pending = state.pending, []
+    for fn, args, kwargs in pending:
+        fn(*args, **kwargs)
 
 
 # --- Schema -------------------------------------------------------------------

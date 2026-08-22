@@ -174,6 +174,14 @@ advances the canonical Y.Doc, so the CRDT accumulates real history across saves
 and restarts (the live co-editing room in `collab.py` is just an editing buffer
 whose flush lands through the same seam). See [`waikiki/ydoc.py`](waikiki/ydoc.py).
 
+One save is **one transaction**: the page row, its version snapshot, its tags and
+the canonical Y.Doc all land together or not at all, so a crash or a power cut
+cannot leave the truth a revision behind the text you can see. The search index is
+the one thing deliberately left outside — it embeds, which can be slow, and it is
+a cache that can be rebuilt from the markdown at any time, so it is refreshed just
+after the save commits rather than while it holds the write lock. The reasoning
+and the measurements are in [docs/data-safety.md](docs/data-safety.md).
+
 Because the persisted state is a genuine CRDT, Waikiki can **export** a page as a
 snapshot (full Y.Doc + a content-addressed image sidecar) or a changelog (updates
 since a peer's state vector), and **import** the same from a peer — the local half

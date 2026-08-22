@@ -64,7 +64,10 @@ def test_article_controls_take_their_colour_from_a_variable():
     This is the exact "black on black" the speaker button shipped with.
     """
     css = (THEMES / "default.css").read_text()
-    for control in (".tts-btn", ".section-edit", ".header-anchor"):
+    for control in (".tts-btn", ".section-edit", ".header-anchor",
+                    # The article's link to its own history (issue #73): the
+                    # app's undo, so invisible-on-dark is not a cosmetic bug.
+                    ".lastedit", ".lastedit-note", ".lastedit-none"):
         colours = _declared_at_rest(css, control, "color")
         assert colours, (
             f"{control} sets no colour at rest, so it inherits UA black — "

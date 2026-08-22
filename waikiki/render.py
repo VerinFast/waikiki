@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from html import escape as _esc
 
 from markdown_it import MarkdownIt
@@ -343,3 +344,48 @@ def pygments_css() -> str:
 
 
 slugify = _slugify
+
+
+# --- timestamps, for the templates -------------------------------------------
+#
+# SQLite writes `datetime('now')`, which is UTC and naive. Templates showed the
+# raw string, which is precise and useless: "2026-08-21 09:14:02" does not tell
+# a person that the page changed while they were looking away. Rounded, relative
+# wording does, and it is the whole point of the history affordance on an
+# article (issue #73) — the sentence has to make you notice.
+
+_AGO_STEPS = (
+    (60, "just now", 0),
+    (3600, "minute", 60),
+    (86400, "hour", 3600),
+    (2592000, "day", 86400),
+)
+
+
+def time_ago(ts, now: datetime | None = None) -> str:
+    """A UTC SQLite timestamp as "3 minutes ago"; the raw value if unparseable.
+
+    Falls back to a plain date past a month, because "47 days ago" is arithmetic
+    the reader has to undo. A timestamp in the future (a clock that moved) reads
+    as "just now" rather than a negative.
+    """
+    if not ts:
+        return ""
+    text = str(ts).strip()
+    try:
+        when = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    if when.tzinfo is not None:
+        when = when.astimezone(timezone.utc).replace(tzinfo=None)
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+    seconds = (now - when).total_seconds()
+    if seconds < 0:
+        seconds = 0
+    for limit, unit, size in _AGO_STEPS:
+        if seconds < limit:
+            if not size:
+                return unit
+            n = max(1, int(seconds // size))
+            return f"{n} {unit}{'s' if n != 1 else ''} ago"
+    return f"on {when:%d %b %Y}".replace(" 0", " ")

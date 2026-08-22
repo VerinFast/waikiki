@@ -25,7 +25,7 @@ directory.
 | 2 | A corrupted wiki file | **Fixed since this audit ([#71](https://github.com/VerinFast/waikiki/issues/71)).** The app now starts whichever wiki is damaged, including the default; the neighbours are unaffected; *Manage wikis* lists what it can and marks what it can't read; and the damaged file is named, explained and left byte-for-byte alone. |
 | 3 | Restore | Works, proven on a real 55MB backup: 215 pages, 75 images, 711 versions. Backups are on by default. Documented only inside the app, and they live on the same disk as the wikis. |
 | 4 | Import paths | A part-written import is incomplete but never destructive, and re-running the same bundle finishes it exactly. **1.0 does not need staging-and-swap.** |
-| 5 | Version history | Reachable and it works — 4 interactions. But nothing on an article says it has a history ([#73](https://github.com/VerinFast/waikiki/issues/73)). |
+| 5 | Version history | Works, and now **findable** ([#73](https://github.com/VerinFast/waikiki/issues/73), fixed since this audit). Every article carries a line saying when it last changed and how many earlier versions are kept; it opens the history with the list showing. Two interactions, from a sentence that names the thing in plain words. |
 
 ---
 
@@ -449,6 +449,46 @@ labelling, but it is the app's undo, and undo you cannot find is not undo.
 `test_yesterdays_text_is_reachable_from_the_article_page` pins the chain of
 links as it stands, so it can be improved without silently breaking.
 
+### What #73 changed
+
+The article now says it has a past, in one quiet line under the tabs:
+
+```
+--- a page that has been edited ---
+Edited 3 minutes ago — 4 earlier versions you can go back to
+  -> /wiki/<slug>/details?show=history#history   (the History block, open)
+
+--- a page nobody has edited yet ---
+Written 2 days ago — no earlier versions yet      (plain text, no link)
+```
+
+Three things carry it, and each is deliberately small:
+
+1. **It says something, not just *something exists*.** A generic "History" link
+   is a filing cabinet; "Edited 3 minutes ago" is news, and news about a page you
+   just pasted over is what makes you look. The count that follows is of texts
+   you can go *back* to — one fewer than the rows in the block, because the
+   newest snapshot is the page as it stands.
+2. **It only appears when it is true.** A page with a single revision has nothing
+   earlier, so it gets a sentence saying exactly that and no link — the same
+   convention the MCP `hint` follows, for the same reason: an affordance that
+   fires unconditionally is one people learn to skip.
+3. **The link opens the block.** A fragment never reaches the server, so the
+   article's link carries `?show=history` and `details_view` renders the
+   `<details>` already open. Landing on a collapsed block after clicking
+   something that promised earlier versions is a dead end for exactly the person
+   who needs it.
+
+Getting yesterday's text back is now **two interactions** from the article —
+the line, then *Restore* (plus the confirm) — or three if you take the better
+route and click the timestamp to read the diff first. The word "history" is on
+the article page, in the summary of the block it opens, and in the Help wiki's
+*Editing & Formatting* page, which previously never mentioned versions at all.
+The affordance's colours come from theme variables, so it is legible on dark
+(6.1:1) as well as light; `test_article_controls_take_their_colour_from_a_variable`
+covers it alongside the other article controls, and the rest is pinned by
+`tests/test_page_history_affordance.py`.
+
 ---
 
 ## Accepted risks, in one place
@@ -472,5 +512,7 @@ Everything below is a deliberate 1.0 position, not an oversight:
    corruption and mistakes, not against losing the machine.
 5. **A failed import leaves a partial wiki.** Nothing is destroyed and a retry
    completes it; there is no staging-and-swap and 1.0 does not add one.
-6. **Version history is findable only via the Details tab.** Tracked as
-   [#73](https://github.com/VerinFast/waikiki/issues/73).
+6. ~~**Version history is findable only via the Details tab.**~~ Fixed in
+   [#73](https://github.com/VerinFast/waikiki/issues/73): every article carries a
+   line naming when it last changed and how many earlier versions are kept, and
+   that line opens the history. Nothing is accepted here any more.

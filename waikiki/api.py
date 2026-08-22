@@ -375,6 +375,9 @@ app.add_middleware(AccessLogMiddleware)  # added last → outermost
 _STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=_STATIC), name="static")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+# Timestamps are rendered relative ("3 minutes ago"), because that is what makes
+# the history affordance on an article read as news rather than as a field.
+templates.env.filters["ago"] = render.time_ago
 
 
 @app.exception_handler(db.WikiUnreadable)
@@ -956,6 +959,15 @@ def view_page(request: Request, slug: str):
     parent = store.parent_of(page)
     # The article view is intentionally bare — just the content. Page settings,
     # backlinks, history, suggestions, comments, and chat live on the Talk page.
+    #
+    # The one exception is *when this page last changed*, and how many earlier
+    # versions are still on disk. Version history is the app's undo, and until
+    # issue #73 nothing on an article said it existed: you had to open a tab
+    # called "Details" on a hunch. The count comes from the repository like any
+    # other read (rule 2), capped at `retention_versions` per page, and the
+    # newest row is the page as it stands now — so the number of texts you can
+    # go *back* to is one fewer.
+    versions = store.page_versions(slug)
     return templates.TemplateResponse(request,
         "page.html", _ctx(request, page=page,
                           trashed=bool(page.get("deleted_at")),
@@ -963,6 +975,9 @@ def view_page(request: Request, slug: str):
                           children=store.children(slug), parent=parent,
                           crumbs=store.ancestors(page),
                           tags=store.tags_of(slug),
+                          version_count=len(versions),
+                          last_changed=(versions[0]["created_at"] if versions
+                                        else page.get("updated_at")),
                           comment_count=len(store.comments_list(slug)))
     )
 
@@ -1039,9 +1054,15 @@ async def tags_save(request: Request, slug: str):
 
 
 @app.get("/wiki/{slug}/details", response_class=HTMLResponse)
-def details_view(request: Request, slug: str):
+def details_view(request: Request, slug: str, show: str = ""):
     """The article's discussion/metadata page — settings, links, history,
-    proposed edits, comments, and chat. Kept out of the article view."""
+    proposed edits, comments, and chat. Kept out of the article view.
+
+    `show=history` opens the History block, which is otherwise collapsed. The
+    article's "Edited …" link carries it, because a fragment never reaches the
+    server: landing on a closed `<details>` after clicking something that
+    promised earlier versions is a dead end for exactly the person who needs it.
+    """
     page = store.get_page(slug)
     if not page:
         raise HTTPException(404, "Page not found")
@@ -1060,6 +1081,7 @@ def details_view(request: Request, slug: str):
                           crumbs=store.ancestors(page),
                           tags=store.tags_of(slug),
                           comments=store.comments_list(slug),
+                          open_history=(show == "history"),
                           suggestions=suggestions)
     )
 

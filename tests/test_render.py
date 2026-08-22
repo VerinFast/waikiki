@@ -136,3 +136,45 @@ def test_render_value_escapes_then_links():
     out = render.render_value("<b>x</b> [[Page]]")
     assert "&lt;b&gt;" in out                       # escaped, not injected
     assert '<a href="/wiki/page">Page</a>' in out
+
+
+# --- relative timestamps (issue #73) ------------------------------------------
+#
+# "2026-08-21 09:14:02" is precise and useless: it does not tell a person that
+# the page changed while they were looking away. The history affordance on an
+# article depends on the wording being noticeable, so the rounding is pinned.
+
+from datetime import datetime  # noqa: E402
+
+_NOW = datetime(2026, 8, 21, 12, 0, 0)
+
+
+def test_time_ago_rounds_the_way_a_person_would_say_it():
+    say = lambda ts: render.time_ago(ts, _NOW)          # noqa: E731
+    assert say("2026-08-21 11:59:30") == "just now"
+    assert say("2026-08-21 11:59:00") == "1 minute ago"
+    assert say("2026-08-21 11:57:00") == "3 minutes ago"
+    assert say("2026-08-21 11:00:00") == "1 hour ago"
+    assert say("2026-08-21 09:00:00") == "3 hours ago"
+    assert say("2026-08-20 11:00:00") == "1 day ago"
+    assert say("2026-08-19 12:00:00") == "2 days ago"
+
+
+def test_time_ago_gives_up_on_relative_wording_past_a_month():
+    """"47 days ago" is arithmetic the reader has to undo."""
+    assert render.time_ago("2026-03-02 12:00:00", _NOW) == "on 2 Mar 2026"
+
+
+def test_time_ago_never_reads_as_negative_or_blows_up():
+    """A clock that moved, and a value that isn't a timestamp at all.
+
+    This formats whatever the database holds, including rows written by an
+    import or by an older version of the app, so it has to degrade to showing
+    the raw value rather than raising inside a page render.
+    """
+    assert render.time_ago("2026-08-21 12:05:00", _NOW) == "just now"
+    assert render.time_ago("not a timestamp", _NOW) == "not a timestamp"
+    assert render.time_ago(None, _NOW) == ""
+    assert render.time_ago("", _NOW) == ""
+    # tz-aware input is normalised to UTC rather than compared naively
+    assert render.time_ago("2026-08-21T11:57:00+00:00", _NOW) == "3 minutes ago"

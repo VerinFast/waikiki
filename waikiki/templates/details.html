@@ -44,8 +44,8 @@
     </details>
 
     {% if versions %}
-      <details class="history" id="history">
-        <summary>History ({{ versions | length }})</summary>
+      <details class="history" id="history" {{ 'open' if open_history }}>
+        <summary>History ({{ versions | length }}) — every saved version of this page</summary>
         <ul class="versionlist">
           {% for v in versions %}
             <li>

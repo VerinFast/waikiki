@@ -88,7 +88,12 @@
         {% endfor %}
       </select>
     </form>
-    <div class="histnav" role="group" aria-label="History">
+    {# "History" here means the *browser's* back/forward, and it used to be the
+       only occurrence of the word on a rendered article — so the one string a
+       person hunting for undo could find sent them to the wrong control
+       (issue #73). Page history now has its own affordance on the article;
+       this label says which history it is. #}
+    <div class="histnav" role="group" aria-label="Browser history">
       <button type="button" class="histbtn" onclick="history.back()"
               title="Back" aria-label="Back">‹</button>
       <button type="button" class="histbtn" onclick="history.forward()"

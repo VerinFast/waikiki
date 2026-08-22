@@ -277,6 +277,17 @@ pre.diff .hunk{color:var(--muted);display:block}
   font-weight:600;margin-bottom:-1px}
 .pagetabs .tabcount{font-size:.8em;color:var(--muted);font-weight:400}
 
+/* The article's line about its own past (issue #73). Deliberately quiet — this
+   is a wiki you read all day and history is not the main action — but always
+   present, and coloured from variables so it follows every theme. A control
+   with no `color` of its own inherits UA black and vanishes on dark; see
+   tests/test_theme_contrast.py. */
+.pagehist{margin:-.9rem 0 1.2rem;font-size:.88rem}
+.lastedit{color:var(--accent);text-decoration:none}
+.lastedit:hover{text-decoration:underline}
+.lastedit .lastedit-note{color:var(--muted)}
+.lastedit-none{color:var(--muted)}
+
 /* Custom right-click context menu (Copy/Paste/Select All) */
 .ctxmenu{position:fixed;z-index:1000;background:var(--surface);border:1px solid var(--border);
   border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.22);padding:.25rem;min-width:150px;

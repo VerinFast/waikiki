@@ -52,7 +52,17 @@ def _editing() -> str:
         "(another page in the same wiki).\n\n"
         "## Media & transclusion\n"
         "Drag or attach images, video, and audio in the editor. Embed another "
-        "page with `![[Page Title]]`.\n"
+        "page with `![[Page Title]]`.\n\n"
+        "## Getting an earlier version back\n"
+        "Every save keeps a copy of what the page said before, so a bad edit is "
+        "never final.\n\n"
+        "Under the tabs at the top of a page you will see a line like **Edited 3 "
+        "minutes ago — 4 earlier versions you can go back to**. Click it. You get "
+        "a list of every saved version, newest first; click a date to see what "
+        "changed, or **Restore** to put that text back.\n\n"
+        "Restoring is itself a save, so the text you just undid is still in the "
+        "list — you can change your mind again. A page nobody has edited yet says "
+        "so, because there is nothing earlier to go back to.\n"
     )
 
 

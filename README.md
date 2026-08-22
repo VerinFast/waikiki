@@ -59,11 +59,15 @@ or share.
 
 ### History, trash & retention
 
-- **Version history:** every save snapshots the page. Open a page → **Details** →
-  **History** to view any version (with a diff vs current) and **Restore** it.
-  Restoring is itself a save, so the text you just undid is still there. Retention
-  keeps the last *N* versions per page (default 50; set per wiki in Settings,
-  0 = all).
+- **Version history:** every save snapshots the page. Each article says when it
+  last changed — *Edited 3 minutes ago — 4 earlier versions you can go back to*,
+  under the tabs — and that line opens the page's **History** with the versions
+  listed. (A page nobody has edited yet says so instead of pointing at an empty
+  list.) The same place is reachable the long way round: **Details** →
+  **History**. From there, view any version (with a diff vs current) and
+  **Restore** it. Restoring is itself a save, so the text you just undid is still
+  there. Retention keeps the last *N* versions per page (default 50; set per wiki
+  in Settings, 0 = all).
 - **Trash (soft delete):** deleting a page moves it to the **Trash** (header link),
   hidden from lists and search but restorable. **Restore** brings it back;
   **Delete forever** removes it permanently. Trashed pages are auto-purged after

@@ -37,6 +37,23 @@
         <a class="tab" href="/wiki/{{ page.slug }}/metadata">Metadata</a>
         <a class="tab" href="/wiki/{{ page.slug }}/details">Details{% if comment_count %} <span class="tabcount">{{ comment_count }}</span>{% endif %}</a>
       </nav>
+
+      {# The article's one link to its own past (issue #73). Version history is
+         this app's undo, and nothing here used to name it — the safety net was
+         real and unreachable, which for the person who needs it is the same as
+         not having one. Same convention as the MCP `hint`: say what is not in
+         front of you, then the single move that fetches it, and only when it is
+         true. So a page that has been edited says when and opens the history
+         itself; a page that never has says so plainly rather than offering a
+         door to an empty room. #}
+      <p class="pagehist">
+        {% if version_count and version_count > 1 %}{% set earlier = version_count - 1 %}
+          <a class="lastedit" href="/wiki/{{ page.slug }}/details?show=history#history"
+             title="Page history — see what changed and put an earlier version back">Edited {{ last_changed | ago }}<span class="lastedit-note"> — {{ earlier }} earlier version{{ 's' if earlier != 1 }} you can go back to</span></a>
+        {% else %}
+          <span class="lastedit-none">Written {{ last_changed | ago }} — no earlier versions yet</span>
+        {% endif %}
+      </p>
     {% endif %}
 
     {% if parent %}

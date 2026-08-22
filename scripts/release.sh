@@ -140,4 +140,34 @@ say "uploading to release $TAG"
 gh release view "$TAG" >/dev/null 2>&1 || die "release $TAG does not exist — create it first"
 gh release upload "$TAG" "$ZIP" "$SIG" --clobber
 
+# Bump the Homebrew cask. A tap that still points at the previous release is
+# worse than no tap: `brew install` succeeds and silently hands over an old
+# build. Best-effort — a missing tap checkout must not fail a release that has
+# already been uploaded.
+CASK_TAP="${WAIKIKI_TAP:-$HOME/localdev/homebrew-waikiki}"
+CASK="$CASK_TAP/Casks/waikiki.rb"
+if [ -f "$CASK" ]; then
+    say "bumping the Homebrew cask to $VERSION"
+    SHA="$("$PY" -c "import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$ZIP")"
+    "$PY" - "$CASK" "$VERSION" "$SHA" <<'PYCODE'
+import pathlib, re, sys
+cask, version, sha = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+text = cask.read_text()
+text = re.sub(r'version "[^"]+"', f'version "{version}"', text, count=1)
+text = re.sub(r'sha256 "[^"]+"', f'sha256 "{sha}"', text, count=1)
+cask.write_text(text)
+print(f"    {cask.name}: version {version}, sha256 {sha[:16]}…")
+PYCODE
+    if git -C "$CASK_TAP" diff --quiet -- Casks/waikiki.rb; then
+        say "cask already current"
+    else
+        git -C "$CASK_TAP" commit -q -am "Waikiki $VERSION" && \
+        git -C "$CASK_TAP" push -q origin HEAD && \
+        say "cask pushed"
+    fi
+else
+    say "no cask checkout at $CASK_TAP — skipping the tap bump"
+    echo "    (clone VerinFast/homebrew-waikiki there, or set WAIKIKI_TAP)" >&2
+fi
+
 say "done — $TAG now has a signed, installable asset"

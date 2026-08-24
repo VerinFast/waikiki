@@ -968,8 +968,13 @@ def view_page(request: Request, slug: str):
     # newest row is the page as it stands now — so the number of texts you can
     # go *back* to is one fewer.
     versions = store.page_versions(slug)
+    # A proposal that nobody can see may as well not exist. Chat can now offer an
+    # edit (it may not make one), and the offer used to land only on the Details
+    # tab — so asking chat to change the page looked like it did nothing at all.
+    # The article says a change is waiting; Details is still where it is reviewed.
+    pending = store.suggestions_list(slug, status="pending")
     return templates.TemplateResponse(request,
-        "page.html", _ctx(request, page=page,
+        "page.html", _ctx(request, page=page, pending_count=len(pending),
                           trashed=bool(page.get("deleted_at")),
                           toc=render.extract_toc(page["markdown"]),
                           children=store.children(slug), parent=parent,
@@ -1216,6 +1221,12 @@ async def edit_page(request: Request, slug: str):
     await collab.ensure_room(db.active_wiki(), slug)
     return templates.TemplateResponse(request,
         "edit.html", _ctx(request, page=page, is_new=False, collab=True,
+                          # The parent selector lives on this page now, and it
+                          # must show where the page ACTUALLY sits: without this
+                          # it always reads "none", so pressing Move without
+                          # touching it would quietly promote the page to
+                          # top-level and orphan it from its parent.
+                          parent=store.parent_of(page),
                           # Shown in the image panel: it silently shapes every
                           # generated image and is otherwise invisible here.
                           image_style_prompt=store.get_setting("image_style_prompt", ""))

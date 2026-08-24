@@ -233,3 +233,41 @@ def test_the_nav_has_reload_between_back_and_forward(wiki):
     bar = bar[:bar.index("</div>")]
     labels = re.findall(r'aria-label="(Back|Reload|Forward)"', bar)
     assert labels == ["Back", "Reload", "Forward"], labels
+
+
+def test_a_waiting_proposal_announces_itself_on_the_article(wiki):
+    """Chat can propose but never apply, and the queue lives on Details.
+
+    Without a word on the article, asking chat to change the page looks like it
+    did nothing — which is exactly how this was reported.
+    """
+    store.create_page("Ledger", "the original")
+    store.suggestion_add("ledger", "revised", author="ai", note="Proposed rewrite")
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        art = client.get("/wiki/ledger").text
+        assert 'class="proposal-note"' in art
+        assert "/wiki/ledger/details#suggestions" in art
+        # and the anchor it promises actually exists
+        assert 'id="suggestions"' in client.get("/wiki/ledger/details").text
+
+
+def test_no_proposal_no_notice(wiki):
+    store.create_page("Quiet", "nothing pending here")
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        assert 'class="proposal-note"' not in client.get("/wiki/quiet").text
+
+
+def test_the_parent_selector_is_on_edit_and_knows_the_current_parent(wiki):
+    """It moved off Page options — and it must not default to 'none'.
+
+    A selector that always reads 'none' turns Move into a button that quietly
+    promotes the page to top-level.
+    """
+    store.create_page("Parent Page", "p")
+    store.create_page("Child", "c")
+    store.set_parent("child", "parent-page")
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        edit = client.get("/wiki/child/edit").text
+    assert 'class="editparent"' in edit
+    assert 'value="parent-page" selected' in edit.replace('"selected"', "selected")
+    assert 'class="menu-parent"' not in edit

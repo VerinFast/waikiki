@@ -2,6 +2,18 @@
 {% block title %}{{ page.title }} — Waikiki{% endblock %}
 {% block topbar_actions %}{% if not trashed %}{% include "_page_options.html" %}{% endif %}{% endblock %}
 {% block content %}
+  {# Chat can propose an edit but never apply one. The offer lands in the
+     suggestion queue, which lives on Details — so without this the page you
+     asked to change looks untouched and the proposal is invisible. Say it here,
+     where you are; review still happens where the diff and the buttons are. #}
+  {% if pending_count and not trashed %}
+    <p class="proposal-note">
+      <a href="/wiki/{{ page.slug }}/details#suggestions">
+        {{ pending_count }} proposed change{{ '' if pending_count == 1 else 's' }}
+        waiting for your review</a> — nothing changes until you apply it.
+    </p>
+  {% endif %}
+
   <script>window.WAIKIKI_PAGE = {slug: {{ page.slug | tojson }}, wiki: {{ current_wiki | tojson }}};</script>
   <article class="article">
     {% if trashed %}

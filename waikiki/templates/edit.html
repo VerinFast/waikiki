@@ -68,6 +68,25 @@
       <span id="save-status" class="savestatus" aria-live="polite"></span>
     </div>
   </form>
+
+  {# Where a page sits in the tree is part of writing it, so it lives here rather
+     than in Page options. Its own form on purpose: nested forms are invalid
+     HTML, and moving a page is a separate action from saving its text. #}
+  {% if not is_new %}
+    <form method="post" action="/wiki/{{ page.slug }}/parent" class="editparent">
+      <label>Parent page
+        <select name="parent">
+          <option value="">— none (top-level) —</option>
+          {% for p in parent_options %}
+            <option value="{{ p.slug }}" {{ 'selected' if parent and parent.slug == p.slug }}>{{ p.title }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button class="btn" type="submit">Move</button>
+      <span class="muted note">Children are hidden from the sidebar and the main
+        search.</span>
+    </form>
+  {% endif %}
 {% endblock %}
 
 {% block scripts %}

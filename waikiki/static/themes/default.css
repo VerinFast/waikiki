@@ -671,3 +671,16 @@ mark.wk-hit.on{background:var(--accent);color:var(--accent-contrast)}
   border-color:var(--border)}
 .chat-launch.cap-off{display:flex;align-items:center;justify-content:center}
 .editor-toolbar .cap-off{opacity:.4;cursor:not-allowed;color:var(--muted)}
+
+/* A proposed edit waiting on the article. Deliberately quiet — it is a notice,
+   not an alarm — but it must be legible on every theme, so the colour comes
+   from a variable like every other control here. */
+.proposal-note{margin:0 0 1rem;padding:.5rem .75rem;border-left:3px solid var(--accent);
+  background:var(--surface);color:var(--muted);font-size:.9rem;border-radius:0 6px 6px 0}
+.proposal-note a{color:var(--accent);font-weight:600}
+
+/* Parent selector on the edit page (moved out of Page options). Sits under the
+   editor as its own form, so it needs a little air without competing with Save. */
+.editparent{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.9rem 0 0;
+  padding-top:.9rem;border-top:1px solid var(--border);color:var(--muted);font-size:.9rem}
+.editparent label{display:flex;align-items:center;gap:.4rem}

@@ -33,6 +33,7 @@ from mcp.types import Icon
 
 from . import (accesslog, config, db, deeplink, edits, elements, imagegen, rag,
                render, store, structure, wikis)
+from . import __version__ as _pkg_version
 
 WEB = config.WEB_URL
 # NOTE: there is deliberately no on-disk active-wiki file. One existed here and
@@ -56,6 +57,13 @@ _ICON = Icon(
 
 mcp = FastMCP(
     "🌺 Waikiki",
+    # Report OUR version at the handshake, not just FastMCP's. This server is a
+    # long-lived process running the source tree as it stood when the client
+    # started it, while the desktop app is a frozen bundle — the two can be on
+    # different code against the same database, and until this was here the only
+    # version in `serverInfo` was the framework's, so a mismatch had to be
+    # inferred instead of read.
+    version=_pkg_version,
     icons=[_ICON],
     instructions=(
         "Waikiki has multiple isolated wikis. You MUST call switch_wiki(slug) "

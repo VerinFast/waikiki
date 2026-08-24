@@ -2,7 +2,11 @@
 # Settings → Code security. No CI workflows are triggered by this file.
 version: 2
 updates:
-  # Python dependencies (requirements.txt + requirements-local.txt).
+  # Python dependencies. Note the app's runtime deps are declared TWICE — in
+  # requirements.txt (what the build and the dev venv install) and in
+  # pyproject.toml (what a `pip install waikiki` resolves). A test asserts the
+  # two agree, so a Dependabot PR that moves one and not the other fails CI
+  # rather than shipping a wheel whose pins differ from the app's.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
@@ -22,14 +26,20 @@ updates:
           - "minor"
           - "patch"
 
-  # GitHub Actions — enable once CI workflows exist (see ROADMAP). This does NOT
-  # run any workflow; it just keeps action pins current. Uncomment when ready:
-  # - package-ecosystem: "github-actions"
-  #   directory: "/"
-  #   schedule:
-  #     interval: "weekly"
-  #   labels:
-  #     - "dependencies"
-  #     - "ci"
-  #   commit-message:
-  #     prefix: "ci"
+  # GitHub Actions. Enabled now that CI exists (tests, the weekly packaging
+  # build, and the PyPI publish). This runs no workflow itself; it keeps the
+  # action pins current — which matters more than usual here, because the
+  # publish job holds an OIDC token: a compromised third-party action runs with
+  # access to it.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci"

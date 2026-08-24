@@ -1,6 +1,6 @@
 # --- Core web ---
 fastapi>=0.140.13
-uvicorn[standard]>=0.52.3
+uvicorn[standard]>=0.52.4
 jinja2>=3.1
 python-multipart>=0.0.32        # form / file uploads
 # Arrives transitively with FastAPI, but it is also what validates page metadata
@@ -13,7 +13,7 @@ pydantic>=2.7
 markdown-it-py>=4.2.0
 mdit-py-plugins>=0.6.1
 linkify-it-py>=2.0             # GFM autolinking (bare URLs)
-pygments>=2.18                  # optional fenced-code highlighting
+pygments>=2.21                  # optional fenced-code highlighting
 
 # --- Hybrid RAG ---
 sqlite-vec>=0.1.9               # vector search inside the same sqlite file (FTS5/bm25 is built in)
@@ -32,29 +32,29 @@ httpx>=0.28.1
 # key (waikiki/updater.py). This arrives transitively today, but the updater is
 # the one code path that executes a download — it must not depend on another
 # package happening to pull its verification primitive in.
-cryptography>=42.0
+cryptography>=50.0
 
 # --- Print to PDF (pure Python, no native deps) ---
 xhtml2pdf>=0.2.17
 
 # --- AI streaming into the wiki ---
-anthropic>=0.122.0
+anthropic>=1.0.0
 
 # --- MCP server (Human/LLM collaboration) ---
 # Floor is 3.x deliberately: 2.x -> 3.x was a breaking change, and a `>=2.0`
 # floor is satisfied by anything, so Dependabot never proposes a bump for it.
-fastmcp>=3.4.6
+fastmcp>=3.4.7
 
 # --- Real-time collaborative editing (CRDT) + canonical Y.Doc persistence ---
 # The Y.Doc is Waikiki's canonical persisted page state (see waikiki/ydoc.py),
 # not just a live editing buffer. The upper cap keeps us on the same 0.1x Yjs v1
 # update-format line as the vendored wiki-interchange lib (below), so snapshots
 # and changelogs stay mergeable across the Kahala <-> Waikiki round-trip.
-pycrdt>=0.14.2,<0.15         # Yjs/Yrs bindings — the shared document engine
+pycrdt>=0.14.4,<0.15         # Yjs/Yrs bindings — the shared document engine
 pycrdt-websocket>=0.16.4   # y-websocket-compatible server for browser sync
 
 # --- Interchange format (VENDORED, not on PyPI) ---
 # wiki-interchange is vendored at waikiki/vendor/wiki_interchange/, pinned to
 # version 0.2.0 (spec v2 — the whole-wiki bundle). It is NOT pip-installable;
 # re-sync it from upstream per docs/vendoring.md. Its own dep is
-# pycrdt>=0.14.2,<0.15, satisfied above.
+# pycrdt>=0.14.4,<0.15, satisfied above.

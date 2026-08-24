@@ -1,0 +1,27 @@
+# Sourcery configuration.
+#
+# The point of this file is the ignore list. Everything under `waikiki/vendor/`
+# is a VERBATIM copy of an upstream package, pinned to a recorded revision and
+# re-synced by hand (see docs/vendoring.md). Its whole value is being byte-
+# identical to what the hosted side runs — the interchange format is version-
+# gated, and a local "improvement" there is how two peers quietly stop agreeing.
+# So review suggestions on that tree are not just noise; acting on one would be
+# a bug.
+ignore:
+  - waikiki/vendor/
+  - .venv/
+  - .venv-build/
+  - build/
+  - dist/
+
+rule_settings:
+  enable:
+    - default
+  # Tests are written to read as prose — long, explicit, and deliberately
+  # repetitive where that makes a failure obvious. Refactoring them for brevity
+  # trades away the thing they are for.
+  python_version: '3.10'
+
+github:
+  review_comments: true
+  sourcery_branch: sourcery/{base_branch}

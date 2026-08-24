@@ -41,7 +41,7 @@ jobs:
           sys.exit("wheel is missing: " + ", ".join(missing) if missing else 0)
           PY
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/

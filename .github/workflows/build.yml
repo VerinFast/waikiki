@@ -52,7 +52,7 @@ jobs:
       # Kept for a human to download and try when a scheduled run goes red, and
       # deliberately NOT signed here: the Ed25519 private key stays off CI, so
       # this artifact can never be mistaken for a release.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: waikiki-unsigned-${{ github.sha }}

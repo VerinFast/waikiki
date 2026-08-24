@@ -7,8 +7,14 @@
 # gated, and a local "improvement" there is how two peers quietly stop agreeing.
 # So review suggestions on that tree are not just noise; acting on one would be
 # a bug.
+# Note the path: the vendored PACKAGE, not the whole `vendor/` directory.
+# `waikiki/vendor/__init__.py` is ours — it records WIKI_INTERCHANGE_VERSION and
+# the upstream revision, and docs/vendoring.md requires those stay in lockstep
+# with the copy. Ignoring the parent directory would have hidden the one file
+# where a desync is actually recorded. (Caught by Sourcery on the PR that added
+# this file, which is a decent argument for having it.)
 ignore:
-  - waikiki/vendor/
+  - waikiki/vendor/wiki_interchange/
   - .venv/
   - .venv-build/
   - build/

@@ -23,6 +23,12 @@ pip install -q pywebview pyinstaller
 # path flushes live CRDT edits, so an in-progress edit is saved rather than lost.
 if pgrep -f "$PWD/dist/Waikiki.app/Contents/MacOS/Waikiki" >/dev/null 2>&1; then
     echo "==> Waikiki is running from dist/ — quitting it before the rebuild"
+    echo "    (This disconnects you. It happens because the app you are USING is"
+    echo "     the build output. Install a copy and it stops happening for good:"
+    echo "       brew install --cask waikiki --no-quarantine"
+    echo "     Your wikis live in ~/Library/Application Support/Waikiki and are"
+    echo "     shared, so an installed copy opens everything you already have,"
+    echo "     keeps running through every release, and self-updates.)"
     osascript -e 'quit app "Waikiki"' >/dev/null 2>&1 || true
     for _ in $(seq 1 40); do
         pgrep -f "$PWD/dist/Waikiki.app/Contents/MacOS/Waikiki" >/dev/null 2>&1 || break

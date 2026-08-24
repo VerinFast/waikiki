@@ -5,6 +5,8 @@ verified in a browser rather than here; what's testable server-side is the data
 those features and the breadcrumb trail are built from.
 """
 import pytest
+import re
+
 from fastapi.testclient import TestClient
 
 from waikiki import db, elements, render, store
@@ -221,3 +223,13 @@ def test_the_jump_markup_has_no_unrendered_escapes(wiki):
         body = client.get("/wiki/meru").text
     box = body.split('class="jump-box"', 1)[1].split("</div>", 1)[0]
     assert not re.search(r"\\u[0-9a-fA-F]{4}", box), "unrendered escape in the palette"
+
+
+def test_the_nav_has_reload_between_back_and_forward(wiki):
+    """Order matters: it is muscle memory from every browser toolbar."""
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        html = client.get("/").text
+    bar = html[html.index('class="histnav"'):]
+    bar = bar[:bar.index("</div>")]
+    labels = re.findall(r'aria-label="(Back|Reload|Forward)"', bar)
+    assert labels == ["Back", "Reload", "Forward"], labels

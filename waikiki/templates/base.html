@@ -96,6 +96,10 @@
     <div class="histnav" role="group" aria-label="Browser history">
       <button type="button" class="histbtn" onclick="history.back()"
               title="Back" aria-label="Back">‹</button>
+      {# location.reload() would re-POST a form submission and prompt about it.
+         Navigating to the current URL re-fetches the page cleanly instead. #}
+      <button type="button" class="histbtn" onclick="location.assign(location.href)"
+              title="Reload" aria-label="Reload">⟳</button>
       <button type="button" class="histbtn" onclick="history.forward()"
               title="Forward" aria-label="Forward">›</button>
     </div>

@@ -121,3 +121,41 @@ def test_the_prompt_no_longer_carries_pre_retrieved_excerpts(wiki, monkeypatch):
     finally:
         clirun.run = real
     assert "Other relevant excerpts" not in captured["prompt"]
+
+
+# --- Editing by proposal (chat asked to change a page) -----------------------
+
+def test_propose_edit_is_the_one_write_tool_chat_gets():
+    """Chat must be able to offer a change; it must not be able to make one."""
+    args = chat._cli_args("claude", "claude", "", "PROMPT")
+    granted = {a.removeprefix("mcp__waikiki__") for a in args
+               if a.startswith("mcp__waikiki__")}
+    assert "propose_edit" in granted
+    # The property that makes that safe: a proposal is inert until a human
+    # applies it, so none of these may come with it.
+    assert not (granted & {"edit_page", "replace_page", "append_to_page",
+                           "replace_section", "delete_page"})
+
+
+def test_the_agent_is_told_it_edits_by_proposing():
+    """The failure this fixes: the model tried edit_page and the CLI refused it.
+
+    A tool it was never granted is not a thing it can discover — it has to be
+    told, or the human sees an error instead of an offer.
+    """
+    prompt = chat.build_prompt("T", "body", "", [], "rewrite this", "SYSTEM")
+    assert "propose_edit" in prompt
+    assert "cannot change this page directly" in prompt
+
+
+def test_the_capability_survives_a_rewritten_system_prompt():
+    """It lives outside the editable prompt on purpose.
+
+    `chat_system_prompt()` prefers a Help-wiki page a user can rewrite. If the
+    capability lived there, rewording that page would silently switch the
+    feature off — and every existing install already has that page, so writing
+    it only in DEFAULT_CHAT_SYSTEM would reach nobody.
+    """
+    prompt = chat.build_prompt("T", "body", "", [], "q?",
+                               "Speak only in limericks.")
+    assert "propose_edit" in prompt

@@ -55,6 +55,20 @@ def build_prompt(title: str, article_md: str, excerpts: str,
     issue #30 for the MCP access that makes that possible.
     """
     parts = [system]
+    # What this agent can and cannot do to the page. Deliberately NOT part of the
+    # editable system prompt: that page is for tone, and a user rewording it must
+    # not be able to switch the feature off by accident. Without this the model
+    # reaches for edit_page, the CLI refuses a tool it was never granted, and the
+    # human sees a failure instead of an offer.
+    parts.append(
+        "# Editing\n\n"
+        "You cannot change this page directly, and you are not meant to — a "
+        "conversation never silently rewrites someone's wiki. When you are asked "
+        "for a change, call `propose_edit` with the FULL revised page and say "
+        "that it is waiting for review; the human applies or rejects it on the "
+        "page itself. Read the page with `get_page` first so your proposal keeps "
+        "everything you were not asked to change. Never claim you have edited "
+        "the page — you have proposed.")
     if wiki:
         parts.append(
             f"# Wiki\n\nYou are answering about the '{wiki}' wiki.\n\n"
@@ -90,6 +104,13 @@ CHAT_TOOLS = [
     "backlinks", "broken_links", "list_tags", "pages_by_tag",
     "list_docs", "read_doc", "list_templates", "list_elements", "get_element",
     "list_comments", "list_suggestions", "changes_since",
+    # The one tool here that writes anything, and it deliberately does not touch
+    # the page: propose_edit records a suggestion for the human to apply or
+    # reject. Chat asked to make a change used to fail outright, because the
+    # model reached for edit_page and the CLI refused a tool it was not granted.
+    # Proposing keeps the property that matters — a conversation never silently
+    # rewrites your wiki — while letting the thing you asked for happen.
+    "propose_edit",
 ]
 
 

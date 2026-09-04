@@ -178,3 +178,53 @@ def test_time_ago_never_reads_as_negative_or_blows_up():
     assert render.time_ago("", _NOW) == ""
     # tz-aware input is normalised to UTC rather than compared naively
     assert render.time_ago("2026-08-21T11:57:00+00:00", _NOW) == "3 minutes ago"
+
+
+# --- Wikilinks in already-rendered HTML (issue #78) --------------------------
+#
+# Wikilinks resolve AFTER markdown rendering, so by that point markdown-it has
+# escaped the text. Treating it as raw text escapes it twice and mangles the
+# target, and the visible result looks exactly like the source was corrupted.
+
+def test_a_quoted_label_is_not_escaped_twice():
+    """`"` renders as &quot;. Escaping the & again draws literal `&quot;`."""
+    html = render.render_markdown('[[X|a "quoted" label]]')
+    assert "&amp;quot;" not in html, "label escaped twice — reader sees &quot;"
+    assert "&quot;quoted&quot;" in html
+
+
+def test_an_ampersand_in_a_target_still_resolves():
+    """`[[Salt & Pepper]]` arrived as `Salt &amp; Pepper` and slugified to
+    `salt-amp-pepper` — a link to a page that cannot exist."""
+    html = render.render_markdown("[[Salt & Pepper]]")
+    assert 'href="/wiki/salt-pepper"' in html
+    assert "salt-amp-pepper" not in html
+
+
+def test_the_reported_table_row_renders_intact():
+    """The row from issue #78, escaped pipe and all."""
+    md = ("| Name | Who | Role | Book |\n|---|---|---|---|\n"
+          '| XXX | **[[Bull Kade\\|Sheriff "Bull" Kade]]**, 45 | chief | *Blood* |')
+    html = render.render_markdown(md)
+    assert 'href="/wiki/bull-kade"' in html          # escaped pipe split correctly
+    assert "&quot;Bull&quot;" in html                # quotes survive, once escaped
+    assert "&amp;" not in html
+
+
+def test_raw_text_callers_still_get_their_label_escaped():
+    """wikilink_anchor is also used on RAW text (element props, infobox cells).
+
+    The fix must not turn that into an injection: those labels have never been
+    through the renderer, so they still need escaping here.
+    """
+    out = render.wikilink_anchor("X", '<script>alert(1)</script>')
+    assert "<script>" not in out and "&lt;script&gt;" in out
+
+
+def test_rendering_never_rewrites_the_source():
+    """The issue reported the stored markdown being mutated. It is not — and a
+    test says so, because the rendered page looked exactly as if it were."""
+    md = '| a | **[[Bull Kade\\|Sheriff "Bull" Kade]]** |'
+    before = md
+    render.render_markdown(md)
+    assert md == before

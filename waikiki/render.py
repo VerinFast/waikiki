@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from html import escape as _esc
+from html import unescape as _unesc
 
 from markdown_it import MarkdownIt
 from mdit_py_plugins.anchors import anchors_plugin
@@ -149,8 +150,34 @@ _TAG = re.compile(r"(<[^>]*>)")
 
 
 def wikilink_anchor(target: str, label: str | None, resolver=None) -> str:
+    """An anchor from RAW text — the label is escaped here.
+
+    For callers holding plain text: element props, infobox cells, the wikilink
+    map handed to components. If your label came out of rendered HTML it is
+    already escaped; use `wikilink_anchor_html` instead or it gets escaped twice.
+    """
     label = (label or target).strip()
     return f'<a href="{_esc(_wikilink_href(target, resolver))}">{_esc(label)}</a>'
+
+
+def wikilink_anchor_html(target: str, label_html: str | None, resolver=None) -> str:
+    """An anchor from text that markdown-it has ALREADY escaped.
+
+    Two things go wrong if you treat rendered HTML as raw text (issue #78):
+
+    * the label gets escaped twice — `"` became `&quot;` at render, escaping the
+      `&` again yields `&amp;quot;`, which the browser draws as the literal
+      characters `&quot;`. That is what a reader saw on the page.
+    * the target arrives entity-encoded, so `[[Salt & Pepper]]` slugified to
+      `salt-amp-pepper` and pointed at a page that does not exist.
+
+    So: unescape the target before resolving it, and pass the label through
+    untouched — it is already correct, and it lands in a text position where its
+    existing escaping is exactly what is wanted.
+    """
+    target = _unesc(target)
+    label_html = (label_html or _esc(target)).strip()
+    return f'<a href="{_esc(_wikilink_href(target, resolver))}">{label_html}</a>'
 
 
 def render_value(text: str, resolver=None) -> str:
@@ -188,7 +215,7 @@ def linkify_wikilinks(html: str, resolver=None) -> str:
 
     def sub_text(text: str) -> str:
         return _WIKILINK.sub(
-            lambda m: wikilink_anchor(m.group(1), m.group(2), resolver), text)
+            lambda m: wikilink_anchor_html(m.group(1), m.group(2), resolver), text)
 
     out = []
     for i, chunk in enumerate(_SKIP_BLOCKS.split(html)):

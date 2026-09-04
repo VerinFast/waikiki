@@ -2,8 +2,10 @@
 + real-time collaborative editing (CRDT) at /collab."""
 from __future__ import annotations
 
+import anyio
 import asyncio
 import difflib
+import functools
 import json
 import os
 import signal
@@ -22,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from . import (accesslog, ai, appconfig, auth, authoring, backups, bonjour,
-               capabilities, chat, collab, doorman,
+               calendarfeed, capabilities, chat, collab, doorman,
                config, db, debuglog, deeplink, edits, elements, embeddings,
                help_content, imagegen, pdfgen, rag, render, store, structure,
                tunnel, updater, wikis)
@@ -1723,6 +1725,35 @@ def api_delete_page(slug: str):
 def api_search(q: str, k: int = config.RAG_TOP_K):
     """Hybrid BM25 + vector retrieval over the wiki (the RAG endpoint)."""
     return {"query": q, "results": rag.search_chunks(q, k)}
+
+
+@app.get("/api/calendar-feed")
+async def api_calendar_feed(url: str, tz: str = ""):
+    """Events from a subscribed calendar, for the ``calendar`` element to render.
+
+    The element cannot fetch the calendar host itself — none of them send CORS
+    headers — so this same-origin route does it server-side and hands back JSON.
+
+    The URL arrives from the page, so **the allow-list is the security boundary
+    here, not the caller.** ``auth.py`` grants loopback callers owner rights and
+    any web page can fire requests at our loopback port, so without
+    ``calendarfeed.validate_url`` this would be an open proxy into the user's own
+    network — a website could aim it at ``192.168.1.1`` or a metadata endpoint
+    and use us to reach what it cannot. Validation refuses everything that isn't
+    https at a known calendar provider, which is what keeps that shut. See
+    ``docs/calendar-feeds.md``.
+    """
+    tzname = (tz or "").strip() or calendarfeed.local_tzname()
+    try:
+        # Blocking network + expansion; off the event loop so one slow calendar
+        # host can't stall every other request.
+        events = await anyio.to_thread.run_sync(
+            functools.partial(calendarfeed.events_for_url, url, tzname=tzname))
+    except calendarfeed.FeedError as exc:
+        # 502: we're reporting someone else's failure, and the element shows the
+        # reason rather than rendering an empty month as if the calendar were.
+        raise HTTPException(502, str(exc))
+    return {"timezone": tzname, "events": events}
 
 
 @app.post("/api/images")

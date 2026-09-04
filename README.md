@@ -335,6 +335,42 @@ validated wiki. See
 **[docs/deep-links.md](docs/deep-links.md)**. Deep links work in the packaged
 `.app` only — a source run has no `Info.plist` for macOS to route through.
 
+### Calendar feeds
+
+A `calendar` element can show events typed into the page, subscribe to a real
+calendar, or both:
+
+````
+```calendar
+ics: https://calendar.google.com/calendar/ical/.../basic.ics
+tz: America/New_York
+events: [{"title":"Troop 63 Campout","start":"2026-09-11","end":"2026-09-13","link":"troop-63-campout"}]
+```
+````
+
+The `ics` address keeps itself current; the `events` list holds the entries that
+link to pages in this wiki, which a subscription can't do. To add or change a
+calendar, edit the `ics:` line — in Google Calendar the address is *Settings →
+your calendar → Integrate calendar → Secret address in iCal format*. Nothing else
+to configure.
+
+Waikiki fetches the calendar server-side because no provider allows a web page to
+read one (there are no CORS headers on any of them), via
+`/api/calendar-feed?url=…`. Since the page chooses that URL, the **allow-list is
+the only thing keeping this from being an open proxy**: any web page in your
+browser can call our loopback port, so the route accepts nothing but https at a
+known calendar host — otherwise a website could aim it at your router or a
+metadata endpoint. Note the trade: the address sits in page content, and a Google
+secret address reads the whole calendar, so it is visible to anyone who can read
+the page.
+
+Recurring events are expanded properly — repeat rules, deleted occurrences, and
+single occurrences that were moved — and placed on the day they fall on where you
+are, so an 8pm event doesn't show up on tomorrow. If the calendar host can't be
+reached the element says so rather than rendering an empty month, which would
+claim nothing is scheduled. See
+**[docs/calendar-feeds.md](docs/calendar-feeds.md)**.
+
 ## Connect Claude Desktop (MCP)
 
 **Easiest:** open Waikiki and click **Connect Claude** in the header (or visit
@@ -421,6 +457,7 @@ live edit** tools:
 | POST | `/api/collab/{slug}/append` · `/replace` | inject a live edit (used by MCP) |
 | GET | `/api/collab/{slug}/live` | current live (unsaved) markdown |
 | POST | `/api/ai/stream` | SSE token stream (pull-model Generate button) |
+| GET | `/api/calendar-feed?url=&tz=` | events from a subscribed calendar (allow-listed hosts only) |
 
 Interactive docs at `/docs`. Websocket sync at `ws://host/collab/{wiki}/{slug}`.
 REST/collab requests select the wiki via the `X-Waikiki-Wiki` header (default:

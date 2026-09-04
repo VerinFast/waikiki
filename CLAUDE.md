@@ -51,6 +51,10 @@ two in parity (same substance, different voice) whenever you change either.
   skipped and reported (`skipped`), never fatal to the run. Same disk as the
   wikis, so it is insurance against corruption and mistakes, not against losing
   the machine — see `docs/data-safety.md`.
+- `waikiki/calendarfeed.py` — subscribed **iCalendar feeds**: fetch, RRULE/EXDATE/
+  RECURRENCE-ID expansion, and the **host allow-list** that is the sole guard on
+  the one route that fetches a caller-chosen URL. Sits below the routes and holds
+  no SQL — see `docs/calendar-feeds.md` and rule 10.
 - `waikiki/deeplink.py` — `waikiki://` deep links: the allow-list that turns an
   external URL into an in-app destination (see `docs/deep-links.md`).
 - `waikiki/updater.py` — self-update for the packaged `.app`: signature-verified
@@ -60,6 +64,9 @@ two in parity (same substance, different voice) whenever you change either.
 - `docs/vendoring.md` — vendored packages, pins, and re-sync steps.
 - `docs/updates.md` — the auto-update trust model and release procedure.
 - `docs/deep-links.md` — the `waikiki://` scheme and why it is an allow-list.
+- `docs/calendar-feeds.md` — subscribed calendars: why the fetch is
+  server-side, why the host allow-list is the only thing keeping that route from
+  being an open proxy, and what recurrence expansion has to get right.
 - `docs/doorman.md` — the optional Doorman integration and why it stays optional.
 - `docs/capabilities.md` — the capabilities view, remedy descriptors, and the
   one install that pipes a script into a shell.
@@ -180,6 +187,28 @@ two in parity (same substance, different voice) whenever you change either.
    as a constant in `remedies.py`, names the host before it runs, and only ever
    runs from a click plus a confirmation — never from a probe. See
    `docs/capabilities.md`; `tests/test_capabilities.py` guards all of it.
+
+10. **The calendar element carries its own ICS address; the allow-list is what
+    makes that safe.** `calendarfeed.py` fetches an external calendar on the
+    browser's behalf (no provider sends CORS headers, so the element cannot),
+    which makes `GET /api/calendar-feed?url=` the one route that performs an
+    outbound request to a **caller-chosen** address. The URL lives in the page's
+    `calendar` fence deliberately — a page can subscribe to anything without
+    touching settings or code — so `calendarfeed.validate_url` is the only thing
+    standing between this and an open proxy: loopback callers are **owner**
+    (`auth.py`) and any web page can hit our loopback port, so without it a site
+    could aim us at `192.168.1.1` or a metadata endpoint (CORS blocks the reply;
+    the request is the damage). It runs before **every** fetch, accepts only
+    https at a host in `ALLOWED_HOSTS`, and matches exact-or-subdomain so
+    `calendar.google.com.evil.com` is refused. Widening that tuple is a security
+    decision. Three more things are load-bearing: the address is **visible in
+    page content** (history, exports, backups) and a Google secret address reads
+    the whole calendar — say so rather than implying it is private; recurrence is
+    **expanded, not approximated** (RRULE + EXDATE + RECURRENCE-ID, bounded by a
+    window, placed in the *local* day so an 8pm event doesn't slide to tomorrow);
+    and an unreachable host is a **502 that says so**, because an empty month
+    grid claims "nothing is scheduled". `tests/test_calendar_feed.py` guards it,
+    and its refusal cases must never be relaxed to make something pass.
 
 ## Before committing
 

@@ -40,13 +40,16 @@ Security boundary — identical to the per-page changelog + snapshot layers:
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from .bundle import BundleElement, BundleImage, BundleTemplate
 from .errors import MalformedEnvelopeError
 from .version import (
     PAGE_ENVELOPE_SPEC,
+    WIKI_CHANGELOG_SPEC,
     YJS_SYNC_PROTOCOL_VERSION,
     ProtocolVersions,
     check_compatible,
@@ -54,6 +57,52 @@ from .version import (
 
 FORMAT_WIKI_STATE_VECTOR = "good-place.wiki-interchange/wiki-state-vector"
 FORMAT_WIKI_CHANGELOG = "good-place.wiki-interchange/wiki-changelog"
+
+
+# --- Digests for the non-CRDT material ----------------------------------------
+#
+# Pages carry their own comparison mechanism: a Yjs state vector says precisely
+# what a peer is missing. Elements and templates have no CRDT, so the peer has
+# to say what it holds some other way, and the cheapest honest answer is a hash
+# of the definition. Both sides MUST agree byte-for-byte on how that hash is
+# computed or every sync would ship every definition forever -- which is exactly
+# why these live here, in the shared library, and not in either peer.
+
+
+def element_digest(element: BundleElement) -> str:
+    """A stable content hash of a custom element's definition."""
+    return _digest(
+        [
+            element.slug,
+            element.name,
+            element.html,
+            element.css,
+            element.js,
+            json.dumps(element.fields, sort_keys=True, separators=(",", ":")),
+        ]
+    )
+
+
+def template_digest(template: BundleTemplate) -> str:
+    """A stable content hash of a template, metadata schema included."""
+    return _digest([template.name, template.markdown, template.meta_schema])
+
+
+def _digest(parts: list[str]) -> str:
+    """SHA-256 over length-prefixed parts.
+
+    Length-prefixed rather than joined by a separator: a separator can appear
+    inside a definition (an element's CSS very much contains newlines), so
+    joining would let two different definitions hash identically and one of them
+    would silently never sync.
+    """
+    h = hashlib.sha256()
+    for part in parts:
+        raw = (part or "").encode("utf-8")
+        h.update(str(len(raw)).encode("ascii"))
+        h.update(b":")
+        h.update(raw)
+    return h.hexdigest()
 
 
 # --- Wiki state vector --------------------------------------------------------
@@ -67,9 +116,24 @@ class WikiStateVector:
     compact summary that lets the other peer compute only the missing updates.
     A slug that is absent means "I have never seen this page" (the peer needs a
     full snapshot for it). An empty map is a valid bootstrap request.
+
+    The v3 sections say what **non-CRDT** material the sender already holds, so
+    the responder can send only the difference rather than every definition
+    every time:
+
+    * ``elements`` — element slug to :func:`element_digest`
+    * ``templates`` — template name to :func:`template_digest`
+    * ``images`` — the content hashes (sha256) of image blobs held
+
+    All three are hints. A peer on an older build omits them, which reads as "I
+    hold nothing", and the responder then sends everything it has — wasteful for
+    one exchange, never wrong.
     """
 
     pages: dict[str, bytes] = field(default_factory=dict)
+    elements: dict[str, str] = field(default_factory=dict)
+    templates: dict[str, str] = field(default_factory=dict)
+    images: list[str] = field(default_factory=list)
     spec_version: int = PAGE_ENVELOPE_SPEC
     yjs_protocol: int = YJS_SYNC_PROTOCOL_VERSION
 
@@ -78,7 +142,12 @@ class WikiStateVector:
         return ProtocolVersions(self.spec_version, self.yjs_protocol)
 
     def serialize(self) -> bytes:
-        """Encode the envelope as UTF-8 JSON (per-page SVs base64-wrapped)."""
+        """Encode the envelope as UTF-8 JSON (per-page SVs base64-wrapped).
+
+        The spec stamp stays at the page floor even when the v3 sections are
+        populated: they are a hint about what the sender holds, and a peer that
+        ignores them answers correctly anyway. See ``WIKI_CHANGELOG_SPEC``.
+        """
         envelope = {
             "format": FORMAT_WIKI_STATE_VECTOR,
             "spec_version": self.spec_version,
@@ -87,6 +156,9 @@ class WikiStateVector:
                 slug: base64.b64encode(sv).decode("ascii")
                 for slug, sv in sorted(self.pages.items())
             },
+            "elements": dict(sorted(self.elements.items())),
+            "templates": dict(sorted(self.templates.items())),
+            "images": sorted(set(self.images)),
         }
         return json.dumps(envelope, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
@@ -99,6 +171,9 @@ class WikiStateVector:
             spec_version = int(envelope["spec_version"])
             yjs_protocol = int(envelope["yjs_protocol"])
             raw_pages = envelope.get("pages", {})
+            raw_elements = envelope.get("elements", {}) or {}
+            raw_templates = envelope.get("templates", {}) or {}
+            raw_images = envelope.get("images", []) or []
         except (KeyError, ValueError, TypeError) as exc:
             raise MalformedEnvelopeError(f"invalid wiki state-vector envelope: {exc}") from exc
         if fmt != FORMAT_WIKI_STATE_VECTOR:
@@ -113,7 +188,21 @@ class WikiStateVector:
             raise MalformedEnvelopeError(
                 f"invalid per-page state vector in wiki envelope: {exc}"
             ) from exc
-        sv = cls(pages=pages, spec_version=spec_version, yjs_protocol=yjs_protocol)
+        for name, value in (("elements", raw_elements), ("templates", raw_templates)):
+            if not isinstance(value, Mapping):
+                raise MalformedEnvelopeError(
+                    f"wiki state-vector {name!r} must be an object (name -> digest)"
+                )
+        if not isinstance(raw_images, list):
+            raise MalformedEnvelopeError("wiki state-vector 'images' must be a list")
+        sv = cls(
+            pages=pages,
+            elements={str(k): str(v) for k, v in raw_elements.items()},
+            templates={str(k): str(v) for k, v in raw_templates.items()},
+            images=[str(h) for h in raw_images],
+            spec_version=spec_version,
+            yjs_protocol=yjs_protocol,
+        )
         check_compatible(sv.versions)
         return sv
 
@@ -161,12 +250,41 @@ class WikiChangelog:
     snapshot for pages the peer had never seen. ``missing_from_server`` names
     slugs the peer's SV mentioned that the server does not have — a hint that
     the peer can push those separately (per-page or via a wiki-level push).
+
+    ``elements``, ``templates`` and ``images`` (spec v3) carry the **non-CRDT**
+    material the peer's state vector said it lacks or holds at a different
+    digest. Before v3 they did not travel at all, so a peer syncing
+    incrementally kept its pages current while its definitions silently went
+    stale — pages rendering against an element the peer had never seen, with
+    nothing anywhere reporting a problem. Image blobs carry their bytes in
+    ``BundleImage.data``; the peer re-homes them and rewrites its own
+    ``/image/<id>`` references, exactly as it does for a bundle.
+
+    ``spec_version`` is computed rather than fixed: an envelope carrying only
+    pages is shaped exactly as it always was and stamps the page floor, so an
+    older peer can still read it. One carrying definitions stamps
+    :data:`WIKI_CHANGELOG_SPEC`, so an older peer **rejects it** instead of
+    parsing it happily and dropping the sections it does not know about.
     """
 
     pages: list[WikiChangelogPage] = field(default_factory=list)
     missing_from_server: list[str] = field(default_factory=list)
-    spec_version: int = PAGE_ENVELOPE_SPEC
+    elements: list[BundleElement] = field(default_factory=list)
+    templates: list[BundleTemplate] = field(default_factory=list)
+    images: list[BundleImage] = field(default_factory=list)
+    spec_version: int | None = None
     yjs_protocol: int = YJS_SYNC_PROTOCOL_VERSION
+
+    def __post_init__(self) -> None:
+        if self.spec_version is None:
+            self.spec_version = (
+                WIKI_CHANGELOG_SPEC if self.carries_definitions else PAGE_ENVELOPE_SPEC
+            )
+
+    @property
+    def carries_definitions(self) -> bool:
+        """Whether this envelope holds anything only a v3 peer can read."""
+        return bool(self.elements or self.templates or self.images)
 
     @property
     def versions(self) -> ProtocolVersions:
@@ -190,6 +308,32 @@ class WikiChangelog:
             "yjs_protocol": self.yjs_protocol,
             "pages": pages,
             "missing_from_server": sorted(self.missing_from_server),
+            "elements": [
+                {
+                    "slug": e.slug,
+                    "name": e.name,
+                    "fields": e.fields,
+                    "html": e.html,
+                    "css": e.css,
+                    "js": e.js,
+                }
+                for e in sorted(self.elements, key=lambda e: e.slug)
+            ],
+            "templates": [
+                {"name": t.name, "markdown": t.markdown, "meta_schema": t.meta_schema}
+                for t in sorted(self.templates, key=lambda t: t.name)
+            ],
+            "images": [
+                {
+                    "sha256": i.sha256,
+                    "media_type": i.media_type,
+                    "image_ids": list(i.image_ids),
+                    "filename": i.filename,
+                    "byte_size": i.byte_size,
+                    "data": base64.b64encode(i.data).decode("ascii") if i.data else None,
+                }
+                for i in sorted(self.images, key=lambda i: i.sha256)
+            ],
         }
         return json.dumps(envelope, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
@@ -203,6 +347,9 @@ class WikiChangelog:
             yjs_protocol = int(envelope["yjs_protocol"])
             raw_pages = envelope.get("pages", [])
             missing = envelope.get("missing_from_server", [])
+            raw_elements = envelope.get("elements", []) or []
+            raw_templates = envelope.get("templates", []) or []
+            raw_images = envelope.get("images", []) or []
         except (KeyError, ValueError, TypeError) as exc:
             raise MalformedEnvelopeError(f"invalid wiki changelog envelope: {exc}") from exc
         if fmt != FORMAT_WIKI_CHANGELOG:
@@ -234,9 +381,54 @@ class WikiChangelog:
                 raise MalformedEnvelopeError(
                     f"invalid wiki changelog page payload for {entry.get('slug')!r}: {exc}"
                 ) from exc
+        for name, value in (
+            ("elements", raw_elements),
+            ("templates", raw_templates),
+            ("images", raw_images),
+        ):
+            if not isinstance(value, list):
+                raise MalformedEnvelopeError(f"wiki changelog {name!r} must be a list")
+        try:
+            elements = [
+                BundleElement(
+                    slug=str(e["slug"]),
+                    name=str(e.get("name") or e["slug"]),
+                    fields=list(e.get("fields") or []),
+                    html=str(e.get("html") or ""),
+                    css=str(e.get("css") or ""),
+                    js=str(e.get("js") or ""),
+                )
+                for e in raw_elements
+            ]
+            templates = [
+                BundleTemplate(
+                    name=str(t["name"]),
+                    markdown=str(t.get("markdown") or ""),
+                    meta_schema=str(t.get("meta_schema") or ""),
+                )
+                for t in raw_templates
+            ]
+            images = [
+                BundleImage(
+                    sha256=str(i["sha256"]),
+                    media_type=str(i.get("media_type") or "application/octet-stream"),
+                    image_ids=[str(x) for x in (i.get("image_ids") or [])],
+                    filename=i.get("filename"),
+                    byte_size=i.get("byte_size"),
+                    data=base64.b64decode(i["data"]) if i.get("data") else None,
+                )
+                for i in raw_images
+            ]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise MalformedEnvelopeError(
+                f"invalid wiki changelog definition section: {exc}"
+            ) from exc
         log = cls(
             pages=pages,
             missing_from_server=[str(s) for s in missing],
+            elements=elements,
+            templates=templates,
+            images=images,
             spec_version=spec_version,
             yjs_protocol=yjs_protocol,
         )

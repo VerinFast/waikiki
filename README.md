@@ -222,6 +222,12 @@ on Kahala and removes nothing there; a pull does the same here. So a page you
 deleted locally is still on Kahala afterwards, and the next pull brings it back.
 Removing a page from both is a deliberate act on both.
 
+Only what changed travels — a few kilobytes rather than the whole wiki — and
+custom elements, templates and images travel with the pages, so a page never
+arrives referring to a definition that didn't. If the server is running an older
+version, or an image doesn't survive the trip, Waikiki transfers the whole wiki
+instead and tells you that's what it did. *Transfer the whole wiki* forces it.
+
 Signing in uses Kahala's own sign-in page — OpenID Connect with PKCE, no client
 secret, and the callback comes back to Waikiki's own loopback port. The refresh
 token goes in your **Keychain**, never into a wiki file (that file *is* what

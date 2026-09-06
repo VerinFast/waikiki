@@ -26,12 +26,14 @@ WIKI_INTERCHANGE_VERSION = "0.2.0"
 #: version string cannot tell you the vendored copy is stale -- which is exactly
 #: how it went stale. Compare revisions when checking, and move this on every
 #: re-sync even when the version has not changed.
-WIKI_INTERCHANGE_REVISION = "46bbf8c9"
+WIKI_INTERCHANGE_REVISION = "42c1fa22"
 
 #: Upstream source coordinates, recorded so the vendored tree is re-syncable.
 #: GitLab is the canonical remote for the monorepo; the GitHub repo mirrors the
 #: same code but issues and MRs live on GitLab.
 WIKI_INTERCHANGE_SOURCE = (
     "gitlab.kwirker.com/good-place/platform:packages/wiki-interchange "
-    "(branch main, MR good-place/platform!85 — K6b whole-wiki changelog)"
+    "(branch claude/wiki-changelog-carries-elements, "
+    "MR good-place/platform!142 — spec v3: the wiki changelog carries "
+    "elements, templates and images)"
 )

@@ -40,11 +40,42 @@ Calling this "upload" or "sync" would set up exactly the surprise issue #58
 warned about, so it isn't called that anywhere in the interface. Deleting a page
 on both sides is a deliberate act on both sides.
 
-Incremental sync — exchanging state vectors and shipping only the missing
-updates — is a separate, later piece of work. Kahala already exposes the
-whole-wiki changelog routes for it; Waikiki's vendored interchange copy does not
-yet carry the `WikiStateVector` / `WikiChangelog` types they use, so re-syncing
-the vendored library is a prerequisite. Clone-then-push works without it.
+## Incremental by default
+
+A push or a pull sends **only what changed**. Waikiki publishes a state vector —
+a per-page Yjs summary, plus digests of the elements, templates and images it
+holds — and the far end replies with just the missing bytes. Re-syncing a
+215-page wiki that differs by a paragraph is a few kilobytes rather than ~57MB.
+
+Definitions travel with the pages (interchange spec v3), so a page never arrives
+referring to a custom element the peer has never seen. That was not always true:
+before v3 the incremental path carried pages *only*, so a peer's pages stayed
+current while its definitions silently went stale — and nothing reported it.
+
+### When a sync goes full
+
+Two situations make Waikiki transfer the whole wiki instead. Both are automatic,
+and both **say so in the result** — a fallback nobody can see is one nobody can
+question.
+
+* **The far end predates spec v3.** Detected by the *absence* of the definition
+  sections in its envelope, not by a version number: both v3 envelope kinds
+  always emit `elements`/`templates`/`images`, empty or not, so a missing key
+  identifies an older peer. That distinction is the whole trick — a v3 peer with
+  nothing new to send and an old peer that *cannot* send definitions produce
+  byte-identical content, and only one of them is safe to sync incrementally.
+* **An image did not survive the trip.** A per-page changelog is a Yjs update
+  naming the *sender's* image ids. `store.apply_wiki_changelog` remaps them from
+  the envelope's `image_ids` once the merge lands — a normal local edit, never a
+  rewrite inside the CRDT payload, which would corrupt it. If any page still
+  points at an image this wiki does not have, the pull repairs itself with a full
+  bundle rather than leaving a page that renders a broken image and says nothing.
+
+A genuine error — 403, 404, an unreachable host — is **reported, not retried**
+as a full transfer. Falling back on a real failure just fails again, slower.
+
+*Transfer the whole wiki instead* in the Kahala pane forces the full path by
+hand, and the MCP tools take `full=True` for the same reason.
 
 ## Signing in
 
@@ -142,7 +173,8 @@ redirect target — flip that argument to `True` and the test goes red.
   A guest who could reach `/kahala/link` or `/kahala/clone` could aim this
   machine at a Kahala *they* name and push the owner's wiki to it — exfiltration,
   not misconfiguration.
-* **An agent (MCP)** gets `kahala_status`, `kahala_push` and `kahala_pull`, and
+* **An agent (MCP)** gets `kahala_status`, `kahala_push` and `kahala_pull` (both
+  taking `full`), and
   deliberately *not* linking, cloning or signing in. Those three establish a
   destination or a credential, which is the owner's call — and signing in needs
   their browser regardless. An agent may move content along a route the owner

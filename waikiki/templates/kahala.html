@@ -59,6 +59,25 @@
         </form>
       </div>
 
+      <details class="muted note">
+        <summary>Transfer the whole wiki instead</summary>
+        <p>Push and pull normally send only what changed, which is a few
+          kilobytes rather than the whole wiki. These send everything — slower,
+          and worth reaching for if something looks out of step.</p>
+        <form method="post" action="/kahala/push" style="display:inline">
+          <input type="hidden" name="wiki" value="{{ subject }}">
+          <input type="hidden" name="full" value="1">
+          <button class="btn" type="submit"
+                  {{ 'disabled' if not status.signed_in }}>Push everything</button>
+        </form>
+        <form method="post" action="/kahala/pull" style="display:inline">
+          <input type="hidden" name="wiki" value="{{ subject }}">
+          <input type="hidden" name="full" value="1">
+          <button class="btn" type="submit"
+                  {{ 'disabled' if not status.signed_in }}>Pull everything</button>
+        </form>
+      </details>
+
       {% if not status.signed_in %}
         <p class="muted note">Push and pull need you to be signed in.</p>
       {% endif %}
@@ -69,6 +88,9 @@
         A push adds and updates pages on Kahala and removes nothing there; a pull
         does the same here. So a page you deleted locally is still on Kahala, and
         a pull will bring it back.</p>
+      <p class="muted note">Custom elements, templates and images travel with
+        the pages, so a page never arrives referring to a definition that
+        didn’t.</p>
     {% else %}
       <p>This wiki isn’t linked yet.</p>
       <form method="post" action="/kahala/link" class="addmodel">

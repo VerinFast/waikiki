@@ -1251,8 +1251,12 @@ def kahala_status() -> dict:
 
 
 @mcp.tool
-def kahala_push() -> dict:
+def kahala_push(full: bool = False) -> dict:
     """Send this wiki up to its linked Kahala wiki.
+
+    Sends only what changed by default, falling back to the whole wiki when the
+    far end can't take an incremental transfer; `full=True` forces the whole
+    wiki. The result's `mode` says which actually ran.
 
     **Merges, and deletes nothing there**: pages are added or updated by slug, so
     a page deleted here is still on Kahala afterwards. Needs owner/admin rights
@@ -1260,19 +1264,24 @@ def kahala_push() -> dict:
     when the wiki isn't linked, the sign-in has expired, or Kahala is
     unreachable -- none of which changes anything locally."""
     active = _require_wiki()
-    return kahala.push(active)
+    return kahala.push(active, full=full)
 
 
 @mcp.tool
-def kahala_pull() -> dict:
+def kahala_pull(full: bool = False) -> dict:
     """Bring the linked Kahala wiki down into this one.
+
+    Fetches only what changed by default; `full=True` forces the whole wiki, and
+    the result's `mode` says which ran. Custom elements, templates and images
+    travel with the changes, so a page never arrives referring to a definition
+    that didn't.
 
     **Merges, and deletes nothing here**: pages arrive by slug, updating what
     exists and adding what doesn't. Local pages the remote doesn't have are left
     alone. An incompatible or malformed transfer is refused whole rather than
     half-applied."""
     active = _require_wiki()
-    return kahala.pull(active)
+    return kahala.pull(active, full=full)
 
 
 def _silence_stdout_noise() -> None:

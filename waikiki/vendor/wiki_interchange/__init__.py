@@ -75,6 +75,7 @@ from .version import (
     MIN_COMPATIBLE_SPEC_VERSION,
     PAGE_ENVELOPE_SPEC,
     SPEC_VERSION,
+    WIKI_CHANGELOG_SPEC,
     WIKI_ENVELOPE_SPEC,
     YJS_SYNC_PROTOCOL_VERSION,
     Compatibility,
@@ -88,6 +89,8 @@ from .wiki_changelog import (
     WikiChangelog,
     WikiChangelogPage,
     WikiStateVector,
+    element_digest,
+    template_digest,
 )
 
 __version__ = "0.2.0"
@@ -99,6 +102,7 @@ __all__ = [
     "MIN_COMPATIBLE_SPEC_VERSION",
     "PAGE_ENVELOPE_SPEC",
     "WIKI_ENVELOPE_SPEC",
+    "WIKI_CHANGELOG_SPEC",
     "YJS_SYNC_PROTOCOL_VERSION",
     "Compatibility",
     "ProtocolVersions",
@@ -145,6 +149,8 @@ __all__ = [
     "WikiStateVector",
     "WikiChangelog",
     "WikiChangelogPage",
+    "element_digest",
+    "template_digest",
     "FORMAT_WIKI_STATE_VECTOR",
     "FORMAT_WIKI_CHANGELOG",
     # errors

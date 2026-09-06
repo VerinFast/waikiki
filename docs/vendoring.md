@@ -16,10 +16,10 @@ must stay in lockstep:
 | | |
 |---|---|
 | **Path** | `waikiki/vendor/wiki_interchange/` |
-| **Pinned version** | `0.2.0` (spec `SPEC_VERSION = 2`, floor `1`, Yjs sync protocol `1`) |
+| **Pinned version** | `0.2.0` (spec `SPEC_VERSION = 3`, floor `1`, Yjs sync protocol `1`) |
 | **Upstream** | `gitlab.kwirker.com/good-place/platform`, `packages/wiki-interchange/wiki_interchange/` (**private repo** — first-party, same owner; the vendored copy here is the public one, under this project's Elastic License 2.0). GitLab is canonical; the GitHub mirror carries the same code but issues and MRs live on GitLab. |
-| **Upstream branch** | `main` |
-| **Upstream revision** | `46bbf8c9` — the vendored tree is byte-identical to `packages/wiki-interchange/wiki_interchange/` at this commit |
+| **Upstream branch** | `claude/wiki-changelog-carries-elements` (MR good-place/platform!142, targeting `dev`) — vendored ahead of merge, as the spec-v2 sync was |
+| **Upstream revision** | `42c1fa22` — the vendored tree is byte-identical to `packages/wiki-interchange/wiki_interchange/` at this commit |
 | **Runtime dep** | `pycrdt>=0.10,<0.15` (satisfied by Waikiki's own pin) |
 
 ### What it is
@@ -63,20 +63,21 @@ producer's build number would be rejected by a peer that understands it perfectl
 `MIN_COMPATIBLE_SPEC_VERSION` stays `1` — v2 is additive, so this build still
 reads v1 payloads.
 
-### What the wiki changelog does not carry (known limit)
+### What the wiki changelog carries (spec v3)
 
-`WikiChangelog` is `pages` + `missing_from_server`, and a per-page `Changelog`
-is a bare `ydoc_update`. Neither carries **images, custom elements or
-templates**. Pages the peer has never seen travel as full `Snapshot`s, which
-*do* carry their image sidecar — so a first transfer is complete, and it is the
-*later* incremental ones that can drift.
+Until v3, `WikiChangelog` was `pages` + `missing_from_server` and a per-page
+`Changelog` was a bare `ydoc_update` — so **images, custom elements and
+templates did not travel incrementally at all**. Pages a peer had never seen
+went as full `Snapshot`s, which do carry an image sidecar, so a *first* transfer
+looked complete and the *later* incremental ones quietly drifted: pages current,
+definitions stale, nothing reporting a problem.
 
-That drift is invisible if you let it be, so `waikiki/kahala.py` does not:
-a transfer falls back to the full snapshot bundle whenever the incremental path
-cannot carry what changed. See `docs/kahala-sync.md` — "when a sync goes full".
-Closing it properly means adding those to the envelope upstream, which is a spec
-bump coordinated across both sides — not something this repo can do alone, since
-the vendored tree must stay byte-identical.
+v3 gives the changelog those sections, and gives the state vector digests of
+what the sender already holds so only the difference travels. One thing it still
+cannot fix by itself: a per-page changelog is a Yjs update that names the
+*sender's* image ids, so `store.apply_wiki_changelog` remaps them from the
+envelope's `image_ids` after the merge, and `kahala.py` falls back to a full
+bundle if any reference still fails to resolve. See `docs/kahala-sync.md`.
 
 ### Version and revision are not the same pin
 

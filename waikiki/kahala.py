@@ -38,12 +38,14 @@ change nothing locally.
 from __future__ import annotations
 
 import contextlib
+import json
 import tempfile
 from pathlib import Path
 
 import httpx
 
 from . import db, kahalaauth, secretstore, store, wikis
+from .vendor import wiki_interchange as wi
 
 # A real wiki is ~215 pages / ~57MB, so reads and writes get room while the
 # connect timeout stays short -- an unreachable host should fail quickly.
@@ -96,8 +98,12 @@ def status(slug: str) -> dict:
 # --- the operations ----------------------------------------------------------
 
 
-def push(slug: str) -> dict:
+def push(slug: str, full: bool = False) -> dict:
     """Send the local wiki up, merging into the linked remote wiki.
+
+    Incremental by default: ask Kahala what it holds, send only the bytes it
+    lacks. Falls back to the whole bundle when the far end is too old to carry
+    definitions incrementally (see :func:`_speaks_v3`) or when ``full`` is set.
 
     Nothing on Kahala is deleted: its importer merges by slug. A push needs
     OWNER/ADMIN on that wiki there, which is Kahala's gate, not ours -- a 403
@@ -107,6 +113,13 @@ def push(slug: str) -> dict:
     if not ready["ok"]:
         return ready
     lk, token = ready["link"], ready["token"]
+
+    full_reason = ""
+    if not full:
+        out = _push_incremental(slug, lk, token)
+        if "fallback" not in out:
+            return out
+        full_reason = out["fallback"]
 
     with tempfile.TemporaryDirectory() as tmp:
         bundle = Path(tmp) / f"{slug}.zip"
@@ -129,17 +142,35 @@ def push(slug: str) -> dict:
     if bad:
         return bad
     summary = _json(resp)
-    return {"ok": True, "error": "", "action": "push",
+    return {"ok": True, "error": "", "action": "push", "mode": "full",
             "detail": _counts(summary),
-            "note": "Kahala merged this in. Nothing there was deleted."}
+            "note": ("Kahala merged this in. Nothing there was deleted."
+                     + (f" {full_reason}" if full_reason else ""))}
 
 
-def pull(slug: str) -> dict:
-    """Bring the linked remote wiki down, merging into the local one."""
+def pull(slug: str, full: bool = False) -> dict:
+    """Bring the linked remote wiki down, merging into the local one.
+
+    Incremental by default, falling back to the whole bundle when the far end
+    predates spec v3 or when a page ends up pointing at an image that did not
+    survive the trip. ``full`` forces the bundle.
+    """
     ready = _ready(slug)
     if not ready["ok"]:
         return ready
-    return _download_into(slug, ready["link"], ready["token"], action="pull")
+    lk, token = ready["link"], ready["token"]
+
+    reason = ""
+    if not full:
+        out = _pull_incremental(slug, lk, token)
+        if "fallback" not in out:
+            return out
+        reason = out["fallback"]
+
+    out = _download_into(slug, lk, token, action="pull")
+    if out["ok"] and reason:
+        out["note"] = f"{out['note']} {reason}"
+    return out
 
 
 def clone(base_url: str, remote: str, name: str = "") -> dict:
@@ -173,6 +204,134 @@ def clone(base_url: str, remote: str, name: str = "") -> dict:
     return out
 
 
+# --- the incremental path (issue #58) -----------------------------------------
+#
+# The bundle ships every page in full: re-syncing a 215-page wiki that differs
+# by a paragraph pushes ~57MB. The changelog ships only the missing bytes,
+# usually a few kilobytes.
+#
+# Each of these returns either a finished result, or ``_fallback(reason)``
+# meaning "use the bundle instead, and tell them why". A real failure comes back
+# as an ordinary ``ok: False`` result and does NOT fall back, because retrying a
+# genuine error the expensive way just fails again slower.
+
+_OLD_PEER = ("That Kahala is on an older interchange version, so the whole wiki "
+             "was transferred instead of just the changes.")
+
+_BROKEN_IMAGES = ("Some pages came back pointing at images that didn't survive "
+                  "the incremental transfer, so the whole wiki was fetched to "
+                  "repair them.")
+
+
+def _speaks_v3(body: bytes) -> bool:
+    """Whether the peer's envelope carries the spec-v3 sections at all.
+
+    Not a version check -- a version number would only tell us what the peer
+    *claims*. Both v3 envelope kinds always emit ``elements``/``templates``/
+    ``images``, empty or not, so the key's **absence** identifies a peer that
+    predates them. That distinction matters: a v3 peer with nothing new to send
+    and an old peer that cannot send definitions at all produce identical
+    content, and only one of them is safe to sync incrementally.
+    """
+    try:
+        envelope = json.loads(body)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(envelope, dict) and "elements" in envelope
+
+
+def _push_incremental(slug: str, lk: dict, token: str) -> dict:
+    base = f"{lk['base_url']}/api/interchange/wikis/{lk['remote']}"
+    try:
+        with _client() as client:
+            their = client.get(f"{base}/wiki-state-vector", headers=_auth(token))
+    except httpx.HTTPError as exc:
+        return _err(_unreachable(lk["base_url"], exc))
+    if their.status_code == 404:
+        # No such route at all: a Kahala from before the changelog wire.
+        return _fallback(_OLD_PEER)
+    bad = _refusal(their, lk, "push")
+    if bad:
+        return bad
+    if not _speaks_v3(their.content):
+        return _fallback(_OLD_PEER)
+
+    try:
+        peer = wi.WikiStateVector.deserialize(their.content)
+        with _bind(slug):
+            log = store.wiki_changelog_for(peer)
+        payload = log.serialize()
+    except wi.InterchangeError as exc:
+        return _err(f"Kahala's state vector was refused rather than merged: {exc}")
+    except Exception as exc:
+        return _err(f"The changes could not be gathered up: {exc}")
+
+    try:
+        with _client() as client:
+            resp = client.post(
+                f"{base}/wiki-updates",
+                headers={**_auth(token), "Content-Type": "application/json"},
+                content=payload)
+    except httpx.HTTPError as exc:
+        return _err(_unreachable(lk["base_url"], exc))
+    if resp.status_code == 409:
+        return _fallback(_OLD_PEER)      # version gate refused it: use the bundle
+    bad = _refusal(resp, lk, "push")
+    if bad:
+        return bad
+    return {"ok": True, "error": "", "action": "push", "mode": "incremental",
+            "detail": _counts(_json(resp)),
+            "note": "Only the changes were sent. Nothing on Kahala was deleted."}
+
+
+def _pull_incremental(slug: str, lk: dict, token: str) -> dict:
+    base = f"{lk['base_url']}/api/interchange/wikis/{lk['remote']}"
+    try:
+        with _bind(slug):
+            ours = store.wiki_state_vector().serialize()
+    except Exception as exc:
+        return _err(f"This wiki's state could not be summarised: {exc}")
+
+    try:
+        with _client() as client:
+            resp = client.post(
+                f"{base}/wiki-changelog",
+                headers={**_auth(token), "Content-Type": "application/json"},
+                content=ours)
+    except httpx.HTTPError as exc:
+        return _err(_unreachable(lk["base_url"], exc))
+    if resp.status_code in (404, 409):
+        return _fallback(_OLD_PEER)      # older route, or the version gate
+    bad = _refusal(resp, lk, "pull")
+    if bad:
+        return bad
+    if not _speaks_v3(resp.content):
+        return _fallback(_OLD_PEER)
+
+    try:
+        log = wi.WikiChangelog.deserialize(resp.content)
+        with _bind(slug):
+            summary = store.apply_wiki_changelog(log)
+    except wi.InterchangeError as exc:
+        return _err(f"Kahala's changes were refused rather than merged: {exc}")
+    except Exception as exc:
+        return _err(f"Kahala's changes could not be merged: {exc}")
+
+    # An update is a Yjs payload naming the sender's image ids. `store` remaps
+    # them after the merge, but if anything did not line up the page renders a
+    # broken image and says nothing -- so check, and repair with a full bundle
+    # rather than leave it.
+    with _bind(slug):
+        broken = store.unresolved_image_refs(
+            [e.slug for e in log.pages if e.changelog is not None])
+    if broken:
+        return _fallback(_BROKEN_IMAGES)
+
+    return {"ok": True, "error": "", "action": "pull", "mode": "incremental",
+            "wiki": slug, "detail": _counts(summary),
+            "note": "Only the changes were fetched. Nothing local was deleted."}
+
+
 # --- internals ---------------------------------------------------------------
 
 
@@ -201,7 +360,7 @@ def _download_into(slug: str, lk: dict, token: str, action: str) -> dict:
             return _err(f"Kahala's copy was refused rather than merged: {exc}")
 
     return {"ok": True, "error": "", "action": action, "wiki": slug,
-            "detail": _counts(summary),
+            "mode": "full", "detail": _counts(summary),
             "note": "Merged into this wiki. Nothing local was deleted."}
 
 
@@ -321,3 +480,8 @@ def _unreachable(base_url: str, exc: Exception) -> str:
 
 def _err(message: str) -> dict:
     return {"ok": False, "error": message}
+
+
+def _fallback(reason: str) -> dict:
+    """Not a failure: "the incremental path can't do this, use the bundle"."""
+    return {"ok": False, "error": "", "fallback": reason}

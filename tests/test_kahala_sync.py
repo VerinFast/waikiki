@@ -27,6 +27,7 @@ import pytest
 
 from waikiki import (config, db, kahala, kahalaauth, secretstore, store,
                      wikis)
+from waikiki.vendor import wiki_interchange as wi
 
 
 # --- fakes -------------------------------------------------------------------
@@ -502,3 +503,193 @@ def test_a_cross_site_post_is_refused(wiki, path):
                            follow_redirects=False)
         assert ours.status_code != 403, \
             f"{path} refuses Waikiki's own form, so the feature is unusable"
+
+
+# --- incremental sync ---------------------------------------------------------
+#
+# The bundle ships every page in full; a re-sync of a real wiki that differs by
+# a paragraph pushes ~57MB. These pin the cheap path AND the two ways it is
+# allowed to give up: a peer too old to carry definitions, and images that did
+# not survive the trip. Both must fall back rather than leave the wiki subtly
+# wrong, and both must SAY they fell back.
+
+
+def _remote_wiki_with(pages=(("Alpha", "first body"),), element=True):
+    """A second local wiki standing in for Kahala's copy."""
+    from waikiki import elements
+
+    other = wikis.create_wiki("Remote Source")
+    token = db.current_wiki.set(other)
+    try:
+        db.init_db()
+        if element:
+            elements.save_element("card", "Card", [{"name": "t"}],
+                                  "<b></b>", ".card{}", "")
+            store.template_save("Report", "# {{title}}")
+        for title, body in pages:
+            store.create_page(title, body)
+    finally:
+        db.current_wiki.reset(token)
+    return other
+
+
+def _as(slug, fn):
+    token = db.current_wiki.set(slug)
+    try:
+        return fn()
+    finally:
+        db.current_wiki.reset(token)
+
+
+def test_the_state_vector_and_changelog_move_definitions_not_just_pages(wiki):
+    """The whole point of spec v3, exercised through the repository."""
+    from waikiki import elements
+
+    remote = _remote_wiki_with()
+    peer_sv = _as("main", store.wiki_state_vector)
+    log = _as(remote, lambda: store.wiki_changelog_for(peer_sv))
+
+    assert [e.slug for e in log.elements] == ["card"]
+    assert "Report" in [t.name for t in log.templates]
+    assert log.carries_definitions
+
+    summary = _as("main", lambda: store.apply_wiki_changelog(log))
+    assert summary["elements"] == 1
+    assert _as("main", lambda: elements.get_element("card")) is not None, \
+        "the page arrived but the element it renders with did not"
+    assert _as("main", lambda: store.get_page("alpha")) is not None
+
+
+def test_a_second_pass_resends_nothing(wiki):
+    """If digests didn't work, every sync would ship every definition forever."""
+    remote = _remote_wiki_with()
+    first = _as(remote, lambda: store.wiki_changelog_for(
+        _as("main", store.wiki_state_vector)))
+    _as("main", lambda: store.apply_wiki_changelog(first))
+
+    second = _as(remote, lambda: store.wiki_changelog_for(
+        _as("main", store.wiki_state_vector)))
+    assert second.elements == [] and second.templates == []
+    assert not second.carries_definitions, \
+        "an envelope with nothing new stamped the v3 floor, so an older peer " \
+        "would reject it for no reason"
+
+
+def test_an_incremental_pull_asks_for_a_changelog_and_applies_it(wiki, http,
+                                                                 monkeypatch):
+    _signed_in(monkeypatch)
+    remote = _remote_wiki_with()
+    wikis.set_link("main", "https://kahala.example", "remote-wiki")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/wiki-changelog")
+        peer = wi.WikiStateVector.deserialize(request.read())
+        log = _as(remote, lambda: store.wiki_changelog_for(peer))
+        return httpx.Response(200, content=log.serialize())
+
+    http(handler)
+    out = kahala.pull("main")
+    assert out["ok"], out.get("error")
+    assert out["mode"] == "incremental"
+    assert store.get_page("alpha") is not None
+
+
+def test_an_incremental_push_sends_only_what_the_peer_lacks(wiki, http,
+                                                            monkeypatch):
+    _signed_in(monkeypatch)
+    store.create_page("Local Only", "body")
+    wikis.set_link("main", "https://kahala.example", "remote-wiki")
+    sent = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/wiki-state-vector"):
+            # A peer that holds nothing, but does speak v3.
+            return httpx.Response(200, content=wi.WikiStateVector().serialize())
+        sent["log"] = wi.WikiChangelog.deserialize(request.read())
+        return httpx.Response(200, json={"created": ["local-only"]})
+
+    http(handler)
+    out = kahala.push("main")
+    assert out["ok"], out.get("error")
+    assert out["mode"] == "incremental"
+    assert "local-only" in [p.slug for p in sent["log"].pages]
+
+
+def test_an_older_kahala_falls_back_to_the_whole_wiki_and_says_so(wiki, http,
+                                                                  monkeypatch):
+    """A v2 peer's envelope simply omits the sections — it never announces itself.
+
+    Detecting that by the *absence of the key* rather than a version number is
+    the load-bearing bit: a v3 peer with nothing new to send produces identical
+    content, and only one of the two is safe to sync incrementally.
+    """
+    _signed_in(monkeypatch)
+    remote = _remote_wiki_with()
+    wikis.set_link("main", "https://kahala.example", "remote-wiki")
+    payload = _bundle_of(remote)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/wiki-changelog"):
+            # Exactly what a pre-v3 Kahala answers: no definition sections.
+            return httpx.Response(200, json={
+                "format": "good-place.wiki-interchange/wiki-changelog",
+                "spec_version": 1, "yjs_protocol": 1,
+                "pages": [], "missing_from_server": []})
+        return httpx.Response(200, content=payload)
+
+    http(handler)
+    out = kahala.pull("main")
+    assert out["ok"], out.get("error")
+    assert out["mode"] == "full"
+    assert "older interchange" in out["note"], \
+        "it silently used the slow path; a fallback nobody can see is one " \
+        "nobody can question"
+
+
+def test_a_real_error_does_not_quietly_retry_the_expensive_way(wiki, http,
+                                                              monkeypatch):
+    """Falling back on a genuine failure just fails again, slower."""
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "remote-wiki")
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(403, json={"detail": "nope"})
+
+    http(handler)
+    out = kahala.pull("main")
+    assert not out["ok"] and "owner or admin" in out["error"]
+    assert not any("snapshot" in c for c in calls), \
+        "a 403 sent us round again for the whole wiki instead of reporting it"
+
+
+def test_the_full_flag_skips_the_incremental_path_entirely(wiki, http,
+                                                           monkeypatch):
+    _signed_in(monkeypatch)
+    remote = _remote_wiki_with()
+    wikis.set_link("main", "https://kahala.example", "remote-wiki")
+    payload = _bundle_of(remote)
+    seen = http(lambda r: httpx.Response(200, content=payload))
+
+    out = kahala.pull("main", full=True)
+    assert out["ok"] and out["mode"] == "full"
+    assert all("changelog" not in str(r.url) for r in seen)
+
+
+def test_an_image_blob_that_lies_about_its_hash_is_refused(wiki):
+    """Bytes and digest arrive together from a peer, so the digest proves nothing
+    unless it is checked. Unverified, a payload lands under a trusted hash."""
+    log = wi.WikiChangelog(images=[
+        wi.BundleImage(sha256="ab" * 32, media_type="image/png", data=b"not that")])
+    with pytest.raises(wi.MalformedEnvelopeError):
+        store.apply_wiki_changelog(log)
+
+
+def test_an_update_for_a_page_we_do_not_have_is_skipped_not_invented(wiki):
+    """An incremental update cannot be applied to nothing."""
+    log = wi.WikiChangelog(pages=[wi.WikiChangelogPage(
+        slug="never-seen", changelog=wi.Changelog(ydoc_update=b"").serialize())])
+    summary = store.apply_wiki_changelog(log)
+    assert summary["skipped"] == ["never-seen"]
+    assert store.get_page("never-seen") is None

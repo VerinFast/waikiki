@@ -249,9 +249,19 @@ two in parity (same substance, different voice) whenever you change either.
     (`auth.same_origin`, in the middleware so a later route can't forget): the
     app carries no CSRF tokens anywhere, which is an accepted local-damage risk
     elsewhere and an exfiltration risk *here*.
-    `tests/test_kahala_sync.py` guards all of it; its redirect and
-    credential-location cases are written to fail if the guard is removed, and
-    must not be relaxed to make something pass.
+    A transfer is **incremental by default** and falls back to the whole bundle
+    in exactly two cases, each of which names itself in the result: a peer that
+    predates interchange spec v3 (detected by the *absence* of the definition
+    sections, never a version number — a v3 peer with nothing to send and an old
+    peer that cannot send produce identical bytes), and a page left pointing at
+    an image that did not survive the trip. A genuine error is reported, never
+    retried the expensive way. `store.apply_wiki_changelog` lands definitions and
+    blobs *before* pages, verifies every blob against the hash it claims, and
+    remaps the sender's image ids **after** the merge — rewriting inside an
+    incoming Yjs update would corrupt it.
+    `tests/test_kahala_sync.py` guards all of it; its redirect,
+    credential-location, CSRF and older-peer cases are written to fail if the
+    guard is removed, and must not be relaxed to make something pass.
 
 ## Before committing
 

@@ -774,15 +774,15 @@ def kahala_unlink(wiki: str = Form(...)):
 
 
 @app.post("/kahala/push")
-def kahala_push(wiki: str = Form(...)):
-    done = kahala.push(wiki)
+def kahala_push(wiki: str = Form(...), full: str = Form("")):
+    done = kahala.push(wiki, full=bool(full))
     return _kahala_back(wiki, error=done.get("error", ""),
                         ok=_kahala_done(done, "Pushed"))
 
 
 @app.post("/kahala/pull")
-def kahala_pull(wiki: str = Form(...)):
-    done = kahala.pull(wiki)
+def kahala_pull(wiki: str = Form(...), full: str = Form("")):
+    done = kahala.pull(wiki, full=bool(full))
     return _kahala_back(wiki, error=done.get("error", ""),
                         ok=_kahala_done(done, "Pulled"))
 
@@ -800,10 +800,17 @@ def kahala_clone(base_url: str = Form(...), remote: str = Form(...),
 
 
 def _kahala_done(done: dict, verb: str) -> str:
+    """What happened, including WHICH transfer ran.
+
+    The mode is part of the message rather than a detail: "only the changes" and
+    "the whole wiki" behave differently when something goes wrong, and a fallback
+    the user cannot see is a fallback they cannot question."""
     if not done.get("ok"):
         return ""
     detail = done.get("detail") or "nothing to move"
-    return f"{verb}: {detail}. {done.get('note', '')}".strip()
+    mode = {"incremental": "changes only", "full": "whole wiki"}.get(done.get("mode"), "")
+    head = f"{verb}{f' ({mode})' if mode else ''}"
+    return f"{head}: {detail}. {done.get('note', '')}".strip()
 
 
 @app.get("/new", response_class=HTMLResponse)

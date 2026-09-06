@@ -82,6 +82,13 @@ from .version import (
     check_compatible,
     negotiate,
 )
+from .wiki_changelog import (
+    FORMAT_WIKI_CHANGELOG,
+    FORMAT_WIKI_STATE_VECTOR,
+    WikiChangelog,
+    WikiChangelogPage,
+    WikiStateVector,
+)
 
 __version__ = "0.2.0"
 
@@ -134,6 +141,12 @@ __all__ = [
     "BundleReader",
     "WikiBundle",
     "FORMAT_BUNDLE",
+    # wiki-level changelog (incremental whole-wiki sync)
+    "WikiStateVector",
+    "WikiChangelog",
+    "WikiChangelogPage",
+    "FORMAT_WIKI_STATE_VECTOR",
+    "FORMAT_WIKI_CHANGELOG",
     # errors
     "InterchangeError",
     "IncompatibleVersionError",

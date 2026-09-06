@@ -113,7 +113,7 @@ def negotiate(
     if remote.yjs_protocol != local.yjs_protocol:
         return (
             Compatibility.REJECT,
-            f"Yjs protocol mismatch: peer v{remote.yjs_protocol}, " f"local v{local.yjs_protocol}",
+            f"Yjs protocol mismatch: peer v{remote.yjs_protocol}, local v{local.yjs_protocol}",
         )
     if remote.spec_version > local.spec_version:
         return (

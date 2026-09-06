@@ -6,7 +6,8 @@ published to PyPI** is vendored into the source tree rather than declared in
 at a recorded revision, with the pinned version recorded in three places that
 must stay in lockstep:
 
-- `waikiki/vendor/__init__.py` — `WIKI_INTERCHANGE_VERSION` / `_SOURCE`
+- `waikiki/vendor/__init__.py` — `WIKI_INTERCHANGE_VERSION` /
+  `WIKI_INTERCHANGE_REVISION` / `_SOURCE`
 - `requirements.txt` — the "VENDORED, not on PyPI" note
 - this document
 
@@ -16,9 +17,9 @@ must stay in lockstep:
 |---|---|
 | **Path** | `waikiki/vendor/wiki_interchange/` |
 | **Pinned version** | `0.2.0` (spec `SPEC_VERSION = 2`, floor `1`, Yjs sync protocol `1`) |
-| **Upstream** | `VerinFast/good-place`, `packages/wiki-interchange/wiki_interchange/` (**private repo** — first-party, same owner; the vendored copy here is the public one, under this project's Elastic License 2.0) |
-| **Upstream branch** | `dev` (PR good-place#3683, merged — it subsumed #3677) |
-| **Upstream revision** | `9ea72c8c` — the vendored tree is byte-identical to `packages/wiki-interchange/wiki_interchange/` at this commit |
+| **Upstream** | `gitlab.kwirker.com/good-place/platform`, `packages/wiki-interchange/wiki_interchange/` (**private repo** — first-party, same owner; the vendored copy here is the public one, under this project's Elastic License 2.0). GitLab is canonical; the GitHub mirror carries the same code but issues and MRs live on GitLab. |
+| **Upstream branch** | `main` |
+| **Upstream revision** | `46bbf8c9` — the vendored tree is byte-identical to `packages/wiki-interchange/wiki_interchange/` at this commit |
 | **Runtime dep** | `pycrdt>=0.10,<0.15` (satisfied by Waikiki's own pin) |
 
 ### What it is
@@ -36,7 +37,12 @@ Waikiki consumes it through `waikiki/ydoc.py`:
   page's snapshot, the hierarchy by slug, order, starred, custom elements,
   templates with their metadata schemas, and one copy of each distinct image
   blob. Both ends stream, one page at a time.
-- `state_vector` / `produce_changelog` / `apply_changelog` — incremental sync.
+- `state_vector` / `produce_changelog` / `apply_changelog` — per-page
+  incremental sync.
+- `WikiStateVector` / `WikiChangelog` / `WikiChangelogPage` — the same handshake
+  at **whole-wiki** granularity: a peer publishes what it holds for every page,
+  and gets back per-page updates for pages it has plus full snapshots for pages
+  it lacks. What these envelopes **do not carry** is load-bearing — see below.
 - `check_compatible` / `negotiate` — the spec + Yjs-protocol version gate that
   **rejects** an incompatible envelope rather than merging bad bytes.
 
@@ -56,6 +62,30 @@ Waikiki routinely meets a spec-1 peer, and a page snapshot stamped with the
 producer's build number would be rejected by a peer that understands it perfectly.
 `MIN_COMPATIBLE_SPEC_VERSION` stays `1` — v2 is additive, so this build still
 reads v1 payloads.
+
+### What the wiki changelog does not carry (known limit)
+
+`WikiChangelog` is `pages` + `missing_from_server`, and a per-page `Changelog`
+is a bare `ydoc_update`. Neither carries **images, custom elements or
+templates**. Pages the peer has never seen travel as full `Snapshot`s, which
+*do* carry their image sidecar — so a first transfer is complete, and it is the
+*later* incremental ones that can drift.
+
+That drift is invisible if you let it be, so `waikiki/kahala.py` does not:
+a transfer falls back to the full snapshot bundle whenever the incremental path
+cannot carry what changed. See `docs/kahala-sync.md` — "when a sync goes full".
+Closing it properly means adding those to the envelope upstream, which is a spec
+bump coordinated across both sides — not something this repo can do alone, since
+the vendored tree must stay byte-identical.
+
+### Version and revision are not the same pin
+
+Upstream shipped the whole-wiki changelog — a new module and five new exports —
+**without moving `__version__` off `0.2.0`**. So the version string cannot tell
+you the vendored copy is stale, which is precisely how it went stale here. When
+checking, diff the tree or compare `WIKI_INTERCHANGE_REVISION` against
+upstream's latest commit for that path; move the revision on every re-sync even
+when the version has not changed.
 
 ### Import atomicity (known limit)
 
@@ -84,19 +114,25 @@ build self-contained.
 
 When W1 (or a later spec bump) changes upstream:
 
-1. Pull the package tree from the recorded branch (or its merge on `main`):
+1. Pull the package tree from `main` (GitLab is canonical):
 
    ```sh
-   gh api "repos/VerinFast/good-place/contents/packages/wiki-interchange/\
-   wiki_interchange?ref=<branch>" --jq '.[].path'
+   GITLAB_HOST=gitlab.kwirker.com glab api \
+     "projects/good-place%2Fplatform/repository/files/\
+   packages%2Fwiki-interchange%2Fwiki_interchange%2F<file>/raw?ref=main"
    # fetch each file's raw content into waikiki/vendor/wiki_interchange/
    ```
+
+   Then `diff` every file against the vendored copy — the tree must be
+   byte-identical, and the diff is also how you find out *what* moved.
 
 2. Copy the `wiki_interchange/` package over `waikiki/vendor/wiki_interchange/`
    (keep only the package — not its `pyproject.toml`/`tests/`, which stay
    upstream).
-3. Read the new `__version__` from upstream's `wiki_interchange/__init__.py` and
-   update the pin in **all three** places listed at the top of this file.
+3. Read the new `__version__` from upstream's `wiki_interchange/__init__.py`
+   **and** the commit you synced from, and update the pin in **all three**
+   places listed at the top of this file. The revision moves every time; the
+   version may not.
 4. If upstream's `pycrdt` cap moved, roll `requirements.txt`'s `pycrdt` pin
    forward to match (never pin backward — see the repo's roll-forward rule).
 5. Run the suite: `python -m pytest`. A `SPEC_VERSION`/Yjs bump is expected to

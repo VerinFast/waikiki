@@ -40,7 +40,11 @@ _GUEST_DENY_EXACT = {
     "/logs/clear", "/debug", "/debug/clear", "/settings/style-refs",
     "/settings/models/add", "/settings/models/activate",
 }
-_GUEST_DENY_PREFIX = ("/wikis/", "/elements/", "/settings/", "/debug", "/logs")
+# "/reports" is owner-only: the agent bug-report queue can quote page content
+# from whatever wiki an agent was working in, and its links lead to a public
+# tracker.
+_GUEST_DENY_PREFIX = ("/wikis/", "/elements/", "/settings/", "/debug", "/logs",
+                      "/reports")
 _GUEST_DENY_SUFFIX = ("/chat", "/generate-image", "/purge")
 
 

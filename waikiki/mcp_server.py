@@ -31,8 +31,8 @@ import httpx
 from fastmcp import FastMCP
 from mcp.types import Icon
 
-from . import (accesslog, config, db, deeplink, edits, elements, imagegen, rag,
-               render, store, structure, wikis)
+from . import (accesslog, bugreports, config, db, deeplink, edits, elements,
+               imagegen, rag, render, store, structure, wikis)
 from . import __version__ as _pkg_version
 
 WEB = config.WEB_URL
@@ -716,14 +716,22 @@ def broken_links() -> dict:
 
 @mcp.tool
 def list_templates() -> dict:
-    """List page templates in the active wiki."""
+    """List page templates in the active wiki, by name.
+
+    Names only — call get_template for a template's actual markdown and schema."""
     wiki = _require_wiki()
     return {"wiki": wiki, "templates": [t["name"] for t in store.templates_list()]}
 
 
 @mcp.tool
 def create_template(name: str, markdown: str, meta_schema: str = "") -> dict:
-    """Create (or update) a page template in the active wiki. Put {{title}} where
+    """Create a page template, or REPLACE an existing one wholesale.
+
+    Updating an existing template? Read it with get_template first, or change
+    just the part you mean with edit_template — this replaces the entire body,
+    so anything you did not include is gone.
+
+    Put {{title}} where
     the page title should go — new pages made from it fill that in. Frontmatter is
     fine (e.g. a Character template with HitPoints / Class properties), and the
     body may contain arbitrary HTML in addition to Markdown — it renders (raw HTML
@@ -739,6 +747,40 @@ def create_template(name: str, markdown: str, meta_schema: str = "") -> dict:
     wiki = _require_wiki()
     store.template_save(name, markdown, meta_schema=(meta_schema or None))
     return {"wiki": wiki, "template": name}
+
+
+@mcp.tool
+def get_template(name: str) -> dict:
+    """Read a template's markdown and its metadata schema.
+
+    **Call this before create_template on a template that already exists.**
+    create_template replaces the whole body, so editing one without reading it
+    first means reconstructing it from a page it produced — and anything the
+    template has that the page doesn't show is lost (issue #88). To change part
+    of a template, prefer edit_template."""
+    wiki = _require_wiki()
+    tpl = store.template_by_name(name)
+    if not tpl:
+        return {"wiki": wiki, "error": f"no template '{name}'"}
+    return {"wiki": wiki, "name": tpl["name"], "markdown": tpl["markdown"] or "",
+            "meta_schema": tpl["meta_schema"] or ""}
+
+
+@mcp.tool
+def edit_template(name: str, old_text: str, new_text: str) -> dict:
+    """PREFERRED way to change an existing template: replace an exact snippet of
+    its markdown (`old_text`) with `new_text`, leaving the rest untouched.
+
+    `old_text` must occur exactly once — call get_template first and copy the
+    text you mean to replace. Zero matches or several are refused rather than
+    guessed at. The metadata schema is left alone.
+
+    Unlike edit_page this is not a live merge: templates have no collaborative
+    room, so it is a plain find/replace on the stored markdown. What it avoids is
+    overwriting the parts of the template you did not mean to touch."""
+    wiki = _require_wiki()
+    out = store.template_edit(name, old_text, new_text)
+    return {"wiki": wiki, **out}
 
 
 @mcp.tool
@@ -1225,6 +1267,29 @@ def generate_image(slug: str, description: str) -> dict:
     model = db.get_setting("image_model", "")
     result = imagegen.generate(slug, description, cli, model)
     return {"wiki": wiki, **result}
+
+
+@mcp.tool
+def report_bug(title: str, body: str, tool: str = "") -> dict:
+    """File a bug or a limitation you hit in Waikiki itself.
+
+    Use this the moment you hit it, while you still have the failing call and
+    its arguments — that detail is the whole value of the report and it does not
+    survive the end of a task. `tool` is the Waikiki tool that misbehaved, if
+    one did.
+
+    **This does not publish anything.** The report is queued in Waikiki for the
+    person to read and submit themselves, for two reasons worth knowing: filing
+    directly would mean this app holding a GitHub token, and a report written at
+    the point of failure often quotes the wiki's own content — which on a public
+    tracker is a privacy leak, not just noise. So write it as if a person will
+    read it before the world does, because one will. Say what you expected, what
+    happened, and the exact call. Don't paste page content you don't need.
+
+    Waikiki adds its version, the active wiki and `tool` itself; no need to
+    repeat those."""
+    active = _active_wiki() or ""
+    return bugreports.add(title, body, wiki=active, tool=tool)
 
 
 def _silence_stdout_noise() -> None:

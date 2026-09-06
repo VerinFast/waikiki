@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Kahala — Waikiki{% endblock %}
+{% block content %}
+  <div class="article-head"><h1>Kahala</h1></div>
+
+  {% if ok %}<div class="banner ok">{{ ok }}</div>{% endif %}
+  {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
+
+  <p class="muted">Kahala is the shared, server-side half of the same wiki. A
+    local wiki can be linked to one there, then pushed up or pulled down. Only
+    content travels — pages, their hierarchy, elements, templates and images.
+    Search indexes are rebuilt on arrival rather than sent.</p>
+
+  {# --- signing in ---------------------------------------------------- #}
+  <section class="settings" id="kahala-account">
+    <h2>Account</h2>
+    {% if not status.secure_store %}
+      <p class="banner err">{{ status.reason }}</p>
+      <p class="muted note">Waikiki will not keep a sign-in token in a plain
+        file, so signing in is switched off here rather than done less safely.</p>
+    {% elif not status.can_sign_in %}
+      <p class="banner err">{{ status.reason }}</p>
+    {% elif status.signed_in %}
+      <p>Signed in. The token is kept in your Keychain, never in a wiki file,
+        so it is not included when you save or share a wiki.</p>
+      <form method="post" action="/kahala/signout">
+        <input type="hidden" name="wiki" value="{{ subject }}">
+        <button class="btn" type="submit">Sign out</button>
+      </form>
+    {% else %}
+      <p>You aren’t signed in to Kahala yet.</p>
+      <a class="btn primary" href="/kahala/signin?wiki={{ subject }}">Sign in to Kahala</a>
+      <p class="muted note">This opens Kahala’s sign-in page in your browser and
+        comes back here. Waikiki never sees your password.</p>
+    {% endif %}
+  </section>
+
+  {# --- this wiki's link ---------------------------------------------- #}
+  <section class="settings" id="kahala-link">
+    <h2>This wiki <span class="muted">({{ subject }})</span></h2>
+    {% if status.linked %}
+      <p>Linked to <strong>{{ status.remote }}</strong> on
+        <code>{{ status.base_url }}</code>.</p>
+
+      <div class="kahala-actions">
+        <form method="post" action="/kahala/push" style="display:inline">
+          <input type="hidden" name="wiki" value="{{ subject }}">
+          <button class="btn primary" type="submit"
+                  {{ 'disabled' if not status.signed_in }}>Push to Kahala</button>
+        </form>
+        <form method="post" action="/kahala/pull" style="display:inline">
+          <input type="hidden" name="wiki" value="{{ subject }}">
+          <button class="btn" type="submit"
+                  {{ 'disabled' if not status.signed_in }}>Pull from Kahala</button>
+        </form>
+        <form method="post" action="/kahala/unlink" style="display:inline">
+          <input type="hidden" name="wiki" value="{{ subject }}">
+          <button class="btn" type="submit">Forget this link</button>
+        </form>
+      </div>
+
+      {% if not status.signed_in %}
+        <p class="muted note">Push and pull need you to be signed in.</p>
+      {% endif %}
+
+      {# The one thing people misread about a snapshot round-trip. Say it on the
+         page, next to the buttons, not only in the docs. #}
+      <p class="muted note"><strong>Both directions merge; neither deletes.</strong>
+        A push adds and updates pages on Kahala and removes nothing there; a pull
+        does the same here. So a page you deleted locally is still on Kahala, and
+        a pull will bring it back.</p>
+    {% else %}
+      <p>This wiki isn’t linked yet.</p>
+      <form method="post" action="/kahala/link" class="addmodel">
+        <input type="hidden" name="wiki" value="{{ subject }}">
+        <label>Kahala address
+          <input type="url" name="base_url" required
+                 placeholder="https://kahala.example.com"></label>
+        <label>Wiki name there
+          <input type="text" name="remote" required placeholder="beaconlight"></label>
+        <button class="btn primary" type="submit">Link</button>
+      </form>
+      <p class="muted note">Linking only records the address here on this
+        machine. It is never written into the wiki itself, so it can’t travel to
+        someone you share the wiki with.</p>
+    {% endif %}
+  </section>
+
+  {# --- clone --------------------------------------------------------- #}
+  <section class="settings" id="kahala-clone">
+    <h2>Clone a wiki from Kahala</h2>
+    <form method="post" action="/kahala/clone" class="addmodel">
+      <label>Kahala address
+        <input type="url" name="base_url" required
+               placeholder="https://kahala.example.com"></label>
+      <label>Wiki name there
+        <input type="text" name="remote" required placeholder="beaconlight"></label>
+      <label>Call it <span class="muted">(optional)</span>
+        <input type="text" name="name" placeholder="same name"></label>
+      <button class="btn primary" type="submit"
+              {{ 'disabled' if not status.signed_in }}>Clone</button>
+    </form>
+    <p class="muted note">A clone always creates a <em>new</em> local wiki, so it
+      can never write over one you already have.</p>
+  </section>
+
+  {# --- other linked wikis -------------------------------------------- #}
+  {% set others = links.items() | selectattr('1') | list %}
+  {% if others %}
+  <section class="settings" id="kahala-all">
+    <h2>All linked wikis</h2>
+    <table class="modeltable"><tbody>
+      {% for slug, lk in others %}
+        <tr>
+          <td><strong>{{ slug }}</strong>
+            <div class="muted wikistats">{{ lk.remote }} on {{ lk.base_url }}</div></td>
+          <td><a class="btn" href="/kahala?wiki={{ slug }}">Open</a></td>
+        </tr>
+      {% endfor %}
+    </tbody></table>
+  </section>
+  {% endif %}
+{% endblock %}

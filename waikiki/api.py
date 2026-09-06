@@ -11,7 +11,7 @@ import os
 import signal
 import sys
 import tempfile
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,8 +26,8 @@ from pydantic import BaseModel
 from . import (accesslog, ai, appconfig, auth, authoring, backups, bonjour,
                calendarfeed, capabilities, chat, collab, doorman,
                config, db, debuglog, deeplink, edits, elements, embeddings,
-               help_content, imagegen, pdfgen, rag, render, store, structure,
-               tunnel, updater, wikis)
+               help_content, imagegen, kahala, kahalaauth, pdfgen, rag, render,
+               store, structure, tunnel, updater, wikis)
 
 
 @asynccontextmanager
@@ -327,6 +327,20 @@ class ShareAuthMiddleware:
 
         client = (scope.get("client") or ("", 0))[0]
         headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
+
+        # Cross-site POSTs to the Kahala routes are refused even for the owner.
+        # Everywhere else the app has no CSRF defence and the worst a forged
+        # POST does is local damage; here a forged link+push would send the whole
+        # wiki to a host the attacker names. Checked in the middleware rather
+        # than per-route so a route added later cannot forget it.
+        if (path.startswith("/kahala") and scope.get("method") == "POST"
+                and not auth.same_origin(headers)):
+            return await self._deny(
+                scope, receive, send, 403,
+                "That request didn't come from Waikiki's own pages, and the "
+                "Kahala controls can send a wiki off this machine, so it was "
+                "refused.")
+
         # Headers matter here: a tunnel reaches us over loopback, so address alone
         # would hand internet traffic full owner rights.
         if auth.is_local(client, headers):
@@ -689,6 +703,107 @@ async def wikis_import(file: UploadFile):
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie("waikiki_wiki", slug, max_age=60 * 60 * 24 * 365, samesite="lax")
     return resp
+
+
+# --- Kahala (issue #58) ------------------------------------------------------
+#
+# Routes only, per rule 1: every one of these validates its form and calls
+# `kahala`, which owns the link record, the transfer and the wording of every
+# refusal. Nothing here decides anything.
+#
+# All of it is owner-only -- `auth._GUEST_DENY_PREFIX` carries "/kahala" -- so a
+# LAN guest can neither sign this app in nor push its wikis anywhere.
+
+
+def _kahala_back(wiki: str, ok: str = "", error: str = "") -> RedirectResponse:
+    query = urlencode({k: v for k, v in
+                       (("wiki", wiki), ("ok", ok), ("error", error)) if v})
+    return RedirectResponse(f"/kahala?{query}", status_code=303)
+
+
+@app.get("/kahala", response_class=HTMLResponse)
+def kahala_pane(request: Request, wiki: str = "", ok: str = "", error: str = ""):
+    slug = wiki if wikis.exists(wiki) else db.active_wiki()
+    return templates.TemplateResponse(request, "kahala.html", _ctx(
+        request, ok=ok, error=error, subject=slug,
+        status=kahala.status(slug),
+        links={w["slug"]: wikis.get_link(w["slug"]) for w in wikis.list_wikis()}))
+
+
+@app.get("/kahala/signin")
+def kahala_signin(wiki: str = ""):
+    try:
+        url, _state = kahalaauth.begin(next_url=f"/kahala?wiki={quote(wiki)}")
+    except ValueError as exc:
+        return _kahala_back(wiki, error=str(exc))
+    # Off to Keycloak. The code comes back to /kahala/callback on this same
+    # loopback port, so nothing else has to be listening.
+    return RedirectResponse(url, status_code=303)
+
+
+@app.get("/kahala/callback")
+def kahala_callback(code: str = "", state: str = "", error: str = "",
+                    error_description: str = ""):
+    if error:
+        return _kahala_back("", error=f"Kahala's sign-in returned: "
+                                      f"{error_description or error}")
+    done = kahalaauth.complete(code, state)
+    if not done["ok"]:
+        return _kahala_back("", error=done["error"])
+    return RedirectResponse(done["next"], status_code=303)
+
+
+@app.post("/kahala/signout")
+def kahala_signout(wiki: str = Form("")):
+    kahalaauth.sign_out()
+    return _kahala_back(wiki, ok="Signed out. Your wikis are untouched.")
+
+
+@app.post("/kahala/link")
+def kahala_link(wiki: str = Form(...), base_url: str = Form(...),
+                remote: str = Form(...)):
+    done = kahala.link(wiki, base_url, remote)
+    return _kahala_back(wiki, ok="Linked." if done["ok"] else "",
+                        error=done.get("error", ""))
+
+
+@app.post("/kahala/unlink")
+def kahala_unlink(wiki: str = Form(...)):
+    kahala.unlink(wiki)
+    return _kahala_back(wiki, ok="Link forgotten. Nothing was deleted.")
+
+
+@app.post("/kahala/push")
+def kahala_push(wiki: str = Form(...)):
+    done = kahala.push(wiki)
+    return _kahala_back(wiki, error=done.get("error", ""),
+                        ok=_kahala_done(done, "Pushed"))
+
+
+@app.post("/kahala/pull")
+def kahala_pull(wiki: str = Form(...)):
+    done = kahala.pull(wiki)
+    return _kahala_back(wiki, error=done.get("error", ""),
+                        ok=_kahala_done(done, "Pulled"))
+
+
+@app.post("/kahala/clone")
+def kahala_clone(base_url: str = Form(...), remote: str = Form(...),
+                 name: str = Form("")):
+    done = kahala.clone(base_url, remote, name)
+    if not done["ok"]:
+        return _kahala_back("", error=done["error"])
+    resp = _kahala_back(done["wiki"], ok=_kahala_done(done, "Cloned"))
+    resp.set_cookie("waikiki_wiki", done["wiki"], max_age=60 * 60 * 24 * 365,
+                    samesite="lax")
+    return resp
+
+
+def _kahala_done(done: dict, verb: str) -> str:
+    if not done.get("ok"):
+        return ""
+    detail = done.get("detail") or "nothing to move"
+    return f"{verb}: {detail}. {done.get('note', '')}".strip()
 
 
 @app.get("/new", response_class=HTMLResponse)

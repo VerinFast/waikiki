@@ -40,12 +40,48 @@ _GUEST_DENY_EXACT = {
     "/logs/clear", "/debug", "/debug/clear", "/settings/style-refs",
     "/settings/models/add", "/settings/models/activate",
 }
-_GUEST_DENY_PREFIX = ("/wikis/", "/elements/", "/settings/", "/debug", "/logs")
+# "/kahala" covers the whole Kahala pane. A guest reaching it could push this
+# machine's wiki to a Kahala *they* name -- exfiltration, not misconfiguration --
+# or sign the owner's app in and out. Strictly owner-only.
+_GUEST_DENY_PREFIX = ("/wikis/", "/elements/", "/settings/", "/debug", "/logs",
+                      "/kahala")
 _GUEST_DENY_SUFFIX = ("/chat", "/generate-image", "/purge")
 
 
 def _cfg(key, default=None):
     return appconfig.get(key, default)
+
+
+def same_origin(headers: dict) -> bool:
+    """Whether a state-changing request came from Waikiki's own pages.
+
+    Waikiki has no CSRF tokens: loopback callers are owner, so any web page the
+    user visits can POST to ``127.0.0.1`` and be obeyed. For the rest of the app
+    that is a known, accepted local-damage risk. For the Kahala routes it is
+    not the same risk at all -- a forged ``/kahala/link`` followed by a forged
+    ``/kahala/push`` sends the user's entire wiki to a server the attacker
+    names. That is exfiltration, so this surface is checked.
+
+    Two signals, in order of trust:
+
+    * ``Sec-Fetch-Site`` is set by the browser itself and cannot be spoofed by
+      page script. ``same-origin`` is our own form; ``none`` is a typed URL or
+      a bookmark. ``cross-site`` and ``same-site`` are refused.
+    * ``Origin`` is the fallback for clients that don't send the first. It must
+      match the ``Host`` we were reached on.
+
+    Neither present means no browser is involved (curl, the MCP server), and a
+    non-browser has no ambient credentials to be abused in the first place --
+    the whole attack depends on the browser attaching them for you.
+    """
+    site = headers.get("sec-fetch-site", "")
+    if site:
+        return site in ("same-origin", "none")
+    origin = headers.get("origin", "")
+    if not origin:
+        return True
+    from urllib.parse import urlparse
+    return urlparse(origin).netloc == headers.get("host", "")
 
 
 def enabled() -> bool:

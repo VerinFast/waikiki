@@ -512,6 +512,54 @@ def _public_link() -> dict:
                 where=where, optional=True)
 
 
+def _kahala_sync() -> dict:
+    """Syncing with a Kahala server (issue #58).
+
+    Three states, and the difference matters: **no secure store** is a property
+    of the build and there is nothing to press; **not signed in** is one click
+    away and the button says so; **signed in** is ready. Not-linked is
+    deliberately not a failure -- most wikis are local on purpose, so a wiki with
+    no link is working as intended, not degraded.
+    """
+    from . import kahala, kahalaauth, secretstore, wikis
+
+    powers = "Pushing a wiki up to Kahala and pulling one back down."
+    where = {"label": "Kahala", "href": "/kahala"}
+
+    if not secretstore.available():
+        return _cap("kahala", "Kahala sync", powers, UNAVAILABLE,
+                    secretstore.unavailable_reason(),
+                    remedy=_manual(
+                        "Open the Kahala pane",
+                        "Nothing to install: this build has no secure store to "
+                        "keep a sign-in token in, and Waikiki will not fall back "
+                        "to writing one into a plain file.",
+                        link="/kahala"),
+                    where=where, optional=True)
+
+    can, why = kahalaauth.can_sign_in()
+    if not can:
+        return _cap("kahala", "Kahala sync", powers, UNAVAILABLE, why,
+                    where=where, optional=True)
+
+    if not kahalaauth.signed_in():
+        return _cap("kahala", "Kahala sync", powers, DEGRADED,
+                    "Not signed in to Kahala, so push and pull will refuse.",
+                    remedy=_manual(
+                        "Sign in to Kahala",
+                        "Opens Kahala's own sign-in page in your browser and "
+                        "comes back. Waikiki never sees your password.",
+                        link="/kahala"),
+                    where=where, optional=True)
+
+    linked = sum(1 for w in wikis.list_wikis() if wikis.get_link(w["slug"]))
+    return _cap("kahala", "Kahala sync", powers, OK,
+                (f"Signed in; {linked} wiki{'' if linked == 1 else 's'} linked."
+                 if linked else
+                 "Signed in. No wiki is linked to a Kahala one yet."),
+                where=where, optional=True)
+
+
 def _semantic_search() -> dict:
     from . import db as _db
 
@@ -575,6 +623,7 @@ def report() -> list[dict]:
         _safe("updates", "Automatic updates", _updates),
         _safe("public-link", "Temporary public link", _public_link),
         _safe("semantic-search", "Semantic search", _semantic_search),
+        _safe("kahala", "Kahala sync", _kahala_sync),
     ]
     _cache[wiki] = {"at": now, "value": caps}
     return caps

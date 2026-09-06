@@ -55,6 +55,15 @@ two in parity (same substance, different voice) whenever you change either.
   RECURRENCE-ID expansion, and the **host allow-list** that is the sole guard on
   the one route that fetches a caller-chosen URL. Sits below the routes and holds
   no SQL — see `docs/calendar-feeds.md` and rule 10.
+- `waikiki/kahala.py` — linking a local wiki to a **Kahala** one and moving whole
+  wikis over its `/api/interchange/*` wire (clone, push, pull). Holds the link
+  record accessors and the wording of every refusal; no SQL, no format code —
+  the bundle is the vendored interchange library's. Sits below the routes.
+- `waikiki/kahalaauth.py` — the **OIDC public client** (`good-place-waikiki`,
+  auth code + PKCE S256, no secret) that signs in to Kahala. The callback lands
+  on our own loopback port, never a custom scheme.
+- `waikiki/secretstore.py` — the macOS Keychain, and the **refusal to fall back**
+  to a file when there isn't one. The only place a credential is written.
 - `waikiki/deeplink.py` — `waikiki://` deep links: the allow-list that turns an
   external URL into an in-app destination (see `docs/deep-links.md`).
 - `waikiki/updater.py` — self-update for the packaged `.app`: signature-verified
@@ -67,6 +76,9 @@ two in parity (same substance, different voice) whenever you change either.
 - `docs/calendar-feeds.md` — subscribed calendars: why the fetch is
   server-side, why the host allow-list is the only thing keeping that route from
   being an open proxy, and what recurrence expansion has to get right.
+- `docs/kahala-sync.md` — the Kahala round-trip: why push and pull both merge,
+  where the refresh token lives and what the Keychain does and does not buy,
+  and why a redirect is never followed.
 - `docs/doorman.md` — the optional Doorman integration and why it stays optional.
 - `docs/capabilities.md` — the capabilities view, remedy descriptors, and the
   one install that pipes a script into a shell.
@@ -209,6 +221,37 @@ two in parity (same substance, different voice) whenever you change either.
     and an unreachable host is a **502 that says so**, because an empty month
     grid claims "nothing is scheduled". `tests/test_calendar_feed.py` guards it,
     and its refusal cases must never be relaxed to make something pass.
+
+11. **The Kahala round-trip merges, holds no credential in a wiki, and never
+    follows a redirect.** `kahala.py` moves a whole-wiki bundle over Kahala's
+    `/api/interchange/*` routes; the format and its version gate are the
+    vendored library's (rule 7), so what this adds is a wire and a credential —
+    and each has one way it goes wrong. Four things are load-bearing. **Push and
+    pull both merge and neither deletes**: a snapshot round-trip merges by slug
+    on both ends, so a page deleted locally survives a push and returns on the
+    next pull — the UI says that beside the buttons, because calling it "upload"
+    or "sync" builds in exactly the surprise issue #58 warned about. **The
+    refresh token lives in the Keychain and nowhere else** (`secretstore`): not
+    in the wiki's `settings` table, because the wiki file *is* what "Save wiki"
+    exports, and not in `app_config.json`, because that is plaintext in the data
+    dir; with no secure store, signing in is refused and reported rather than
+    quietly downgraded to a file. The link record (address + remote slug) is not
+    secret but still lives in `wikis.json`, outside the wiki, so it cannot travel
+    to whoever you share one with. **Redirects are never followed** — `httpx`
+    re-sends the `Authorization` header across a 3xx, which hands a bearer token
+    to whatever host the response names, so every client sets
+    `follow_redirects=False` and reports the location instead. And **`/kahala` is
+    owner-only** (`auth._GUEST_DENY_PREFIX`): a LAN guest who could link or clone
+    could aim this machine at a Kahala they name and push the owner's wiki to it,
+    which is exfiltration, not misconfiguration — the MCP surface draws the same
+    line, exposing push/pull but never link, clone or sign-in. That same
+    escalation is why every mutating `/kahala` POST is checked for same-origin
+    (`auth.same_origin`, in the middleware so a later route can't forget): the
+    app carries no CSRF tokens anywhere, which is an accepted local-damage risk
+    elsewhere and an exfiltration risk *here*.
+    `tests/test_kahala_sync.py` guards all of it; its redirect and
+    credential-location cases are written to fail if the guard is removed, and
+    must not be relaxed to make something pass.
 
 ## Before committing
 

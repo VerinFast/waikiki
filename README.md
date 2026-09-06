@@ -207,6 +207,37 @@ existing ones are updated (and versioned) in place, and nothing local is deleted
 Hierarchy travels by slug because integer page ids are local — the same page is a
 different number in every wiki.
 
+### Sync with Kahala
+
+Kahala is the shared, server-side half of the same wiki. A local wiki can be
+**linked** to one there, then **pushed** up or **pulled** down; a remote wiki can
+be **cloned** into a new local one. It's all in the *Kahala* pane.
+
+Only content travels — pages, hierarchy, elements, templates and images. Tenancy
+and permissions are the server's and are re-attached there; embeddings are
+regenerated on arrival rather than shipped.
+
+**Push and pull both merge, and neither deletes.** A push adds and updates pages
+on Kahala and removes nothing there; a pull does the same here. So a page you
+deleted locally is still on Kahala afterwards, and the next pull brings it back.
+Removing a page from both is a deliberate act on both.
+
+Signing in uses Kahala's own sign-in page — OpenID Connect with PKCE, no client
+secret, and the callback comes back to Waikiki's own loopback port. The refresh
+token goes in your **Keychain**, never into a wiki file (that file *is* what
+"Save wiki" hands over) and never into a plain config file. Where there's no
+secure store, signing in is switched off and says so rather than falling back to
+writing the token somewhere less safe. The link itself — the address and the
+remote wiki's name — is recorded outside the wiki too, so it can't travel to
+someone you share the wiki with.
+
+Someone who joins over LAN sharing can't reach any of it. An agent connected over
+MCP can push and pull, but can't link, clone or sign in — choosing where a wiki
+gets sent is yours.
+
+Full detail, including every refusal and why redirects are never followed, in
+**[docs/kahala-sync.md](docs/kahala-sync.md)**.
+
 ## Setup
 
 ```bash

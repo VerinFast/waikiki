@@ -229,7 +229,10 @@ version, or an image doesn't survive the trip, Waikiki transfers the whole wiki
 instead and tells you that's what it did. *Transfer the whole wiki* forces it.
 
 Signing in uses Kahala's own sign-in page — OpenID Connect with PKCE, no client
-secret, and the callback comes back to Waikiki's own loopback port. The refresh
+secret, and the callback comes back to Waikiki's own loopback port. In the
+desktop app it opens in your **web browser** rather than inside Waikiki's window,
+so you get your usual session, your password manager and whatever second factor
+your organisation uses; the app notices by itself when you're done. The refresh
 token goes in your **Keychain**, never into a wiki file (that file *is* what
 "Save wiki" hands over) and never into a plain config file. Where there's no
 secure store, signing in is switched off and says so rather than falling back to

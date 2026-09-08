@@ -693,3 +693,107 @@ def test_an_update_for_a_page_we_do_not_have_is_skipped_not_invented(wiki):
     summary = store.apply_wiki_changelog(log)
     assert summary["skipped"] == ["never-seen"]
     assert store.get_page("never-seen") is None
+
+
+# --- signing in from the packaged app ----------------------------------------
+#
+# In the desktop shell the sign-in must open the SYSTEM browser, not navigate
+# the app's own WKWebView. RFC 8252 §8.12 says a native app must not run OAuth
+# in an embedded user-agent, and the practical cost is the same shape as the
+# principle: inside our window there is no Keycloak session, no password
+# manager, and no second factor that depends on either.
+
+
+def _client(app):
+    from fastapi.testclient import TestClient
+    return TestClient(app, client=("127.0.0.1", 12345))
+
+
+def test_the_desktop_shell_gets_a_url_instead_of_a_redirect(wiki, http,
+                                                            monkeypatch):
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    http(lambda r: httpx.Response(200, json={
+        "authorization_endpoint": "https://kc.example/auth",
+        "token_endpoint": "https://kc.example/token"}))
+
+    with _client(app) as client:
+        out = client.get("/kahala/signin?wiki=main&shell=desktop",
+                         follow_redirects=False)
+        assert out.status_code == 200, \
+            "the desktop shell got a redirect, which would navigate the app's " \
+            "own window to Keycloak — an embedded user-agent"
+        body = out.json()
+        assert body["ok"] and body["url"].startswith("https://kc.example/auth")
+        assert "code_challenge_method=S256" in body["url"]
+
+
+def test_a_browser_still_gets_the_ordinary_redirect(wiki, http, monkeypatch):
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    http(lambda r: httpx.Response(200, json={
+        "authorization_endpoint": "https://kc.example/auth",
+        "token_endpoint": "https://kc.example/token"}))
+
+    with _client(app) as client:
+        out = client.get("/kahala/signin?wiki=main", follow_redirects=False)
+        assert out.status_code == 303
+        assert out.headers["location"].startswith("https://kc.example/auth")
+
+
+def test_an_external_callback_lands_on_a_page_not_in_the_app_ui(wiki, http,
+                                                                monkeypatch):
+    """The desktop flow finishes in a different application's window.
+
+    Redirecting into /kahala there would leave the person looking at Waikiki in
+    a stray browser tab while the window they actually use sits unchanged.
+    """
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    http(lambda r: httpx.Response(200, json={
+        "authorization_endpoint": "https://kc.example/auth",
+        "token_endpoint": "https://kc.example/token",
+        "access_token": "at", "refresh_token": "rt", "expires_in": 300}))
+
+    _url, state = kahalaauth.begin(external=True)
+    with _client(app) as client:
+        out = client.get(f"/kahala/callback?code=c&state={state}",
+                         follow_redirects=False)
+        assert out.status_code == 200, "an external callback redirected"
+        assert "close this tab" in out.text
+
+
+def test_an_in_window_callback_still_redirects_into_the_pane(wiki, http,
+                                                             monkeypatch):
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    http(lambda r: httpx.Response(200, json={
+        "authorization_endpoint": "https://kc.example/auth",
+        "token_endpoint": "https://kc.example/token",
+        "access_token": "at", "refresh_token": "rt", "expires_in": 300}))
+
+    _url, state = kahalaauth.begin()          # external defaults to False
+    with _client(app) as client:
+        out = client.get(f"/kahala/callback?code=c&state={state}",
+                         follow_redirects=False)
+        assert out.status_code == 303 and out.headers["location"].startswith("/kahala")
+
+
+def test_an_unknown_state_is_treated_as_external(wiki):
+    """A callback we never started must not steer the app's own window."""
+    assert kahalaauth.is_external("never-minted")
+
+
+def test_the_pane_polls_rather_than_leaving_a_stale_answer(wiki, monkeypatch):
+    """The desktop sign-in ends elsewhere, so this window gets no event."""
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "signed_in", lambda: False)
+    with _client(app) as client:
+        assert client.get("/kahala/state?wiki=main").json()["signed_in"] is False
+        monkeypatch.setattr(kahalaauth, "signed_in", lambda: True)
+        assert client.get("/kahala/state?wiki=main").json()["signed_in"] is True

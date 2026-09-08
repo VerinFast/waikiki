@@ -29,9 +29,60 @@
       </form>
     {% else %}
       <p>You aren’t signed in to Kahala yet.</p>
-      <a class="btn primary" href="/kahala/signin?wiki={{ subject }}">Sign in to Kahala</a>
-      <p class="muted note">This opens Kahala’s sign-in page in your browser and
-        comes back here. Waikiki never sees your password.</p>
+      <a class="btn primary" id="kahala-signin"
+         href="/kahala/signin?wiki={{ subject }}">Sign in to Kahala</a>
+      <span class="muted" id="kahala-waiting" hidden>Waiting for the browser…</span>
+      <p class="muted note">This opens Kahala’s own sign-in page in your web
+        browser — not inside Waikiki — so you get your usual session, your
+        password manager and whatever second factor your organisation uses.
+        Waikiki never sees your password.</p>
+
+      <script>
+      (function () {
+        var link = document.getElementById('kahala-signin');
+        var waiting = document.getElementById('kahala-waiting');
+        if (!link || !window.WAIKIKI_DESKTOP) return;   // a browser can just follow it
+
+        // In the packaged app, following the link would navigate THIS window to
+        // Keycloak — an embedded user-agent, which RFC 8252 §8.12 says a native
+        // app must not use for OAuth. Hand the URL to the system browser
+        // instead; the code still comes back to our own loopback port.
+        link.addEventListener('click', function (e) {
+          e.preventDefault();
+          fetch(link.getAttribute('href') + '&shell=desktop')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (!d.ok) { alert(d.error); return; }
+              if (window.pywebview && window.pywebview.api &&
+                  window.pywebview.api.open_url) {
+                window.pywebview.api.open_url(d.url);
+              } else {
+                window.open(d.url, '_blank');
+              }
+              link.hidden = true;
+              waiting.hidden = false;
+              poll();
+            })
+            .catch(function () { alert('Could not start the sign-in.'); });
+        });
+
+        // The sign-in finishes in another application, so this window gets no
+        // event. Ask, rather than leaving a stale "not signed in" on screen
+        // until someone thinks to reload. Gives up after five minutes so a
+        // window left open overnight is not polling all night.
+        function poll() {
+          var until = Date.now() + 5 * 60 * 1000;
+          var timer = setInterval(function () {
+            if (Date.now() > until) { clearInterval(timer); waiting.textContent =
+              'Still not signed in — reload this page once you have finished.'; return; }
+            fetch('/kahala/state?wiki={{ subject }}')
+              .then(function (r) { return r.json(); })
+              .then(function (d) { if (d.signed_in) { clearInterval(timer); location.reload(); } })
+              .catch(function () { /* the app may be restarting; keep asking */ });
+          }, 2000);
+        }
+      })();
+      </script>
     {% endif %}
   </section>
 

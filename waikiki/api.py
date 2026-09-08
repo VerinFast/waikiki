@@ -731,26 +731,73 @@ def kahala_pane(request: Request, wiki: str = "", ok: str = "", error: str = "")
 
 
 @app.get("/kahala/signin")
-def kahala_signin(wiki: str = ""):
+def kahala_signin(wiki: str = "", shell: str = ""):
+    """Start a sign-in. Returns the authorize URL as JSON, or redirects to it.
+
+    The desktop shell asks for `shell=desktop` and opens the URL in the SYSTEM
+    browser rather than letting this window navigate. That is not a nicety:
+    RFC 8252 §8.12 tells native apps not to run OAuth in an embedded
+    user-agent, and WKWebView is one. Practically it also means the person gets
+    their real browser's Keycloak session, their password manager, and whatever
+    MFA their org uses — none of which exist inside our own window.
+
+    Either way the code comes back to /kahala/callback on this same loopback
+    port, which this process serves, so it does not matter which browser made
+    the request.
+    """
+    desktop = shell == "desktop"
     try:
-        url, _state = kahalaauth.begin(next_url=f"/kahala?wiki={quote(wiki)}")
+        url, _state = kahalaauth.begin(
+            next_url=f"/kahala?wiki={quote(wiki)}", external=desktop)
     except ValueError as exc:
+        if desktop:
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
         return _kahala_back(wiki, error=str(exc))
-    # Off to Keycloak. The code comes back to /kahala/callback on this same
-    # loopback port, so nothing else has to be listening.
+    if desktop:
+        return JSONResponse({"ok": True, "url": url})
     return RedirectResponse(url, status_code=303)
 
 
-@app.get("/kahala/callback")
-def kahala_callback(code: str = "", state: str = "", error: str = "",
-                    error_description: str = ""):
+@app.get("/kahala/state")
+def kahala_state(wiki: str = ""):
+    """Whether we are signed in — polled by the pane while a sign-in is open.
+
+    The desktop sign-in finishes in another application, so this window has no
+    event to react to. Rather than leave a stale "you aren't signed in" on
+    screen until someone reloads, the pane asks."""
+    slug = wiki if wikis.exists(wiki) else db.active_wiki()
+    return JSONResponse({"signed_in": kahala.status(slug)["signed_in"]})
+
+
+@app.get("/kahala/callback", response_class=HTMLResponse)
+def kahala_callback(request: Request, code: str = "", state: str = "",
+                    error: str = "", error_description: str = ""):
+    """Where Keycloak sends the code back — in whichever browser did the sign-in.
+
+    When the flow began in the desktop shell, that browser is not the app's
+    window, so redirecting into the app UI here would leave the person looking
+    at Waikiki in a stray browser tab. They get a short page saying it worked
+    instead, and the app's own window notices by polling /kahala/state.
+    """
+    external = kahalaauth.is_external(state)
     if error:
-        return _kahala_back("", error=f"Kahala's sign-in returned: "
-                                      f"{error_description or error}")
+        why = f"Kahala's sign-in returned: {error_description or error}"
+        return (_kahala_done_page(request, False, why) if external
+                else _kahala_back("", error=why))
+
     done = kahalaauth.complete(code, state)
+    if external:
+        return _kahala_done_page(request, done["ok"], done["error"])
     if not done["ok"]:
         return _kahala_back("", error=done["error"])
     return RedirectResponse(done["next"], status_code=303)
+
+
+def _kahala_done_page(request: Request, ok: bool, why: str):
+    # Through _ctx like every other page: this renders in a browser that is not
+    # the app's window, and a bare context would drop the chrome base.html needs.
+    return templates.TemplateResponse(
+        request, "kahala_done.html", _ctx(request, signed_in=ok, why=why))
 
 
 @app.post("/kahala/signout")

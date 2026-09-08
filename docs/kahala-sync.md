@@ -100,6 +100,29 @@ route on Waikiki's own server. Two reasons:
 The redirect URI always uses `127.0.0.1`, never `config.HOST`, which becomes
 `0.0.0.0` when LAN sharing is on — not an address a browser can return to.
 
+### Signing in from the packaged app
+
+In the desktop shell the sign-in opens in the **system browser**, not in
+Waikiki's own window. RFC 8252 §8.12 says a native app must not run OAuth in an
+embedded user-agent, and WKWebView is one — the app could read what is typed
+into it, which is the trust problem the rule exists for. The practical cost has
+the same shape as the principle: inside our window there is no Keycloak session
+to reuse, no password manager, and no second factor that depends on either.
+
+So `/kahala/signin?shell=desktop` returns the authorize URL as JSON and the pane
+hands it to `pywebview.api.open_url`. The code still comes back to
+`http://127.0.0.1:<port>/kahala/callback`, which *this* process serves — which
+browser made the request does not matter.
+
+Because that flow finishes in another application, two things follow. The
+callback renders a short "you can close this tab" page rather than redirecting
+into the app UI, which would otherwise leave the person looking at Waikiki in a
+stray browser tab. And the pane **polls** `/kahala/state`, because a window whose
+sign-in completed elsewhere gets no event and would otherwise sit showing "not
+signed in" until someone thought to reload. A flow whose `state` we did not mint
+is treated as external: a callback we never started is not something to steer the
+app's own window on.
+
 ## Where the refresh token lives, and why not anywhere else
 
 In the **macOS Keychain**, under service `Waikiki`, keyed by the realm's issuer.

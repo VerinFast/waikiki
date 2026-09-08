@@ -117,8 +117,15 @@ def sign_out() -> bool:
 # --- the flow ----------------------------------------------------------------
 
 
-def begin(next_url: str = "/kahala") -> tuple[str, str]:
-    """Start a sign-in. Returns (authorize_url, state), or raises ValueError."""
+def begin(next_url: str = "/kahala", external: bool = False) -> tuple[str, str]:
+    """Start a sign-in. Returns (authorize_url, state), or raises ValueError.
+
+    ``external`` records that this flow will finish in a browser that is *not*
+    the app's own window (the desktop shell hands the URL to the system
+    browser). The callback needs to know, because redirecting into the app UI
+    would then land in a stray tab rather than in the window the person is
+    actually looking at.
+    """
     ok, why = can_sign_in()
     if not ok:
         raise ValueError(why)
@@ -130,7 +137,7 @@ def begin(next_url: str = "/kahala") -> tuple[str, str]:
 
     _sweep()
     _pending[state] = {"verifier": verifier, "born": time.time(),
-                       "next": next_url}
+                       "next": next_url, "external": external}
 
     meta = _discover()
     query = urlencode({
@@ -143,6 +150,19 @@ def begin(next_url: str = "/kahala") -> tuple[str, str]:
         "code_challenge_method": "S256",
     })
     return f"{meta['authorization_endpoint']}?{query}", state
+
+
+def is_external(state: str) -> bool:
+    """Whether ``state`` belongs to a flow started outside the app's window.
+
+    Read without consuming the flow — ``complete`` still pops it — so the
+    callback can decide how to answer before and after the exchange, including
+    when the provider came back with an error and there is nothing to exchange.
+    An unknown state is treated as external: a callback we did not start is not
+    something to redirect the app's own UI on the strength of.
+    """
+    flow = _pending.get(state)
+    return True if flow is None else bool(flow.get("external"))
 
 
 def complete(code: str, state: str) -> dict:

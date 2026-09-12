@@ -729,7 +729,7 @@ def kahala_pane(request: Request, wiki: str = "", ok: str = "", error: str = "")
     slug = wiki if wikis.exists(wiki) else db.active_wiki()
     return templates.TemplateResponse(request, "kahala.html", _ctx(
         request, ok=ok, error=error, subject=slug,
-        status=kahala.status(slug),
+        status=kahala.status(slug), suggest=kahala.suggested_link(slug),
         links={w["slug"]: wikis.get_link(w["slug"]) for w in wikis.list_wikis()}))
 
 

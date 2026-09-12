@@ -977,3 +977,37 @@ def test_the_pane_says_a_push_cannot_create_and_offers_the_way_there(wiki,
     assert "can’t create the wiki on Kahala" in body
     assert 'data-open-url="https://kahala.example/wikis"' in body, \
         "no way to reach the page where a wiki is actually created"
+
+
+# --- the link form's defaults -------------------------------------------------
+
+
+def test_the_remote_name_defaults_to_this_wikis_own_slug(wiki):
+    """Not its display name: the field wants a slug.
+
+    Kahala derives its slug from the name typed into *its* form, so "StartupOS"
+    and "startupos" are not interchangeable there — and the placeholder used to
+    say "beaconlight" no matter which wiki you were looking at, which is a
+    suggestion that is wrong for everyone but one.
+    """
+    assert kahala.suggested_link("startupos")["remote"] == "startupos"
+
+
+def test_the_address_defaults_to_one_already_in_use(wiki):
+    """People have one Kahala, not one per wiki."""
+    assert kahala.suggested_link("main")["base_url"] == ""
+    wikis.set_link("beaconlight", "https://kahala.example", "beaconlight")
+    assert kahala.suggested_link("main")["base_url"] == "https://kahala.example"
+    assert kahala.suggested_link("main")["remote"] == "main", \
+        "the borrowed address dragged the other wiki's name along with it"
+
+
+def test_the_pane_prefills_both(wiki):
+    from fastapi.testclient import TestClient
+    from waikiki.api import app
+
+    wikis.set_link("beaconlight", "https://kahala.example", "beaconlight")
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        body = client.get("/kahala?wiki=startupos").text
+    assert 'value="https://kahala.example"' in body
+    assert 'value="startupos"' in body

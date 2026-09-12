@@ -158,9 +158,11 @@
         <input type="hidden" name="wiki" value="{{ subject }}">
         <label>Kahala address
           <input type="url" name="base_url" required
+                 value="{{ suggest.base_url }}"
                  placeholder="https://kahala.example.com"></label>
         <label>Wiki name there
-          <input type="text" name="remote" required placeholder="beaconlight"></label>
+          <input type="text" name="remote" required
+                 value="{{ suggest.remote }}" placeholder="{{ subject }}"></label>
         <button class="btn primary" type="submit">Link</button>
       </form>
       <p class="muted note">Linking only records the address here on this
@@ -180,6 +182,7 @@
     <form method="post" action="/kahala/clone" class="addmodel">
       <label>Kahala address
         <input type="url" name="base_url" required
+               value="{{ suggest.base_url }}"
                placeholder="https://kahala.example.com"></label>
       <label>Wiki name there
         <input type="text" name="remote" required placeholder="beaconlight"></label>

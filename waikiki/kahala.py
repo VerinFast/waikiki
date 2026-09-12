@@ -108,6 +108,27 @@ def unlink(slug: str) -> dict:
     return {"ok": True, "error": ""}
 
 
+def suggested_link(slug: str) -> dict:
+    """Sensible defaults for the link form: {base_url, remote}.
+
+    ``remote`` defaults to this wiki's **own slug**, because that is nearly
+    always what it is called on the other side, and because the field wants a
+    slug rather than a display name -- Kahala derives its slug from the name you
+    type into its form, so "StartupOS" and "startupos" are not interchangeable
+    there. Offering the local slug also matches what a create-on-Kahala call
+    would ask for.
+
+    ``base_url`` comes from any wiki already linked on this machine: people have
+    one Kahala, not one per wiki, and re-typing it is the step where a typo turns
+    into a 404 that reads like a permissions problem.
+    """
+    for other in wikis.list_wikis():
+        lk = wikis.get_link(other["slug"])
+        if lk and lk.get("base_url"):
+            return {"base_url": lk["base_url"], "remote": slug}
+    return {"base_url": "", "remote": slug}
+
+
 def status(slug: str) -> dict:
     """Everything the UI and the MCP tool need, without touching the network."""
     can, why = kahalaauth.can_sign_in()

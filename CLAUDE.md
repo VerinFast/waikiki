@@ -55,6 +55,13 @@ two in parity (same substance, different voice) whenever you change either.
   RECURRENCE-ID expansion, and the **host allow-list** that is the sole guard on
   the one route that fetches a caller-chosen URL. Sits below the routes and holds
   no SQL — see `docs/calendar-feeds.md` and rule 10.
+- `waikiki/bugreports.py` — bug reports an agent filed through MCP, **queued for
+  a person**, never sent. Holds no network code at all: it builds a link that
+  pre-fills GitHub's own new-issue form so the human submits it themselves. Two
+  reasons, and the second is the load-bearing one — filing directly would need a
+  GitHub token in the app, and an agent reporting a failure routinely quotes the
+  wiki content it was working on, which on a public tracker is a privacy leak
+  rather than noise. `/reports` is owner-only for the same reason.
 - `waikiki/kahala.py` — linking a local wiki to a **Kahala** one and moving whole
   wikis over its `/api/interchange/*` wire (clone, push, pull). Holds the link
   record accessors and the wording of every refusal; no SQL, no format code —

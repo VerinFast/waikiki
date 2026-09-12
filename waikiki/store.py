@@ -1070,6 +1070,47 @@ def template_save(name: str, markdown: str, tid: Optional[int] = None,
     conn.commit()
 
 
+def template_edit(name: str, old_text: str, new_text: str) -> dict:
+    """Replace an exact snippet of a template's markdown, leaving the rest alone.
+
+    The counterpart to ``edit_page`` for templates (issue #88). Before this, the
+    only way an agent could change a template was ``template_save`` with a body
+    it had reconstructed by reading a page made from that template -- which
+    overwrites everything the sample page didn't happen to show.
+
+    It is *not* the same mechanism as ``edit_page``, and the difference is worth
+    knowing: a page edit goes through its CRDT room, so it merges with a human
+    typing in the same page at that moment. Templates have no room, so this is a
+    plain find/replace on the stored markdown. What it buys is not clobbering the
+    rest of the template, not concurrent-edit safety.
+
+    ``old_text`` must occur **exactly once**: zero matches means the caller was
+    working from stale text, and several means it cannot know which one it meant.
+    Both are refused rather than guessed at. The metadata schema is untouched.
+    """
+    tpl = template_by_name(name)
+    if not tpl:
+        return {"ok": False, "error": f"no template '{name}'"}
+    body = tpl["markdown"] or ""
+    if not old_text:
+        return {"ok": False, "error": "old_text is empty; nothing to replace"}
+
+    found = body.count(old_text)
+    if found == 0:
+        return {"ok": False, "error":
+                "old_text does not appear in this template. Call get_template "
+                "and copy the exact text you mean to replace."}
+    if found > 1:
+        return {"ok": False, "error":
+                f"old_text appears {found} times, so which one to change is "
+                "ambiguous. Include more surrounding lines to make it unique."}
+
+    # meta_schema stays None: template_save reads that as "leave it as it is",
+    # so a body edit can never drop a schema a human authored.
+    template_save(name, body.replace(old_text, new_text, 1), tid=tpl["id"])
+    return {"ok": True, "error": "", "template": name}
+
+
 def template_delete(tid: int) -> None:
     conn = db.get_conn()
     conn.execute("DELETE FROM templates WHERE id=?", (tid,))

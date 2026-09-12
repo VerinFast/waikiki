@@ -43,8 +43,12 @@ _GUEST_DENY_EXACT = {
 # "/kahala" covers the whole Kahala pane. A guest reaching it could push this
 # machine's wiki to a Kahala *they* name -- exfiltration, not misconfiguration --
 # or sign the owner's app in and out. Strictly owner-only.
+#
+# "/reports" is owner-only for a neighbouring reason: the agent bug-report queue
+# can quote page content from whatever wiki an agent was working in, and its
+# links lead to a public tracker.
 _GUEST_DENY_PREFIX = ("/wikis/", "/elements/", "/settings/", "/debug", "/logs",
-                      "/kahala")
+                      "/kahala", "/reports")
 _GUEST_DENY_SUFFIX = ("/chat", "/generate-image", "/purge")
 
 

@@ -415,6 +415,19 @@ reached the element says so rather than rendering an empty month, which would
 claim nothing is scheduled. See
 **[docs/calendar-feeds.md](docs/calendar-feeds.md)**.
 
+### Reports from agents
+
+An agent that hits a bug or a limitation in Waikiki can write it down with
+`report_bug` while it still has the failing call in hand. Reports are **queued,
+not sent**: they appear under *Reports from agents* (the menu entry shows up only
+when something is waiting), and *Open on GitHub* opens GitHub's own new-issue
+form pre-filled, so nothing is published until you submit it there.
+
+That indirection is deliberate. Filing directly would mean Waikiki holding a
+GitHub token — and, more to the point, a report written at the moment something
+failed often quotes the page it was working on. Reading it first is what keeps
+your wiki's content off a public tracker.
+
 ## Connect Claude Desktop (MCP)
 
 **Easiest:** open Waikiki and click **Connect Claude** in the header (or visit
@@ -488,6 +501,12 @@ live edit** tools:
 `replace_page` (full rewrite, last resort). Plus `changes_since` (change feed),
 `backlinks`, `broken_links`, `delete_page` (to trash), `list_trash`,
 `restore_page`, and `search` (hybrid RAG) — all scoped to the active wiki.
+
+Templates get the same read-before-you-write treatment: `get_template` returns a
+template's markdown and metadata schema, and `edit_template` replaces one exact
+snippet of it. Without those, changing a single line of a template meant
+rebuilding the body from a page it produced and overwriting everything that page
+didn't happen to show.
 
 ## REST API
 

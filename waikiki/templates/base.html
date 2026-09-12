@@ -125,6 +125,11 @@
              actions rather than as its own icon. #}
           <a href="/wikis">Manage wikis</a>
           <a href="/kahala">Kahala</a>
+          {# Only when something is waiting: a queue nobody is using should not
+             take up a permanent slot in the menu. #}
+          {% if pending_reports %}
+            <a href="/reports">Reports from agents ({{ pending_reports }})</a>
+          {% endif %}
         </div>
       </details>
       <div class="textzoom" role="group" aria-label="Text size">

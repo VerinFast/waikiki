@@ -28,6 +28,13 @@ imply more.
 
 The secret never appears in ``argv``. ``security -i`` reads its commands from
 stdin, so the token is not visible in ``ps`` output while the write happens.
+That stdin is a *command stream*, though -- one command per line -- so a value
+carrying a newline would end the write command and have its remainder read as
+the next ``security`` command. The refresh token is minted by the sign-in server,
+which makes it the one value here that arrives from off the machine, so values
+are checked (:func:`_sendable`) rather than escaped: no quoting makes a newline
+part of a word in that parser, and a credential that can't be stored safely must
+fail loudly rather than creatively.
 
 No silent fallback
 ------------------
@@ -67,6 +74,23 @@ def unavailable_reason() -> str:
             "here.")
 
 
+def _sendable(value: str) -> bool:
+    """Whether ``value`` can cross into ``security`` unchanged.
+
+    Control characters are refused rather than escaped. A newline is the one that
+    matters -- ``security -i`` reads one command per line, so anything after it
+    in a value would be parsed as another ``security`` command -- but none of
+    them can legitimately appear in what we store: the account is a Keycloak
+    issuer URL and the secret is an OAuth refresh token.
+
+    The ``find``/``delete`` paths pass their arguments as a list, where no
+    splitting happens and nothing could be injected in the first place; they
+    check too, so that "what may be stored" and "what may be looked up" cannot
+    drift apart into an item that can be written and never read back.
+    """
+    return bool(value) and not any(ch < " " or ch == "\x7f" for ch in value)
+
+
 def set_secret(account: str, secret: str) -> bool:
     """Store (or replace) ``secret`` under ``account``. True when it landed.
 
@@ -74,7 +98,9 @@ def set_secret(account: str, secret: str) -> bool:
     replaces the old token instead of accumulating duplicates.
     """
     sec = _security()
-    if not sec or not account:
+    if not sec or not account or not secret:
+        return False
+    if not _sendable(account) or not _sendable(secret):
         return False
     # Interactive mode: the command (and so the secret) arrives on stdin, never
     # in argv where `ps` would show it to every process running as this user.
@@ -91,7 +117,7 @@ def set_secret(account: str, secret: str) -> bool:
 def get_secret(account: str) -> str | None:
     """The secret stored under ``account``, or None if there isn't one."""
     sec = _security()
-    if not sec or not account:
+    if not sec or not account or not _sendable(account):
         return None
     try:
         done = subprocess.run(
@@ -109,7 +135,7 @@ def get_secret(account: str) -> str | None:
 def delete_secret(account: str) -> bool:
     """Remove ``account``'s secret. True if something was removed."""
     sec = _security()
-    if not sec or not account:
+    if not sec or not account or not _sendable(account):
         return False
     try:
         done = subprocess.run(
@@ -127,6 +153,9 @@ def _q(value: str) -> str:
     into words and honours double quotes, so a token containing a space or a
     quote would otherwise be truncated or mis-parsed. Escape the two characters
     that mean something inside a quoted word (``\`` and ``"``) and wrap.
+
+    Quoting is not enough on its own: a newline ends the *command*, whatever it
+    is quoted inside. :func:`_sendable` refuses those before this is reached.
     """
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'

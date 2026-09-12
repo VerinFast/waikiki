@@ -1544,7 +1544,8 @@ def _read_bundle(reader) -> None:
         ydoc.read_bundle_page(entry)           # version gate + content-only
 
 
-def import_wiki_bundle(source, author: str = "import") -> dict:
+def import_wiki_bundle(source, author: str = "import",
+                       on_writes_begin=None) -> dict:
     """Apply a whole-wiki bundle into the **active** wiki (export-down).
 
     ``source`` is a bundle's bytes or a readable, seekable binary file. Pages are
@@ -1561,10 +1562,19 @@ def import_wiki_bundle(source, author: str = "import") -> dict:
     content-only rule. Raises before touching the wiki if the bundle is
     malformed, version-incompatible, or carries a server-only field.
 
+    ``on_writes_begin`` is called once, after the dry run has passed and before
+    the first local write. A failure of the *writes* can still leave a partial
+    import (the accepted limit — ``docs/data-safety.md`` question 4), and a
+    caller that reports to a person needs to know which of the two happened:
+    "refused, nothing changed" and "partly merged, run it again" are different
+    sentences, and guessing produces the one that isn't true.
+
     Returns a count of what landed.
     """
     with ydoc.open_bundle(source) as reader:       # gates run on open
         _read_bundle(reader)                       # dry run: nothing written yet
+        if on_writes_begin is not None:
+            on_writes_begin()
 
         tpls = reader.templates()
         for tpl in tpls:

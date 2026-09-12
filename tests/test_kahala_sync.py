@@ -150,6 +150,39 @@ def test_no_secure_store_means_no_sign_in_rather_than_a_file(monkeypatch):
         kahalaauth.begin()
 
 
+def test_a_failed_write_on_rotation_signs_out_instead_of_keeping_a_dead_token(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """Keycloak rotates, so the token we just spent is already dead.
+
+    If the new one cannot be stored there is nothing left to stay signed in
+    with. Keeping the spent one leaves an account that *reads* as signed in and
+    fails every later refresh, with nothing on screen explaining why -- so the
+    stored credential goes and the state reported is the true one.
+    """
+    vault = _no_real_keychain
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    vault[kahalaauth._account()] = "spent-refresh-token"
+    assert kahalaauth.signed_in(), "the test did not manage to seed a sign-in"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid-configuration"):
+            return httpx.Response(200, json={
+                "authorization_endpoint": "https://kc.example/auth",
+                "token_endpoint": "https://kc.example/token"})
+        return httpx.Response(200, json={"access_token": "at",
+                                         "refresh_token": "rotated-refresh",
+                                         "expires_in": 300})
+    http(handler)
+    monkeypatch.setattr(secretstore, "set_secret", lambda a, s: False)
+
+    assert kahalaauth.access_token() is None, \
+        "a token was handed out while the rotated refresh token was lost"
+    assert not kahalaauth.signed_in(), \
+        "the Keychain still holds the spent refresh token, so the app reads " \
+        "as signed in and every refresh from here on fails"
+    assert "spent-refresh-token" not in vault.values()
+
+
 def test_a_sign_in_state_is_single_use(wiki, http, monkeypatch):
     """A replayed callback must not complete a second sign-in."""
     monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
@@ -250,6 +283,51 @@ def test_status_reports_without_touching_the_network(wiki, monkeypatch):
     assert out["linked"] is False and out["signed_in"] is False
     kahala.link("main", "https://kahala.example", "remote-wiki")
     assert kahala.status("main")["remote"] == "remote-wiki"
+
+
+@pytest.mark.parametrize("remote", ["team/secret", "wiki?x=1", "wiki#frag",
+                                    "..", "a%2Fb", "back\\slash"])
+def test_a_remote_name_that_isnt_one_segment_is_refused_and_not_recorded(
+        wiki, remote):
+    """Told to the person, rather than used to address something else.
+
+    The name is typed by the owner, so this is a typo guard before it is a
+    security one -- but the typo lands in a URL that carries a bearer token, so
+    it has to be refused where it is entered instead of being sent.
+    """
+    out = kahala.link("main", "https://kahala.example", remote)
+    assert not out["ok"], f"“{remote}” was accepted as a wiki name"
+    assert wikis.get_link("main") is None, \
+        "a link was recorded for a name that cannot be requested"
+    assert not kahala.clone("https://kahala.example", remote)["ok"]
+
+
+def test_a_stored_remote_name_cannot_change_which_route_is_asked_for(
+        wiki, http, monkeypatch):
+    """The second guard, for a link recorded before the first one existed.
+
+    ``wikis.set_link`` writes the registry directly, as an older build did. The
+    name must still be one path segment on the wire: escaped it addresses a wiki
+    that doesn't exist and 404s, unescaped ``httpx`` resolves the ``..`` and the
+    request -- with the ``Authorization`` header on it -- arrives at a different
+    route on that host entirely.
+    """
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "../../admin/wikis")
+    seen = http(lambda r: httpx.Response(200, json={"pages": 0}))
+
+    kahala.push("main", full=True)
+
+    assert seen, "nothing was requested at all"
+    for request in seen:
+        # `raw_path`, not `path`: the latter percent-decodes, so it reads the
+        # same whether the name was escaped or resolved away. What went on the
+        # wire is what this is about.
+        path = request.url.raw_path
+        assert path.startswith(b"/api/interchange/wikis/"), \
+            f"the remote name steered the request to {path!r}"
+        assert b"/admin/" not in path, \
+            f"the wiki name escaped its path segment: {path!r}"
 
 
 # --- the transfers -----------------------------------------------------------
@@ -385,6 +463,59 @@ def test_a_version_mismatch_is_refused_whole(wiki, http, monkeypatch):
     out = kahala.pull("main")
     assert not out["ok"] and "refused" in out["error"]
     assert store.get_page("local") is not None
+
+
+def test_a_part_written_pull_says_so_rather_than_reporting_a_refusal(
+        wiki, http, monkeypatch):
+    """"Refused" is a promise that nothing changed. Here something did.
+
+    A bad bundle is refused whole by the dry run, and that is the realistic
+    failure -- but a local write can fail too (a full disk, a lock), and then
+    some pages have merged. The import is deliberately not staged and swapped
+    (``docs/data-safety.md`` question 4), so the honest report is "partly
+    merged, run it again", and the two cases must not share a sentence.
+    """
+    _signed_in(monkeypatch)
+    other = wikis.create_wiki("Remote Source")
+    tok = db.current_wiki.set(other)
+    try:
+        db.init_db()
+        for i in range(1, 5):
+            store.create_page(f"Chapter {i}", f"chapter {i} body")
+    finally:
+        db.current_wiki.reset(tok)
+    payload = _bundle_of(other)
+
+    wikis.set_link("main", "https://kahala.example", "remote-wiki")
+    http(lambda r: httpx.Response(200, content=payload))
+
+    real_create = store.create_page
+    calls = {"n": 0}
+
+    def flaky(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise OSError(28, "No space left on device")
+        return real_create(*a, **kw)
+
+    # Swapped and restored by hand, not through monkeypatch: undoing a
+    # monkeypatch mid-test also undoes what the `wiki` fixture set up with the
+    # same instance (``config.DATA_DIR``, ``db._local``), and the assertions
+    # below would then be reading a different data directory entirely.
+    store.create_page = flaky
+    try:
+        out = kahala.pull("main", full=True)
+    finally:
+        store.create_page = real_create
+
+    assert not out["ok"]
+    assert "partly merged" in out["error"], \
+        f"a part-written import reported itself as refused: {out['error']}"
+    assert "again" in out["error"], \
+        "the report doesn't say the one thing that fixes it"
+    landed = {p["slug"] for p in store.list_pages(include_children=True)}
+    assert landed & {"chapter-1", "chapter-2"}, \
+        "nothing landed, so this test is no longer about a partial import"
 
 
 def test_push_and_pull_refuse_before_the_network_when_not_linked(wiki):

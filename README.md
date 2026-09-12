@@ -227,6 +227,10 @@ custom elements, templates and images travel with the pages, so a page never
 arrives referring to a definition that didn't. If the server is running an older
 version, or an image doesn't survive the trip, Waikiki transfers the whole wiki
 instead and tells you that's what it did. *Transfer the whole wiki* forces it.
+If a transfer stops part-way — a full disk, say — it says it only *partly*
+merged rather than claiming it was refused: nothing is ever deleted, every page
+that arrived is an ordinary page with its history, and running the same transfer
+again finishes the job.
 
 Signing in uses Kahala's own sign-in page — OpenID Connect with PKCE, no client
 secret, and the callback comes back to Waikiki's own loopback port. In the

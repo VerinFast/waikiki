@@ -259,9 +259,28 @@ two in parity (same substance, different voice) whenever you change either.
     blobs *before* pages, verifies every blob against the hash it claims, and
     remaps the sender's image ids **after** the merge — rewriting inside an
     incoming Yjs update would corrupt it.
-    `tests/test_kahala_sync.py` guards all of it; its redirect,
-    credential-location, CSRF and older-peer cases are written to fail if the
-    guard is removed, and must not be relaxed to make something pass.
+    Three smaller rules have the same shape — a value crossing into an
+    interpreter, where the honest answer is to refuse rather than escape
+    creatively. **A wiki's name on Kahala is one path segment**: it is typed by
+    the owner and goes into the URL a bearer token is sent to, so `/ \ ? # %`
+    and `..` are refused where they are entered (`kahala._bad_remote`) and
+    escaped again on the way out (`kahala._wiki_url`) — unescaped, `httpx`
+    resolves the `..` and the request lands on another route of that host.
+    **Nothing with a control character goes to `security`** (`secretstore`):
+    `security -i` reads one command per line, and the refresh token is minted
+    off-machine, so a newline would end the write command and have its remainder
+    read as the next one — there is no quoting that fixes that, hence
+    `_sendable`. **A rotated refresh token must land or the sign-in is over**:
+    Keycloak invalidates the one just spent, so a failed Keychain write signs
+    out rather than keeping a dead token behind a UI that reads as signed in.
+    And a transfer that fails *after* its first local write says "partly
+    merged", not "refused" — `store.import_wiki_bundle` reports when writing
+    begins, because "refused" is a promise that nothing changed (the partial
+    state itself is the accepted limit: `docs/data-safety.md` question 4).
+    `tests/test_kahala_sync.py` and `tests/test_secretstore.py` guard all of it;
+    the redirect, credential-location, CSRF, older-peer, path-segment,
+    control-character, rotation and partly-merged cases are each written to fail
+    if the guard is removed, and must not be relaxed to make something pass.
 
 ## Before committing
 

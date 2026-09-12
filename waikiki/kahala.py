@@ -41,6 +41,7 @@ import contextlib
 import json
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 
@@ -56,6 +57,31 @@ _UA = "Waikiki"
 
 # --- the link ----------------------------------------------------------------
 
+# A wiki's name on Kahala is **one path segment** of the interchange URL. These
+# characters would make it more than that: `/` and `\` add segments, `?` and `#`
+# end the path and start a query or fragment, and `%` would be read as the start
+# of an escape. `..` is the same problem spelled differently.
+#
+# The name is typed by the owner, so this is not an injection from outside -- but
+# a mistyped name must be *reported*, not quietly used to address some other
+# route on that host with the bearer token attached. Refused here, and escaped
+# again in `_wiki_url` on the way out, because the two guards fail differently:
+# this one tells the person, that one holds even if some later caller skips this.
+_BAD_IN_REMOTE = ("/", "\\", "?", "#", "%")
+
+
+def _bad_remote(remote: str) -> str:
+    """Why ``remote`` can't name a wiki on Kahala, or "" when it can."""
+    if remote in (".", ".."):
+        return f"“{remote}” isn't the name of a wiki on Kahala."
+    for ch in _BAD_IN_REMOTE:
+        if ch in remote:
+            return (f"A wiki's name on Kahala can't contain “{ch}”. Use the name "
+                    "as it appears there, with nothing around it.")
+    if any(ch < " " or ch == "\x7f" for ch in remote):
+        return "That wiki name contains a character that can't be sent."
+    return ""
+
 
 def link(slug: str, base_url: str, remote: str) -> dict:
     """Record that local wiki ``slug`` corresponds to ``remote`` on ``base_url``."""
@@ -69,6 +95,9 @@ def link(slug: str, base_url: str, remote: str) -> dict:
     if not kahalaauth.secure_url(base_url):
         return _err(f"{base_url} isn't an https address. A sign-in token is "
                     "sent with every request, so this has to be https.")
+    wrong = _bad_remote(remote)
+    if wrong:
+        return _err(wrong)
     wikis.set_link(slug, base_url, remote)
     return {"ok": True, "error": "", "base_url": base_url, "remote": remote}
 
@@ -129,7 +158,7 @@ def push(slug: str, full: bool = False) -> dict:
         except Exception as exc:
             return _err(f"The wiki could not be packed up: {exc}")
 
-        url = f"{lk['base_url']}/api/interchange/wikis/{lk['remote']}/snapshot"
+        url = _wiki_url(lk, "/snapshot")
         try:
             with bundle.open("rb") as fh, _client() as client:
                 resp = client.post(
@@ -187,6 +216,9 @@ def clone(base_url: str, remote: str, name: str = "") -> dict:
     if not kahalaauth.secure_url(base_url):
         return _err(f"{base_url} isn't an https address. A sign-in token is "
                     "sent with every request, so this has to be https.")
+    wrong = _bad_remote(remote)
+    if wrong:
+        return _err(wrong)
     token = kahalaauth.access_token()
     if not token:
         return _err(_signed_out())
@@ -241,7 +273,7 @@ def _speaks_v3(body: bytes) -> bool:
 
 
 def _push_incremental(slug: str, lk: dict, token: str) -> dict:
-    base = f"{lk['base_url']}/api/interchange/wikis/{lk['remote']}"
+    base = _wiki_url(lk)
     try:
         with _client() as client:
             their = client.get(f"{base}/wiki-state-vector", headers=_auth(token))
@@ -285,7 +317,7 @@ def _push_incremental(slug: str, lk: dict, token: str) -> dict:
 
 
 def _pull_incremental(slug: str, lk: dict, token: str) -> dict:
-    base = f"{lk['base_url']}/api/interchange/wikis/{lk['remote']}"
+    base = _wiki_url(lk)
     try:
         with _bind(slug):
             ours = store.wiki_state_vector().serialize()
@@ -336,7 +368,7 @@ def _pull_incremental(slug: str, lk: dict, token: str) -> dict:
 
 
 def _download_into(slug: str, lk: dict, token: str, action: str) -> dict:
-    url = f"{lk['base_url']}/api/interchange/wikis/{lk['remote']}/snapshot"
+    url = _wiki_url(lk, "/snapshot")
     with tempfile.TemporaryDirectory() as tmp:
         bundle = Path(tmp) / "remote.zip"
         try:
@@ -351,12 +383,29 @@ def _download_into(slug: str, lk: dict, token: str, action: str) -> dict:
         except httpx.HTTPError as exc:
             return _err(_unreachable(lk["base_url"], exc))
 
+        # The format's own gates (version, content-only, a tampered image) raise
+        # before the first write, and that is the failure a peer's bundle
+        # realistically produces -- but a local write can fail too, and then part
+        # of the wiki has changed. Saying "refused" in that case would be a
+        # comforting sentence that isn't true, so `store` says when it started
+        # writing and the two cases report themselves differently.
+        started = False
+
+        def writing():
+            nonlocal started
+            started = True
+
         try:
             with _bind(slug), bundle.open("rb") as fh:
-                summary = store.import_wiki_bundle(fh, author="kahala")
+                summary = store.import_wiki_bundle(fh, author="kahala",
+                                                   on_writes_begin=writing)
         except Exception as exc:
-            # The format's own gates raise here (version, content-only). Nothing
-            # was written: import_wiki_bundle reads the whole bundle first.
+            if started:
+                return _err(
+                    f"Kahala's copy was only partly merged: {exc}. Nothing was "
+                    "deleted, and every page that did arrive is an ordinary "
+                    "versioned page -- running the same transfer again finishes "
+                    "it.")
             return _err(f"Kahala's copy was refused rather than merged: {exc}")
 
     return {"ok": True, "error": "", "action": action, "wiki": slug,
@@ -372,6 +421,19 @@ def _bind(slug: str):
         yield
     finally:
         db.current_wiki.reset(token)
+
+
+def _wiki_url(lk: dict, path: str = "") -> str:
+    """Kahala's address for the linked wiki, with its name escaped as one segment.
+
+    ``_bad_remote`` already refuses the characters that would matter, so this is
+    the second of the two guards: a name that somehow reached the registry
+    anyway (an older link recorded before that check existed) addresses the wiki
+    it names or fails, rather than reaching a different route on that host with
+    the bearer token attached.
+    """
+    base = lk["base_url"]
+    return f"{base}/api/interchange/wikis/{quote(lk['remote'], safe='')}{path}"
 
 
 def _client() -> httpx.Client:

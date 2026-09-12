@@ -228,10 +228,17 @@ def access_token() -> str | None:
     except Exception:
         return None
 
-    # Keycloak rotates refresh tokens by default; keep the new one or the next
-    # refresh fails with a token we were told to stop using.
+    # Keycloak rotates refresh tokens by default, and the one just spent is dead
+    # the moment this call succeeds. So the new one has to land: if the Keychain
+    # write fails there is nothing left to stay signed in with, and keeping the
+    # spent token would leave an account that reads as signed in while every
+    # later refresh fails with a token the server was told to stop honouring.
+    # Drop it and report signed out -- which is what has actually happened, and
+    # is something the person can act on by signing in again.
     if data.get("refresh_token"):
-        secretstore.set_secret(_account(), data["refresh_token"])
+        if not secretstore.set_secret(_account(), data["refresh_token"]):
+            sign_out()
+            return None
     return _remember_access(data)
 
 

@@ -177,6 +177,24 @@ actions from the reader.
 | 404 | No such wiki *that this account can see* — Kahala answers identically for a wiki that doesn't exist and one in another tenant, so the message names both possibilities |
 | 409 | Refused as incompatible rather than merged; the two ends are on different interchange versions |
 | Unreachable host | Named, with "nothing was changed here" |
+| A bundle that fails its gates | "Refused rather than merged" — the dry run reads the whole payload first, so nothing local changed |
+| A bundle whose **local writes** fail | "Only partly merged … running the same transfer again finishes it" — see below |
+
+A part-written pull is the one refusal that is not a promise that nothing
+happened. The import is deliberately not staged-and-swapped (`docs/data-safety.md`
+question 4), so a full disk or a lost lock part-way through leaves pages merged —
+never deleted, each one an ordinary versioned page, and re-running the same
+transfer completes it. `store.import_wiki_bundle` reports when it begins writing
+so the two cases can say different things; calling both of them "refused" would
+be the comforting sentence rather than the true one.
+
+### A wiki's name on Kahala is one path segment
+
+The name is typed by the owner and goes straight into the interchange URL, so a
+name containing `/`, `\`, `?`, `#` or `%` — or `..` — is **refused when it is
+entered**, and escaped again on the way out. Unescaped, `..` doesn't address a
+wiki at all: `httpx` resolves it and the request arrives at a different route on
+that host, with the bearer token attached. A typo must be reported, not sent.
 
 ### Redirects are never followed
 

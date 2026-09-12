@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Reports from agents — Waikiki{% endblock %}
+{% block content %}
+  <div class="article-head"><h1>Reports from agents</h1></div>
+
+  <p class="muted">When an agent hits a bug or a limitation in Waikiki itself, it
+    can write it down here through the <code>report_bug</code> tool — while it
+    still has the failing call in hand. Nothing is sent anywhere: you read each
+    one and decide.</p>
+
+  {% if reports %}
+    <p class="muted note"><strong>Read before you open.</strong> A report written
+      at the moment something failed often quotes the page it was working on, and
+      <code>{{ repo }}</code> is a public tracker. Edit anything you’d rather not
+      publish in GitHub’s form — it opens pre-filled and nothing is submitted
+      until you press the button there.</p>
+
+    {% for r in reports %}
+      <section class="settings">
+        <h2>{{ r.title }}</h2>
+        <p class="muted wikistats">
+          Waikiki {{ r.version }}
+          {% if r.wiki %} · wiki <code>{{ r.wiki }}</code>{% endif %}
+          {% if r.tool %} · tool <code>{{ r.tool }}</code>{% endif %}
+        </p>
+
+        <pre class="report-body">{{ r.full_body }}</pre>
+
+        <div class="kahala-actions">
+          <a class="btn primary" href="{{ r.url }}" target="_blank"
+             rel="noopener noreferrer">Open on GitHub…</a>
+          <form method="post" action="/reports/{{ r.id }}/discard"
+                style="display:inline">
+            <button class="btn" type="submit">Discard</button>
+          </form>
+        </div>
+
+        {% if not r.body_fits %}
+          {# Silently truncating would produce a report that reads as complete
+             and isn't — say so and let them paste the real thing. #}
+          <p class="muted note">This one is too long to carry in the link, so
+            GitHub’s form will open empty apart from the title. Copy the text
+            above into it.</p>
+        {% endif %}
+      </section>
+    {% endfor %}
+  {% else %}
+    <p>Nothing queued. Reports show up here when an agent files one.</p>
+  {% endif %}
+{% endblock %}

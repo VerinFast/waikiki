@@ -107,6 +107,11 @@ mark{background:var(--mark)}
 .versionlist li{display:flex;align-items:center;gap:.5rem;padding:.3rem 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .wikistats{font-size:.8rem;margin-top:.25rem}
 .wikistats .broken{color:var(--danger)}
+/* Agent bug reports (issue #89). Colour comes from variables, never a literal:
+   the themes are variable overrides, so a hard-coded value is unreadable on one
+   of them by construction — the same way the speaker button shipped black on
+   black. */
+pre.report-body{background:var(--code-bg);color:var(--text);padding:1rem;border-radius:8px;overflow:auto;white-space:pre-wrap;word-break:break-word;max-height:22rem;font-family:var(--mono);font-size:.85rem;line-height:1.5;border:1px solid var(--border)}
 pre.diff{background:var(--code-bg);padding:1rem;border-radius:8px;overflow:auto;font-family:var(--mono);font-size:.85rem;line-height:1.5}
 pre.diff .add{color:#0a7d33;display:block}
 pre.diff .del{color:#b3261e;display:block}

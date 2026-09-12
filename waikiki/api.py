@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from . import (accesslog, ai, appconfig, auth, authoring, backups, bonjour,
-               calendarfeed, capabilities, chat, collab, doorman,
+               bugreports, calendarfeed, capabilities, chat, collab, doorman,
                config, db, debuglog, deeplink, edits, elements, embeddings,
                help_content, imagegen, pdfgen, rag, render, store, structure,
                tunnel, updater, wikis)
@@ -498,6 +498,9 @@ def _ctx(request: Request, **extra) -> dict:
         "current_path": request.url.path,
         "pygments_css": render.pygments_css(),
         "vec_available": db.VEC_AVAILABLE,
+        # Only ever non-zero when an agent filed something; the nav entry is
+        # hidden otherwise, so a queue nobody is using costs no attention.
+        "pending_reports": bugreports.count(),
         "current_wiki": wiki,
         "current_wiki_name": wikis.name_of(wiki),
         "wikis": wikis.list_wikis(),
@@ -689,6 +692,26 @@ async def wikis_import(file: UploadFile):
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie("waikiki_wiki", slug, max_age=60 * 60 * 24 * 365, samesite="lax")
     return resp
+
+
+# --- Agent bug reports (issue #89) -------------------------------------------
+#
+# Nothing here publishes. The queue is filled by the MCP `report_bug` tool and
+# emptied by a person: "Open on GitHub" is an ordinary link to GitHub's own new
+# issue form, pre-filled, so what gets published is submitted by the reader in
+# GitHub's editor. See `bugreports` for why that indirection is the point.
+
+
+@app.get("/reports", response_class=HTMLResponse)
+def bug_reports(request: Request):
+    return templates.TemplateResponse(request, "reports.html", _ctx(
+        request, reports=bugreports.listing(), repo=bugreports.REPO))
+
+
+@app.post("/reports/{report_id}/discard")
+def bug_report_discard(report_id: str):
+    bugreports.discard(report_id)
+    return RedirectResponse("/reports", status_code=303)
 
 
 @app.get("/new", response_class=HTMLResponse)

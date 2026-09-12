@@ -18,8 +18,8 @@ must stay in lockstep:
 | **Path** | `waikiki/vendor/wiki_interchange/` |
 | **Pinned version** | `0.2.0` (spec `SPEC_VERSION = 3`, floor `1`, Yjs sync protocol `1`) |
 | **Upstream** | `gitlab.kwirker.com/good-place/platform`, `packages/wiki-interchange/wiki_interchange/` (**private repo** — first-party, same owner; the vendored copy here is the public one, under this project's Elastic License 2.0). GitLab is canonical; the GitHub mirror carries the same code but issues and MRs live on GitLab. |
-| **Upstream branch** | `claude/wiki-changelog-carries-elements` (MR good-place/platform!142, targeting `dev`) — vendored ahead of merge, as the spec-v2 sync was |
-| **Upstream revision** | `42c1fa22` — the vendored tree is byte-identical to `packages/wiki-interchange/wiki_interchange/` at this commit |
+| **Upstream branch** | `dev` — MR good-place/platform!142 (spec v3) merged 2026-09-08. It was vendored ahead of that merge, as the spec-v2 sync was; this pin has since been moved onto the merged commit and the tree re-diffed, which is the step that "vendored ahead of merge" owes |
+| **Upstream revision** | `5fe9b720` — the vendored tree is byte-identical to `packages/wiki-interchange/wiki_interchange/` at this commit, verified file by file against `dev` |
 | **Runtime dep** | `pycrdt>=0.10,<0.15` (satisfied by Waikiki's own pin) |
 
 ### What it is
@@ -115,12 +115,13 @@ build self-contained.
 
 When W1 (or a later spec bump) changes upstream:
 
-1. Pull the package tree from `main` (GitLab is canonical):
+1. Pull the package tree from `dev` (GitLab is canonical, and `dev` is where
+   the interchange package lands):
 
    ```sh
    GITLAB_HOST=gitlab.kwirker.com glab api \
      "projects/good-place%2Fplatform/repository/files/\
-   packages%2Fwiki-interchange%2Fwiki_interchange%2F<file>/raw?ref=main"
+   packages%2Fwiki-interchange%2Fwiki_interchange%2F<file>/raw?ref=dev"
    # fetch each file's raw content into waikiki/vendor/wiki_interchange/
    ```
 

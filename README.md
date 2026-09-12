@@ -222,6 +222,11 @@ on Kahala and removes nothing there; a pull does the same here. So a page you
 deleted locally is still on Kahala afterwards, and the next pull brings it back.
 Removing a page from both is a deliberate act on both.
 
+The wiki has to already exist on Kahala — a push won't create it, because
+creating one there is a browser form tied to your Kahala session rather than
+something the app's token can reach. *Open Kahala…* takes you to the page where
+you make one.
+
 Only what changed travels — a few kilobytes rather than the whole wiki — and
 custom elements, templates and images travel with the pages, so a page never
 arrives referring to a definition that didn't. If the server is running an older

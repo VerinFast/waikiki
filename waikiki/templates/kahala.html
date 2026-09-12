@@ -108,6 +108,11 @@
           <input type="hidden" name="wiki" value="{{ subject }}">
           <button class="btn" type="submit">Forget this link</button>
         </form>
+        {# Opens in the browser where you are already signed in to Kahala.
+           data-open-url is the app's existing "use the system browser" hook. #}
+        <a class="btn" href="{{ status.manage_url }}"
+           data-open-url="{{ status.manage_url }}"
+           target="_blank" rel="noopener noreferrer">Open Kahala…</a>
       </div>
 
       <details class="muted note">
@@ -142,6 +147,11 @@
       <p class="muted note">Custom elements, templates and images travel with
         the pages, so a page never arrives referring to a definition that
         didn’t.</p>
+      <p class="muted note"><strong>A push can’t create the wiki on Kahala.</strong>
+        It has to exist there first — <em>Open Kahala…</em> goes to the page where
+        you make one. Waikiki can’t do it for you: creating a wiki there is a
+        browser form tied to your Kahala session, and the token Waikiki holds is
+        only accepted on Kahala’s API.</p>
     {% else %}
       <p>This wiki isn’t linked yet.</p>
       <form method="post" action="/kahala/link" class="addmodel">
@@ -156,6 +166,11 @@
       <p class="muted note">Linking only records the address here on this
         machine. It is never written into the wiki itself, so it can’t travel to
         someone you share the wiki with.</p>
+      <p class="muted note"><strong>The wiki has to already exist on Kahala.</strong>
+        Create it there first (its <em>Wikis</em> page), then put the name it ends
+        up with above — Kahala turns the name you type into the slug, so they can
+        differ. Linking to something that isn’t there yet looks identical to
+        linking to another tenant’s wiki, and the push will say so.</p>
     {% endif %}
   </section>
 

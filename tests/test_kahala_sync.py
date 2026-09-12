@@ -928,3 +928,52 @@ def test_the_pane_polls_rather_than_leaving_a_stale_answer(wiki, monkeypatch):
         assert client.get("/kahala/state?wiki=main").json()["signed_in"] is False
         monkeypatch.setattr(kahalaauth, "signed_in", lambda: True)
         assert client.get("/kahala/state?wiki=main").json()["signed_in"] is True
+
+
+# --- a push cannot create the wiki on Kahala ---------------------------------
+#
+# Creating one there is `POST /wikis/create`, a session-authenticated browser
+# form, and Kahala only accepts our bearer token on `/api/*` — so Waikiki
+# genuinely cannot do it, and the interface has to say so rather than let
+# someone link to a name that was never going to work.
+
+
+def test_status_points_at_where_a_wiki_gets_created(wiki):
+    kahala.link("main", "https://kahala.example", "remote-wiki")
+    assert kahala.status("main")["manage_url"] == "https://kahala.example/wikis"
+
+
+def test_an_unlinked_wiki_offers_no_stray_link(wiki):
+    assert kahala.status("main")["manage_url"] == ""
+
+
+def test_a_missing_remote_wiki_says_a_push_cannot_create_it(wiki, http,
+                                                            monkeypatch):
+    """The 404 used to send people hunting for a typo or the wrong account.
+
+    Those are real causes, but the likeliest one by far — for anybody setting
+    this up for the first time — is that they never made the wiki on Kahala.
+    """
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "remote-wiki")
+    http(lambda r: httpx.Response(404, json={"detail": "No such wiki"}))
+
+    out = kahala.push("main")
+    assert not out["ok"]
+    assert "cannot create one" in out["error"], out["error"]
+    assert "another tenant" in out["error"], \
+        "the other genuine causes were dropped rather than de-emphasised"
+
+
+def test_the_pane_says_a_push_cannot_create_and_offers_the_way_there(wiki,
+                                                                     monkeypatch):
+    from fastapi.testclient import TestClient
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "signed_in", lambda: True)
+    wikis.set_link("main", "https://kahala.example", "remote-wiki")
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        body = client.get("/kahala?wiki=main").text
+    assert "can’t create the wiki on Kahala" in body
+    assert 'data-open-url="https://kahala.example/wikis"' in body, \
+        "no way to reach the page where a wiki is actually created"

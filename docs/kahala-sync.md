@@ -162,6 +162,23 @@ says so. There is no file backend to fall back to, not even a hidden one:
 writing a credential to a plain file "just for now" is the outcome this design
 exists to prevent.
 
+## A push cannot create the wiki on Kahala
+
+The wiki has to exist there first. This is not a gap we chose: creating one is
+`POST /wikis/create`, a **session-authenticated browser form**, and Kahala only
+accepts a bearer token on `/api/*` (`oidc.py`, the middleware's
+`path.startswith("/api/")` gate). The credential Waikiki holds cannot reach that
+route, so there is nothing to automate against.
+
+So the pane says so plainly, and *Open Kahala…* sends you to that server's own
+*Wikis* page — in the browser you are already signed in to, via the same
+`data-open-url` hook the app uses for PDFs. Create it there, then link to the
+name Kahala gives it. Note that Kahala derives the slug from the name you type,
+so the two can differ; the link wants the slug.
+
+Automating this properly needs an `/api/*` creation route on Kahala, which is
+server-side work tracked separately.
+
 ## Refusals
 
 Every one of these is a normal state that reports itself and changes nothing

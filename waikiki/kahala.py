@@ -121,6 +121,11 @@ def status(slug: str) -> dict:
         "can_sign_in": can,
         "reason": why,
         "secure_store": secretstore.available(),
+        # Where to create a wiki on that Kahala. Waikiki cannot do it: creating
+        # one is `POST /wikis/create`, a session-authenticated browser form, and
+        # our bearer token is only accepted on `/api/*`. So we send the person
+        # to the page they are already signed in to rather than pretending.
+        "manage_url": f"{lk['base_url']}/wikis" if lk.get("base_url") else "",
     }
 
 
@@ -490,10 +495,12 @@ def _refusal(resp, lk: dict, action: str, streaming: bool = False) -> dict | Non
                     "push a whole wiki.")
     if code == 404:
         return _err(f"There is no wiki called “{lk['remote']}” on "
-                    f"{lk['base_url']} that this account can see. Kahala "
-                    "answers the same way for a wiki that doesn't exist and one "
-                    "belonging to another tenant, so check both the name and "
-                    "which account you signed in as.")
+                    f"{lk['base_url']} that this account can see. A push "
+                    "cannot create one — the wiki has to exist on Kahala "
+                    "first, and “Open Kahala” above is where to make it. "
+                    "Failing that, Kahala answers identically for a wiki that "
+                    "doesn't exist and one belonging to another tenant, so "
+                    "check the name and which account you signed in as.")
     if code == 409:
         return _err("Kahala refused the transfer as incompatible rather than "
                     f"merging it: {_reason(resp)}. Nothing changed on either "

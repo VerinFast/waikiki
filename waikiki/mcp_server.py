@@ -32,7 +32,7 @@ from fastmcp import FastMCP
 from mcp.types import Icon
 
 from . import (accesslog, bugreports, config, db, deeplink, edits, elements,
-               imagegen, rag, render, store, structure, wikis)
+               imagegen, kahala, rag, render, store, structure, wikis)
 from . import __version__ as _pkg_version
 
 WEB = config.WEB_URL
@@ -1269,6 +1269,61 @@ def generate_image(slug: str, description: str) -> dict:
     return {"wiki": wiki, **result}
 
 
+# --- Kahala (issue #58) -------------------------------------------------------
+#
+# Same `kahala` module the browser routes call, per rule 5 -- an agent and a
+# human get the same transfer, the same gates and the same wording.
+#
+# Deliberately NOT exposed here: linking, cloning and signing in. Those three
+# *establish* a destination or a credential, and both need the person at the
+# machine -- sign-in needs their browser, and choosing where a wiki gets sent is
+# theirs to make. An agent may move content along a route the owner already set
+# up; it may not create one.
+
+
+@mcp.tool
+def kahala_status() -> dict:
+    """Whether this wiki is linked to a Kahala wiki, and whether we're signed in.
+
+    Touches no network. `linked` false means the person at the machine has not
+    connected this wiki to a Kahala one yet; `signed_in` false means push and
+    pull will refuse until they sign in from Waikiki's Kahala pane."""
+    active = _require_wiki()
+    return kahala.status(active)
+
+
+@mcp.tool
+def kahala_push(full: bool = False) -> dict:
+    """Send this wiki up to its linked Kahala wiki.
+
+    Sends only what changed by default, falling back to the whole wiki when the
+    far end can't take an incremental transfer; `full=True` forces the whole
+    wiki. The result's `mode` says which actually ran.
+
+    **Merges, and deletes nothing there**: pages are added or updated by slug, so
+    a page deleted here is still on Kahala afterwards. Needs owner/admin rights
+    on that wiki, which Kahala enforces. Returns ok=false with a plain reason
+    when the wiki isn't linked, the sign-in has expired, or Kahala is
+    unreachable -- none of which changes anything locally."""
+    active = _require_wiki()
+    return kahala.push(active, full=full)
+
+
+@mcp.tool
+def kahala_pull(full: bool = False) -> dict:
+    """Bring the linked Kahala wiki down into this one.
+
+    Fetches only what changed by default; `full=True` forces the whole wiki, and
+    the result's `mode` says which ran. Custom elements, templates and images
+    travel with the changes, so a page never arrives referring to a definition
+    that didn't.
+
+    **Merges, and deletes nothing here**: pages arrive by slug, updating what
+    exists and adding what doesn't. Local pages the remote doesn't have are left
+    alone. An incompatible or malformed transfer is refused whole rather than
+    half-applied."""
+    active = _require_wiki()
+    return kahala.pull(active, full=full)
 @mcp.tool
 def report_bug(title: str, body: str, tool: str = "") -> dict:
     """File a bug or a limitation you hit in Waikiki itself.

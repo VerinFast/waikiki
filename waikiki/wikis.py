@@ -125,6 +125,51 @@ def delete_wiki(slug: str) -> bool:
     return True
 
 
+# --- the Kahala link ---------------------------------------------------------
+#
+# Which remote wiki a local one is linked to is a fact about *this install*, not
+# about the content, so it lives here in the registry and not in the wiki's own
+# settings table. That is not tidiness: `export_to` copies the whole .db file and
+# `store.export_wiki_bundle` reads from it, so a link recorded in the wiki would
+# travel to whoever you shared the wiki with and point their copy at your Kahala.
+#
+# Only the address and the remote slug live here -- never a credential. The
+# refresh token is in the Keychain (see `secretstore`), and nothing in this file
+# is secret.
+
+
+def get_link(slug: str) -> dict | None:
+    """The Kahala link for ``slug``, or None when it isn't linked."""
+    for w in _load()["wikis"]:
+        if w["slug"] == slug:
+            link = w.get("kahala")
+            return dict(link) if isinstance(link, dict) and link.get("base_url") else None
+    return None
+
+
+def set_link(slug: str, base_url: str, remote: str) -> bool:
+    """Link ``slug`` to the wiki ``remote`` on the Kahala at ``base_url``."""
+    with _lock:
+        reg = _load()
+        for w in reg["wikis"]:
+            if w["slug"] == slug:
+                w["kahala"] = {"base_url": base_url.rstrip("/"), "remote": remote}
+                _save(reg)
+                return True
+    return False
+
+
+def clear_link(slug: str) -> bool:
+    """Forget ``slug``'s link. Content is untouched on both sides."""
+    with _lock:
+        reg = _load()
+        for w in reg["wikis"]:
+            if w["slug"] == slug and w.pop("kahala", None) is not None:
+                _save(reg)
+                return True
+    return False
+
+
 def disk_bytes(slug: str) -> int:
     total = 0
     for suffix in ("", "-wal", "-shm"):

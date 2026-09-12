@@ -15,12 +15,16 @@ without touching a single route.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import io
 import json
 import re
+from collections.abc import Iterable
 from typing import IO, List, Optional, Sequence
 
 from . import db, edits, elements, metaschema, rag, render, structure, ydoc
+from .vendor import wiki_interchange as wi
 
 _INCLUDE = re.compile(r"!\[\[([^\]]+?)\]\]")   # ![[Page]] / ![[Page#Section]] transclusion
 
@@ -1292,6 +1296,222 @@ def _export_templates() -> List[dict]:
              "meta_schema": t.get("meta_schema") or ""} for t in templates_list()]
 
 
+# --- Whole-wiki incremental sync (issue #58) ----------------------------------
+#
+# The bundle above ships every page in full: re-syncing a 215-page wiki that
+# differs by one paragraph pushes ~57MB. These three are the incremental cousin,
+# and they mirror Kahala's ``store_interchange`` exactly so the two ends cannot
+# disagree about what a state vector means.
+#
+# Pages carry their own comparison mechanism (a Yjs state vector). Elements,
+# templates and image blobs do not, so the state vector also publishes digests
+# of what we hold and the responder sends back only the difference. Those
+# digests come from the shared library (``wi.element_digest``), never computed
+# here -- a locally-invented digest would disagree with the peer's and every
+# definition would ship forever.
+
+
+def wiki_state_vector() -> "wi.WikiStateVector":
+    """What this wiki holds: per-page Yjs SVs, plus digests of everything else."""
+    pages: dict[str, bytes] = {}
+    slugs: list[str] = []
+    for row in list_pages(include_children=True):
+        slugs.append(row["slug"])
+        sv = page_state_vector(row["slug"])
+        if sv is not None:
+            pages[row["slug"]] = sv
+    els, tpls = _bundle_definitions()
+    return wi.WikiStateVector(
+        pages=pages,
+        elements={e.slug: wi.element_digest(e) for e in els},
+        templates={t.name: wi.template_digest(t) for t in tpls},
+        images=[img.sha256 for img in _bundle_images(slugs)],
+    )
+
+
+def wiki_changelog_for(peer: "wi.WikiStateVector") -> "wi.WikiChangelog":
+    """The bytes ``peer`` is missing: page updates, snapshots, and definitions."""
+    pages: list[wi.WikiChangelogPage] = []
+    incremental: list[str] = []          # shipped as updates, not whole pages
+    seen: set[str] = set()
+
+    for row in list_pages(include_children=True):
+        slug = row["slug"]
+        seen.add(slug)
+        peer_sv = peer.pages.get(slug)
+        if peer_sv is not None:
+            raw = export_changelog(slug, peer_sv)
+            if raw is None:
+                continue
+            # Wrap the bare update in a per-page envelope so its version pair
+            # travels inline and the peer's own gate fires when it applies.
+            pages.append(wi.WikiChangelogPage(
+                slug=slug, changelog=wi.Changelog(ydoc_update=raw).serialize(),
+                title=row.get("title")))
+            incremental.append(slug)
+        else:
+            snap = export_snapshot(slug)
+            if snap is not None:
+                pages.append(wi.WikiChangelogPage(slug=slug, snapshot=snap,
+                                                  title=row.get("title")))
+
+    els, tpls = _bundle_definitions()
+    return wi.WikiChangelog(
+        pages=pages,
+        missing_from_server=sorted(sl for sl in peer.pages if sl not in seen),
+        elements=[e for e in els
+                  if peer.elements.get(e.slug) != wi.element_digest(e)],
+        templates=[t for t in tpls
+                   if peer.templates.get(t.name) != wi.template_digest(t)],
+        # Only for pages going out as updates: a snapshot carries its own image
+        # sidecar, so scanning those would ship the same blobs twice.
+        images=_bundle_images(incremental, exclude=peer.images),
+    )
+
+
+def apply_wiki_changelog(log: "wi.WikiChangelog", author: str = "kahala") -> dict:
+    """Merge an incoming wiki changelog into the active wiki.
+
+    Order is load-bearing: definitions and image blobs land **before** pages, so
+    a page arriving with a reference to a new element or image finds it already
+    there rather than rendering an empty fence.
+
+    Nothing is ever deleted. A per-page update for a slug we don't have is
+    reported in ``skipped`` rather than upserted from nothing -- an incremental
+    update cannot be applied to a page that does not exist, and inventing one
+    would silently create something unrelated.
+    """
+    for tpl in log.templates:
+        template_save(tpl.name, tpl.markdown, meta_schema=tpl.meta_schema)
+    for el in log.elements:
+        elements.save_element(el.slug, el.name, el.fields, el.html, el.css, el.js)
+
+    remap = _rehome_changelog_images(log.images)
+
+    created: list[str] = []
+    updated: list[str] = []
+    skipped: list[str] = []
+    for entry in log.pages:
+        if entry.snapshot is not None:
+            existed = get_page(entry.slug) is not None
+            landed = import_snapshot(entry.snapshot, author=author)
+            (updated if existed else created).append(landed["slug"])
+        elif entry.changelog is not None:
+            if get_page(entry.slug) is None:
+                skipped.append(entry.slug)
+                continue
+            if import_changelog(entry.slug, entry.changelog, author=author):
+                updated.append(entry.slug)
+
+    # The sender's image ids are its own. A snapshot gets remapped as it is
+    # decoded, but an update is a Yjs payload we merge verbatim, so its text
+    # still names the sender's ids -- rewrite them once the merge has landed.
+    if remap:
+        _remap_merged_image_ids([e.slug for e in log.pages
+                                 if e.changelog is not None], remap, author)
+
+    return {"pages": len(created) + len(updated), "created": created,
+            "updated": updated, "skipped": skipped,
+            "elements": len(log.elements), "templates": len(log.templates),
+            "images": len(remap)}
+
+
+def unresolved_image_refs(slugs: Iterable[str]) -> list[str]:
+    """Slugs whose text points at an ``/image/<id>`` this wiki does not have.
+
+    The one thing incremental sync cannot always get right on its own: if a
+    remap was incomplete, a page renders a broken image and says nothing. The
+    caller uses this to fall back to a full bundle rather than leave it.
+    """
+    broken: list[str] = []
+    for slug in slugs:
+        page = get_page(slug)
+        if not page:
+            continue
+        for match in ydoc._IMG_REF.findall(page.get("markdown") or ""):
+            if get_image(int(match)) is None:
+                broken.append(slug)
+                break
+    return broken
+
+
+def _bundle_definitions() -> tuple[list["wi.BundleElement"], list["wi.BundleTemplate"]]:
+    """This wiki's elements and templates as interchange records."""
+    els = [wi.BundleElement(slug=e["slug"], name=e["name"], fields=e["fields"],
+                            html=e["html"], css=e["css"], js=e["js"])
+           for e in _export_elements()]
+    tpls = [wi.BundleTemplate(name=t["name"], markdown=t["markdown"],
+                              meta_schema=t["meta_schema"])
+            for t in _export_templates()]
+    return els, tpls
+
+
+def _bundle_images(slugs: Iterable[str],
+                   exclude: Iterable[str] = ()) -> list["wi.BundleImage"]:
+    """Distinct image blobs the given pages embed, minus hashes the peer holds."""
+    held = {str(h).lower() for h in exclude}
+    out: dict[str, wi.BundleImage] = {}
+    for slug in slugs:
+        page = get_page(slug)
+        if not page:
+            continue
+        for ref in ydoc.image_refs(page.get("markdown") or ""):
+            digest = str(ref.sha256).lower()
+            if not digest or digest in held or digest in out:
+                continue
+            out[digest] = wi.BundleImage(
+                sha256=ref.sha256, media_type=ref.media_type,
+                image_ids=[str(ref.image_id)], filename=ref.filename,
+                byte_size=ref.byte_size, data=ref.data)
+    return sorted(out.values(), key=lambda i: i.sha256)
+
+
+def _rehome_changelog_images(images: Iterable["wi.BundleImage"]) -> dict[int, int]:
+    """Store incoming blobs; return {sender's image id: our new id}.
+
+    Each blob is checked against the hash it claims before it is stored, the
+    same way the snapshot path does it: the bytes and the digest arrive together
+    from a peer, so an unverified blob would land under a trusted content hash
+    and every later reference would resolve to it.
+    """
+    remap: dict[int, int] = {}
+    for img in images:
+        if not img.data:
+            continue
+        actual = hashlib.sha256(img.data).hexdigest()
+        if img.sha256 and not hmac.compare_digest(actual, str(img.sha256).lower()):
+            raise wi.MalformedEnvelopeError(
+                f"image blob does not match its sha256 (claimed "
+                f"{str(img.sha256)[:12]}…, actual {actual[:12]}…)")
+        new_id = save_image(img.filename or actual[:12], img.media_type, img.data)
+        for sender_id in img.image_ids:
+            try:
+                remap[int(sender_id)] = new_id
+            except (TypeError, ValueError):
+                continue
+    return remap
+
+
+def _remap_merged_image_ids(slugs: Iterable[str], remap: dict[int, int],
+                            author: str) -> None:
+    """Rewrite ``/image/<id>`` on pages that arrived as updates.
+
+    This is a normal local edit through the ordinary write path, *not* a change
+    to the incoming Yjs update -- rewriting inside a CRDT payload would corrupt
+    it. It does mean our copy diverges from the sender's by image ids, which is
+    exactly what ``import_snapshot`` has always done; ids are local on both
+    sides and cannot be shared.
+    """
+    for slug in slugs:
+        page = get_page(slug)
+        if not page:
+            continue
+        before = page.get("markdown") or ""
+        after = ydoc._remap_image_ids(before, remap)
+        if after != before:
+            update_page(slug, page["title"], after, author=author)
+
+
 def export_wiki_bundle(dest: Optional[IO[bytes]] = None,
                        label: Optional[str] = None) -> Optional[bytes]:
     """Gather the whole active wiki into a wiki-interchange bundle.
@@ -1365,7 +1585,8 @@ def _read_bundle(reader) -> None:
         ydoc.read_bundle_page(entry)           # version gate + content-only
 
 
-def import_wiki_bundle(source, author: str = "import") -> dict:
+def import_wiki_bundle(source, author: str = "import",
+                       on_writes_begin=None) -> dict:
     """Apply a whole-wiki bundle into the **active** wiki (export-down).
 
     ``source`` is a bundle's bytes or a readable, seekable binary file. Pages are
@@ -1382,10 +1603,19 @@ def import_wiki_bundle(source, author: str = "import") -> dict:
     content-only rule. Raises before touching the wiki if the bundle is
     malformed, version-incompatible, or carries a server-only field.
 
+    ``on_writes_begin`` is called once, after the dry run has passed and before
+    the first local write. A failure of the *writes* can still leave a partial
+    import (the accepted limit — ``docs/data-safety.md`` question 4), and a
+    caller that reports to a person needs to know which of the two happened:
+    "refused, nothing changed" and "partly merged, run it again" are different
+    sentences, and guessing produces the one that isn't true.
+
     Returns a count of what landed.
     """
     with ydoc.open_bundle(source) as reader:       # gates run on open
         _read_bundle(reader)                       # dry run: nothing written yet
+        if on_writes_begin is not None:
+            on_writes_begin()
 
         tpls = reader.templates()
         for tpl in tpls:

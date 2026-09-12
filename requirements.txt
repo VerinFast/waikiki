@@ -56,6 +56,9 @@ pycrdt-websocket>=0.16.4   # y-websocket-compatible server for browser sync
 
 # --- Interchange format (VENDORED, not on PyPI) ---
 # wiki-interchange is vendored at waikiki/vendor/wiki_interchange/, pinned to
-# version 0.2.0 (spec v2 — the whole-wiki bundle). It is NOT pip-installable;
+# version 0.2.0 at upstream revision 42c1fa22 (spec v3 — the whole-wiki bundle,
+# and an incremental changelog that carries elements/templates/images).
+# The REVISION is the real pin:
+# upstream added a module without moving __version__. It is NOT pip-installable;
 # re-sync it from upstream per docs/vendoring.md. Its own dep is
 # pycrdt>=0.14.4,<0.15, satisfied above.

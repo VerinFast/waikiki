@@ -207,6 +207,50 @@ existing ones are updated (and versioned) in place, and nothing local is deleted
 Hierarchy travels by slug because integer page ids are local — the same page is a
 different number in every wiki.
 
+### Sync with Kahala
+
+Kahala is the shared, server-side half of the same wiki. A local wiki can be
+**linked** to one there, then **pushed** up or **pulled** down; a remote wiki can
+be **cloned** into a new local one. It's all in the *Kahala* pane.
+
+Only content travels — pages, hierarchy, elements, templates and images. Tenancy
+and permissions are the server's and are re-attached there; embeddings are
+regenerated on arrival rather than shipped.
+
+**Push and pull both merge, and neither deletes.** A push adds and updates pages
+on Kahala and removes nothing there; a pull does the same here. So a page you
+deleted locally is still on Kahala afterwards, and the next pull brings it back.
+Removing a page from both is a deliberate act on both.
+
+Only what changed travels — a few kilobytes rather than the whole wiki — and
+custom elements, templates and images travel with the pages, so a page never
+arrives referring to a definition that didn't. If the server is running an older
+version, or an image doesn't survive the trip, Waikiki transfers the whole wiki
+instead and tells you that's what it did. *Transfer the whole wiki* forces it.
+If a transfer stops part-way — a full disk, say — it says it only *partly*
+merged rather than claiming it was refused: nothing is ever deleted, every page
+that arrived is an ordinary page with its history, and running the same transfer
+again finishes the job.
+
+Signing in uses Kahala's own sign-in page — OpenID Connect with PKCE, no client
+secret, and the callback comes back to Waikiki's own loopback port. In the
+desktop app it opens in your **web browser** rather than inside Waikiki's window,
+so you get your usual session, your password manager and whatever second factor
+your organisation uses; the app notices by itself when you're done. The refresh
+token goes in your **Keychain**, never into a wiki file (that file *is* what
+"Save wiki" hands over) and never into a plain config file. Where there's no
+secure store, signing in is switched off and says so rather than falling back to
+writing the token somewhere less safe. The link itself — the address and the
+remote wiki's name — is recorded outside the wiki too, so it can't travel to
+someone you share the wiki with.
+
+Someone who joins over LAN sharing can't reach any of it. An agent connected over
+MCP can push and pull, but can't link, clone or sign in — choosing where a wiki
+gets sent is yours.
+
+Full detail, including every refusal and why redirects are never followed, in
+**[docs/kahala-sync.md](docs/kahala-sync.md)**.
+
 ## Setup
 
 ```bash

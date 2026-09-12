@@ -25,13 +25,19 @@ from enum import Enum
 
 from .errors import IncompatibleVersionError
 
-SPEC_VERSION = 2
+SPEC_VERSION = 3
 """Highest wiki-interchange spec version this build understands.
 
-v2 adds the wiki-level bundle's content sections — page hierarchy by slug, sort
+v2 added the wiki-level bundle's content sections — page hierarchy by slug, sort
 order, starred, custom elements, templates with their metadata schema, and a
-shared content-addressed image area. It is strictly **additive**: the page Y.Doc
-root layout and the per-page snapshot/changelog envelopes are unchanged from v1.
+shared content-addressed image area.
+
+v3 gives the **wiki changelog** those same sections. Until v3 the incremental
+path carried pages and nothing else, so a peer that synced incrementally could
+never learn about a new image, a changed custom element or a new template: its
+pages would render against definitions it did not have, and nothing would say
+so. Both steps are strictly **additive** — the page Y.Doc root layout and the
+per-page snapshot/changelog envelopes are unchanged from v1.
 """
 
 MIN_COMPATIBLE_SPEC_VERSION = 1
@@ -63,6 +69,25 @@ PAGE_ENVELOPE_SPEC = 1
 
 WIKI_ENVELOPE_SPEC = 2
 """Spec floor for a wiki bundle — its manifest gained content sections in v2."""
+
+WIKI_CHANGELOG_SPEC = 3
+"""Spec floor for a wiki changelog **that carries the v3 sections**.
+
+Stamped per payload, not per kind, and that is the point. A wiki changelog whose
+only content is pages has exactly the shape older peers already read, so it
+keeps stamping :data:`PAGE_ENVELOPE_SPEC` and a deployed older Kahala can still
+answer it. The moment the envelope actually carries elements, templates or
+images it stamps this instead — because a peer that cannot read those sections
+would otherwise parse the envelope happily and **silently drop the content**,
+which is the failure this version exists to prevent. Rejecting loudly is the
+whole job of the gate; a stamp that never rises turns it off.
+
+The state vector does the opposite, deliberately: its new sections are a *hint*
+about what the sender already holds, so an older peer that ignores them still
+behaves correctly — it simply sends back no definitions, exactly as it did
+before. It therefore keeps stamping the page floor and never rejects on this
+account.
+"""
 
 
 class Compatibility(str, Enum):
@@ -113,7 +138,7 @@ def negotiate(
     if remote.yjs_protocol != local.yjs_protocol:
         return (
             Compatibility.REJECT,
-            f"Yjs protocol mismatch: peer v{remote.yjs_protocol}, " f"local v{local.yjs_protocol}",
+            f"Yjs protocol mismatch: peer v{remote.yjs_protocol}, local v{local.yjs_protocol}",
         )
     if remote.spec_version > local.spec_version:
         return (

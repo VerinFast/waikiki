@@ -1343,11 +1343,14 @@ def wiki_changelog_for(peer: "wi.WikiStateVector") -> "wi.WikiChangelog":
             raw = export_changelog(slug, peer_sv)
             if raw is None:
                 continue
-            # Wrap the bare update in a per-page envelope so its version pair
-            # travels inline and the peer's own gate fires when it applies.
+            # ``export_changelog`` ALREADY returns a serialized Changelog
+            # envelope (ydoc.export_changelog ends in ``.serialize()``), so it
+            # goes in as-is. Wrapping it again put JSON where Yjs bytes belong
+            # and the receiver's CRDT decoder ran off the end of the buffer --
+            # reported, through two layers of over-broad error handling, as
+            # "there is no wiki called startupos".
             pages.append(wi.WikiChangelogPage(
-                slug=slug, changelog=wi.Changelog(ydoc_update=raw).serialize(),
-                title=row.get("title")))
+                slug=slug, changelog=raw, title=row.get("title")))
             incremental.append(slug)
         else:
             snap = export_snapshot(slug)
@@ -1391,6 +1394,7 @@ def apply_wiki_changelog(log: "wi.WikiChangelog", author: str = "kahala") -> dic
     created: list[str] = []
     updated: list[str] = []
     skipped: list[str] = []
+    double_wrapped: list[str] = []
     for entry in log.pages:
         if entry.snapshot is not None:
             existed = get_page(entry.slug) is not None
@@ -1400,7 +1404,10 @@ def apply_wiki_changelog(log: "wi.WikiChangelog", author: str = "kahala") -> dic
             if get_page(entry.slug) is None:
                 skipped.append(entry.slug)
                 continue
-            if import_changelog(entry.slug, entry.changelog, author=author):
+            payload, rewrapped = _unwrap_double_changelog(entry.changelog)
+            if rewrapped:
+                double_wrapped.append(entry.slug)
+            if import_changelog(entry.slug, payload, author=author):
                 updated.append(entry.slug)
 
     # The sender's image ids are its own. A snapshot gets remapped as it is
@@ -1410,10 +1417,38 @@ def apply_wiki_changelog(log: "wi.WikiChangelog", author: str = "kahala") -> dic
         _remap_merged_image_ids([e.slug for e in log.pages
                                  if e.changelog is not None], remap, author)
 
-    return {"pages": len(created) + len(updated), "created": created,
-            "updated": updated, "skipped": skipped,
-            "elements": len(log.elements), "templates": len(log.templates),
-            "images": len(remap)}
+    out = {"pages": len(created) + len(updated), "created": created,
+           "updated": updated, "skipped": skipped,
+           "elements": len(log.elements), "templates": len(log.templates),
+           "images": len(remap)}
+    if double_wrapped:
+        # Reported, never silent: the peer is shipping a known-broken shape and
+        # somebody should fix it rather than rely on us straightening it out.
+        out["double_wrapped"] = double_wrapped
+    return out
+
+
+def _unwrap_double_changelog(raw: bytes) -> tuple[bytes, bool]:
+    """Undo a peer's double-wrapped changelog. Returns (payload, was_wrapped).
+
+    A correct per-page changelog carries raw Yjs bytes in ``ydoc_update``. A
+    peer that wraps an already-serialized envelope a second time puts JSON
+    there instead, and the CRDT decoder then reads past the end of the buffer —
+    an error that says nothing about what actually happened. We shipped that bug
+    ourselves, and Kahala still has it, so tolerate the shape on the way in.
+
+    Safe to unwrap: the inner payload is a full ``Changelog`` envelope with its
+    own version gate, which runs on apply exactly as it would have anyway. The
+    caller records which pages arrived this way; straightening it out silently
+    would leave the peer's bug to be found by someone else, later, the hard way.
+    """
+    try:
+        inner = wi.Changelog.deserialize(raw).ydoc_update
+    except Exception:
+        return raw, False                     # not an envelope we can read; leave it
+    if inner[:1] == b"{" and b'"format"' in inner[:64]:
+        return inner, True
+    return raw, False
 
 
 def unresolved_image_refs(slugs: Iterable[str]) -> list[str]:

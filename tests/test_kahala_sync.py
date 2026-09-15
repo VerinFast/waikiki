@@ -1119,3 +1119,72 @@ def test_the_servers_own_words_survive_into_every_404(wiki, http, monkeypatch):
     wikis.set_link("main", "https://kahala.example", "startupos")
     http(lambda r: httpx.Response(404, json={"detail": "Wiki is archived"}))
     assert "Wiki is archived" in kahala.push("main")["error"]
+
+
+# --- the changelog path, when BOTH sides already have the page ----------------
+#
+# The gap that let a real bug ship. Every other test here starts from a peer
+# holding nothing, so every page travels as a SNAPSHOT and the changelog branch
+# is never exercised end to end. The one shape that matters in practice — two
+# peers that both already have a page — was untested, and in it we wrapped an
+# already-serialized Changelog envelope a second time. The receiver's CRDT
+# decoder then read past the end of the buffer and said so, and two layers of
+# over-broad error handling turned that into "there is no wiki called startupos".
+
+
+def _two_wikis_sharing_a_page(slug="waikiki-repo"):
+    """Sender and receiver both hold the page, with independent Y.Doc lineages."""
+    sender, receiver = wikis.create_wiki("Sender"), wikis.create_wiki("Receiver")
+    for w, body in ((sender, "written locally"), (receiver, "written on the server")):
+        token = db.current_wiki.set(w)
+        try:
+            db.init_db()
+            store.create_page("Waikiki Repo", body)
+        finally:
+            db.current_wiki.reset(token)
+    return sender, receiver
+
+
+def test_a_page_both_sides_have_travels_as_a_usable_changelog(wiki):
+    sender, receiver = _two_wikis_sharing_a_page()
+    peer = _as(receiver, store.wiki_state_vector)
+    log = _as(sender, lambda: store.wiki_changelog_for(peer))
+
+    entry = next(p for p in log.pages if p.slug == "waikiki-repo")
+    assert entry.changelog is not None and entry.snapshot is None, \
+        "the peer already had this page, so it should travel as an update"
+
+    # The envelope must carry raw Yjs bytes. JSON here is the bug: it decodes as
+    # an envelope and then runs off the end of the buffer inside pycrdt.
+    inner = wi.Changelog.deserialize(entry.changelog).ydoc_update
+    assert not inner.startswith(b"{"), \
+        "ydoc_update contains a serialized envelope, not Yjs bytes — double-wrapped"
+
+    summary = _as(receiver, lambda: store.apply_wiki_changelog(log))
+    assert summary["updated"] == ["waikiki-repo"], summary
+    assert "double_wrapped" not in summary
+
+
+def test_a_double_wrapped_changelog_from_a_peer_is_repaired_and_reported(wiki):
+    """Kahala still ships this shape. Tolerate it — but never silently."""
+    sender, receiver = _two_wikis_sharing_a_page()
+    peer = _as(receiver, store.wiki_state_vector)
+    log = _as(sender, lambda: store.wiki_changelog_for(peer))
+
+    broken = wi.WikiChangelog(pages=[
+        wi.WikiChangelogPage(
+            slug=p.slug,
+            changelog=wi.Changelog(ydoc_update=p.changelog).serialize(),
+            title=p.title)
+        for p in log.pages if p.changelog is not None])
+
+    summary = _as(receiver, lambda: store.apply_wiki_changelog(broken))
+    assert summary["updated"] == ["waikiki-repo"]
+    assert summary["double_wrapped"] == ["waikiki-repo"], \
+        "a peer's broken payload was straightened out without saying so"
+
+
+def test_a_changelog_that_is_not_an_envelope_is_left_alone(wiki):
+    """The repair must not mangle a payload it merely fails to parse."""
+    junk = b"\x01\x02 not an envelope"
+    assert store._unwrap_double_changelog(junk) == (junk, False)

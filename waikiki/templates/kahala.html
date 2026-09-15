@@ -21,14 +21,20 @@
     {% elif not status.can_sign_in %}
       <p class="banner err">{{ status.reason }}</p>
     {% elif status.signed_in %}
-      <p>Signed in. The token is kept in your Keychain, never in a wiki file,
-        so it is not included when you save or share a wiki.</p>
+      <p>Signed in to <code>{{ status.issuer }}</code>. The token is kept in your
+        Keychain, never in a wiki file, so it is not included when you save or
+        share a wiki.</p>
+      <p class="muted note">One sign-in per install, not per wiki: every linked
+        wiki uses this identity. If you need a Kahala on a different sign-in
+        server, sign out and set <code>kahala_issuer</code> in
+        <code>app_config.json</code> — a proper per-link setting is
+        <a href="https://github.com/VerinFast/waikiki/issues/58">tracked</a>.</p>
       <form method="post" action="/kahala/signout">
         <input type="hidden" name="wiki" value="{{ subject }}">
         <button class="btn" type="submit">Sign out</button>
       </form>
     {% else %}
-      <p>You aren’t signed in to Kahala yet.</p>
+      <p>You aren’t signed in to <code>{{ status.issuer }}</code> yet.</p>
       <a class="btn primary" id="kahala-signin"
          href="/kahala/signin?wiki={{ subject }}">Sign in to Kahala</a>
       <span class="muted" id="kahala-waiting" hidden>Waiting for the browser…</span>

@@ -80,6 +80,19 @@ def _bad_remote(remote: str) -> str:
                     "as it appears there, with nothing around it.")
     if any(ch < " " or ch == "\x7f" for ch in remote):
         return "That wiki name contains a character that can't be sent."
+    # Kahala addresses a wiki by its SLUG, not its display name, and its Wikis
+    # page shows both ("StartupOS /startupos") -- so the name is the one that
+    # catches the eye and the slug is the one the wire needs. Linking to the
+    # display name produces a 404 that reads like a permissions problem, hours
+    # later, at push time. Caught here instead, with the answer in hand: both
+    # sides derive slugs with the same `slugify`, so we can say what it will be.
+    guess = wikis.slugify(remote)
+    if guess != remote:
+        return (f"Kahala addresses a wiki by its slug, not its display name — "
+                f"its Wikis page shows both, like “{remote} /{guess}”. "
+                f"Use “{guess}”. (If that wiki's slug ends in a number, Kahala "
+                "hit a name collision when it was created; copy the slug from "
+                "that page instead.)")
     return ""
 
 
@@ -142,6 +155,10 @@ def status(slug: str) -> dict:
         "can_sign_in": can,
         "reason": why,
         "secure_store": secretstore.available(),
+        # WHICH Kahala the sign-in is for. "Signed in." on its own is a claim
+        # the reader cannot check, and there is more than one Kahala — so name
+        # the realm, and let the pane say that one sign-in covers the install.
+        "issuer": kahalaauth.issuer(),
         # Where to create a wiki on that Kahala. Waikiki cannot do it: creating
         # one is `POST /wikis/create`, a session-authenticated browser form, and
         # our bearer token is only accepted on `/api/*`. So we send the person
@@ -515,8 +532,17 @@ def _refusal(resp, lk: dict, action: str, streaming: bool = False) -> dict | Non
                     f"admin of “{lk['remote']}” on Kahala, and only they may "
                     "push a whole wiki.")
     if code == 404:
+        hint = ""
+        slugged = wikis.slugify(lk["remote"])
+        if slugged != lk["remote"]:
+            # Almost certainly this: the link holds a display name and the wire
+            # wants a slug. Say it first, and say what to do about it.
+            hint = (f" This link uses “{lk['remote']}”, which looks like a "
+                    f"display name — Kahala addresses wikis by slug, so it is "
+                    f"probably “{slugged}”. Forget this link and make it again "
+                    "with the slug from Kahala's Wikis page.")
         return _err(f"There is no wiki called “{lk['remote']}” on "
-                    f"{lk['base_url']} that this account can see. A push "
+                    f"{lk['base_url']} that this account can see.{hint} A push "
                     "cannot create one — the wiki has to exist on Kahala "
                     "first, and “Open Kahala” above is where to make it. "
                     "Failing that, Kahala answers identically for a wiki that "

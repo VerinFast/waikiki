@@ -1011,3 +1011,65 @@ def test_the_pane_prefills_both(wiki):
         body = client.get("/kahala?wiki=startupos").text
     assert 'value="https://kahala.example"' in body
     assert 'value="startupos"' in body
+
+
+# --- the slug is not the display name ----------------------------------------
+#
+# Kahala's Wikis page shows both ("StartupOS /startupos") and the interchange
+# wire addresses by slug. Linking to the display name produces a 404 that reads
+# like a permissions problem, at push time, long after the mistake. Both sides
+# derive slugs with the same `slugify`, so we can catch it where it is typed and
+# say what the answer is.
+
+
+def test_linking_to_a_display_name_is_refused_with_the_slug(wiki):
+    out = kahala.link("main", "https://kahala.example", "StartupOS")
+    assert not out["ok"]
+    assert "startupos" in out["error"] and "slug" in out["error"]
+    assert wikis.get_link("main") is None, "the bad link was stored anyway"
+
+
+@pytest.mark.parametrize("good", ["startupos", "beaconlight", "ever-afterlife"])
+def test_a_real_slug_still_links(wiki, good):
+    assert kahala.link("main", "https://kahala.example", good)["ok"]
+
+
+def test_an_existing_bad_link_gets_the_answer_in_the_404(wiki, http, monkeypatch):
+    """Links made before the check existed are still out there — like the one
+    that prompted this."""
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "StartupOS")   # bypasses link()
+    http(lambda r: httpx.Response(404, json={"detail": "No such wiki"}))
+
+    out = kahala.push("main")
+    assert not out["ok"]
+    assert "probably “startupos”" in out["error"], out["error"]
+    assert "Forget this link" in out["error"]
+
+
+def test_a_404_for_a_slug_that_is_already_a_slug_offers_no_false_hint(wiki, http,
+                                                                      monkeypatch):
+    """Don't tell someone their correct slug is wrong."""
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "startupos")
+    http(lambda r: httpx.Response(404, json={"detail": "No such wiki"}))
+    out = kahala.push("main")
+    assert "display name" not in out["error"]
+    assert "another tenant" in out["error"]
+
+
+# --- which Kahala am I signed in to? -----------------------------------------
+
+
+def test_the_pane_names_the_sign_in_server(wiki, monkeypatch):
+    """"Signed in." alone is a claim the reader cannot check, and there is more
+    than one Kahala."""
+    from fastapi.testclient import TestClient
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    monkeypatch.setattr(kahalaauth, "signed_in", lambda: True)
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        body = client.get("/kahala").text
+    assert "https://kc.example/realms/gp" in body
+    assert "One sign-in per install" in body

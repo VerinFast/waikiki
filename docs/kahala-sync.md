@@ -162,6 +162,33 @@ says so. There is no file backend to fall back to, not even a hidden one:
 writing a credential to a plain file "just for now" is the outcome this design
 exists to prevent.
 
+## The slug, not the display name
+
+Kahala's *Wikis* page shows both — `StartupOS /startupos` — and the interchange
+wire addresses a wiki by its **slug**. Link to the display name and the push
+404s, which reads like a permissions problem and arrives long after the mistake
+was made.
+
+Both sides derive slugs with the same `slugify`, so `kahala.link` refuses a
+non-slug name *where it is typed* and names the slug it will be. The push 404
+carries the same hint, for links made before that check existed. Neither
+auto-corrects: if the wiki's slug collided when it was created, Kahala's is
+`startupos-2` and guessing would send the push somewhere real and wrong.
+
+## One sign-in per install
+
+The sign-in is app-global and keyed by **issuer** (`kahala:{issuer}` in the
+Keychain), while a *link* is per wiki and carries its own base URL. So every
+linked wiki uses the same identity, and a Kahala on a different sign-in server
+needs `kahala_issuer` changed in `app_config.json` and a fresh sign-in.
+
+That asymmetry is a real gap — if you choose which Kahala to push to, you should
+choose which one you are signed in to — and the pane now at least *names* the
+server rather than saying "Signed in." with nothing to check it against. The
+Keychain already keys by issuer, so several identities can coexist; what is
+missing is carrying the issuer on the link and threading it through
+`kahalaauth`.
+
 ## A push cannot create the wiki on Kahala
 
 The wiki has to exist there first. This is not a gap we chose: creating one is

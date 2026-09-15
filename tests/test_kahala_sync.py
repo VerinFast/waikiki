@@ -960,7 +960,9 @@ def test_a_missing_remote_wiki_says_a_push_cannot_create_it(wiki, http,
 
     out = kahala.push("main")
     assert not out["ok"]
-    assert "cannot create one" in out["error"], out["error"]
+    assert "cannot create a wiki" in out["error"], out["error"]
+    assert "No such wiki" in out["error"], \
+        "the server's own words were dropped in favour of our interpretation"
     assert "another tenant" in out["error"], \
         "the other genuine causes were dropped rather than de-emphasised"
 
@@ -1073,3 +1075,47 @@ def test_the_pane_names_the_sign_in_server(wiki, monkeypatch):
         body = client.get("/kahala").text
     assert "https://kc.example/realms/gp" in body
     assert "One sign-in per install" in body
+
+
+# --- report what the server said, then interpret ------------------------------
+#
+# Two 404s wear the same clothes. FastAPI answers an unmatched route with
+# {"detail": "Not Found"}; Kahala's own handler says "No such wiki". Collapsing
+# them into one confident sentence about wiki names sent two separate
+# investigations down the wrong road, so the server's words come first now.
+
+
+def test_an_absent_route_is_not_reported_as_a_missing_wiki(wiki, http,
+                                                            monkeypatch):
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "startupos")
+    http(lambda r: httpx.Response(404, json={"detail": "Not Found"}))
+
+    out = kahala.push("main")
+    assert not out["ok"]
+    assert "too old for the interchange API" in out["error"], out["error"]
+    assert "Nothing is wrong with the link" in out["error"]
+    assert "cannot create a wiki" not in out["error"], \
+        "a framework 404 was still blamed on the wiki name"
+
+
+def test_a_missing_wiki_during_the_probe_is_not_retried_as_a_full_push(
+        wiki, http, monkeypatch):
+    """Falling back would upload the whole wiki before failing for a reason we
+    already had."""
+    _signed_in(monkeypatch)
+    store.create_page("Big", "x" * 500)
+    wikis.set_link("main", "https://kahala.example", "startupos")
+    seen = http(lambda r: httpx.Response(404, json={"detail": "No such wiki"}))
+
+    out = kahala.push("main")
+    assert not out["ok"] and "No such wiki" in out["error"]
+    assert not any(r.method == "POST" and r.url.path.endswith("/snapshot")
+                   for r in seen), "it uploaded the wiki anyway"
+
+
+def test_the_servers_own_words_survive_into_every_404(wiki, http, monkeypatch):
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "startupos")
+    http(lambda r: httpx.Response(404, json={"detail": "Wiki is archived"}))
+    assert "Wiki is archived" in kahala.push("main")["error"]

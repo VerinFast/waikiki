@@ -323,8 +323,13 @@ def _push_incremental(slug: str, lk: dict, token: str) -> dict:
     except httpx.HTTPError as exc:
         return _err(_unreachable(lk["base_url"], exc))
     if their.status_code == 404:
-        # No such route at all: a Kahala from before the changelog wire.
-        return _fallback(_OLD_PEER)
+        # Only an ABSENT ROUTE means an older Kahala. A 404 that says "No such
+        # wiki" means the wiki isn't there, and falling back would push ~57MB
+        # before failing for the reason we already had in our hands.
+        if _reason(their).strip().lower() in ("not found", "not_found"):
+            return _fallback(_OLD_PEER)
+        bad = _refusal(their, lk, "push")
+        return bad if bad else _fallback(_OLD_PEER)
     bad = _refusal(their, lk, "push")
     if bad:
         return bad
@@ -532,6 +537,20 @@ def _refusal(resp, lk: dict, action: str, streaming: bool = False) -> dict | Non
                     f"admin of “{lk['remote']}” on Kahala, and only they may "
                     "push a whole wiki.")
     if code == 404:
+        # Two different 404s wear the same clothes, and telling them apart is
+        # the difference between "fix your link" and "that server is too old".
+        # FastAPI answers an unmatched route with {"detail": "Not Found"};
+        # Kahala's own handler says "No such wiki". Guessing between them sent
+        # two separate investigations down the wrong road, so: report what the
+        # server said, first, and interpret second.
+        said = _reason(resp)
+        if said.strip().lower() in ("not found", "not_found"):
+            return _err(
+                f"{lk['base_url']} has no {action} route at "
+                f"{_wiki_url(lk, '')} — that is the web framework's own "
+                "\"Not Found\", not Kahala saying the wiki is missing. This "
+                "Kahala is too old for the interchange API, or it isn't a "
+                "Kahala. Nothing is wrong with the link or the wiki name.")
         hint = ""
         slugged = wikis.slugify(lk["remote"])
         if slugged != lk["remote"]:
@@ -541,13 +560,12 @@ def _refusal(resp, lk: dict, action: str, streaming: bool = False) -> dict | Non
                     f"display name — Kahala addresses wikis by slug, so it is "
                     f"probably “{slugged}”. Forget this link and make it again "
                     "with the slug from Kahala's Wikis page.")
-        return _err(f"There is no wiki called “{lk['remote']}” on "
-                    f"{lk['base_url']} that this account can see.{hint} A push "
-                    "cannot create one — the wiki has to exist on Kahala "
-                    "first, and “Open Kahala” above is where to make it. "
-                    "Failing that, Kahala answers identically for a wiki that "
-                    "doesn't exist and one belonging to another tenant, so "
-                    "check the name and which account you signed in as.")
+        return _err(f"Kahala said “{said}” for “{lk['remote']}” on "
+                    f"{lk['base_url']}.{hint} A push cannot create a wiki — it "
+                    "has to exist there first, and “Open Kahala” above is where "
+                    "to make it. Kahala also answers this way for a wiki that "
+                    "belongs to another tenant, so check which account you "
+                    "signed in as.")
     if code == 409:
         return _err("Kahala refused the transfer as incompatible rather than "
                     f"merging it: {_reason(resp)}. Nothing changed on either "

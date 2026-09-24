@@ -174,18 +174,36 @@
           <option value="custom" {{ 'selected' if nav_sort == 'custom' }}>Custom</option>
         </select>
       </div>
+      {# Recursive macro: a page's own row, plus (if it has children) a
+         collapsible <details> nesting its sub-pages. Same disclosure pattern
+         as .tag-group elsewhere (▸/▾ via CSS, defaults open) rather than a
+         new widget. Only top-level rows get a drag handle — Custom order
+         only reorders siblings within a level (see the :scope-scoped JS
+         below), so dragging never needs to cross levels. #}
+      {% macro nav_item(p, depth) %}
+        <li data-slug="{{ p.slug }}">
+          {% if nav_sort == 'custom' and depth == 0 %}<span class="draghandle" title="Drag to reorder" aria-hidden="true">⠿</span>{% endif %}
+          <form method="post" action="/wiki/{{ p.slug }}/star" class="star-form">
+            <input type="hidden" name="next" value="{{ current_path }}">
+            <button class="star {{ 'on' if p.starred }}" type="submit" onclick="event.stopPropagation()"
+                    title="{{ 'Unstar' if p.starred else 'Star' }}"
+                    aria-label="Toggle star">{{ '★' if p.starred else '☆' }}</button>
+          </form>
+          {% if p.children %}
+            <details class="nav-node" open>
+              <summary><a href="/wiki/{{ p.slug }}" onclick="event.stopPropagation()">{{ p.title }}</a></summary>
+              <ul class="navlist-nested">
+                {% for c in p.children %}{{ nav_item(c, depth + 1) }}{% endfor %}
+              </ul>
+            </details>
+          {% else %}
+            <a href="/wiki/{{ p.slug }}">{{ p.title }}</a>
+          {% endif %}
+        </li>
+      {% endmacro %}
       <ul class="navlist {{ 'reorderable' if nav_sort == 'custom' }}">
         {% for p in nav_pages %}
-          <li data-slug="{{ p.slug }}">
-            {% if nav_sort == 'custom' %}<span class="draghandle" title="Drag to reorder" aria-hidden="true">⠿</span>{% endif %}
-            <form method="post" action="/wiki/{{ p.slug }}/star" class="star-form">
-              <input type="hidden" name="next" value="{{ current_path }}">
-              <button class="star {{ 'on' if p.starred }}" type="submit"
-                      title="{{ 'Unstar' if p.starred else 'Star' }}"
-                      aria-label="Toggle star">{{ '★' if p.starred else '☆' }}</button>
-            </form>
-            <a href="/wiki/{{ p.slug }}">{{ p.title }}</a>
-          </li>
+          {{ nav_item(p, 0) }}
         {% else %}
           <li class="muted">{{ 'No starred pages.' if nav_filter == 'starred' else 'No pages yet.' }}</li>
         {% endfor %}
@@ -1237,7 +1255,12 @@
         document.removeEventListener('pointermove', onMove);
         if (dragLi) dragLi.classList.remove('dragging');
         if (moved) {
-          var slugs = [].slice.call(list.querySelectorAll('li[data-slug]'))
+          // :scope > : top-level siblings only. Nested sub-pages sit inside a
+          // child's own <details><ul class="navlist-nested">, which a plain
+          // 'li[data-slug]' descendant selector would also match — pulling
+          // grandchildren's slugs into a top-level reorder and, via /reorder,
+          // stamping them with a sort_order they were never meant to have.
+          var slugs = [].slice.call(list.querySelectorAll(':scope > li[data-slug]'))
             .map(function (li) { return li.getAttribute('data-slug'); });
           fetch('/reorder', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1247,7 +1270,9 @@
         dragLi = null;
       }
       function afterElement(y) {
-        var els = [].slice.call(list.querySelectorAll('li[data-slug]:not(.dragging)'));
+        // Same :scope reasoning as onUp() below: candidates are top-level
+        // siblings only, never a nested sub-page.
+        var els = [].slice.call(list.querySelectorAll(':scope > li[data-slug]:not(.dragging)'));
         var closest = { offset: -Infinity, el: null };
         els.forEach(function (el) {
           var box = el.getBoundingClientRect();

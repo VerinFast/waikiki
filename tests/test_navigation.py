@@ -257,6 +257,86 @@ def test_no_proposal_no_notice(wiki):
         assert 'class="proposal-note"' not in client.get("/wiki/quiet").text
 
 
+# --- Sidebar sub-page nesting --------------------------------------------------
+
+def test_nav_tree_nests_children_under_their_parent():
+    from waikiki.api import _nav_tree
+
+    flat = [
+        {"slug": "top", "parent_slug": None},
+        {"slug": "kid", "parent_slug": "top"},
+    ]
+    tree = _nav_tree(flat)
+    assert [p["slug"] for p in tree] == ["top"]
+    assert [c["slug"] for c in tree[0]["children"]] == ["kid"]
+
+
+def test_nav_tree_preserves_sibling_order():
+    """Ordering is the SQL sort's job; the tree must not re-sort."""
+    from waikiki.api import _nav_tree
+
+    flat = [
+        {"slug": "b", "parent_slug": None},
+        {"slug": "a", "parent_slug": None},
+        {"slug": "kid2", "parent_slug": "b"},
+        {"slug": "kid1", "parent_slug": "b"},
+    ]
+    tree = _nav_tree(flat)
+    assert [p["slug"] for p in tree] == ["b", "a"]
+    assert [c["slug"] for c in tree[0]["children"]] == ["kid2", "kid1"]
+
+
+def test_nav_tree_promotes_orphans_to_top_level():
+    """A child whose parent didn't make it into the list (e.g. cut by the
+    [:500] cap) must still be shown, not silently dropped."""
+    from waikiki.api import _nav_tree
+
+    flat = [{"slug": "kid", "parent_slug": "nope-not-here"}]
+    tree = _nav_tree(flat)
+    assert [p["slug"] for p in tree] == ["kid"]
+
+
+def test_sidebar_nests_child_pages_under_their_parent(wiki):
+    store.create_page("Parent Page", "p")
+    store.create_page("Child Page", "c")
+    store.set_parent("child-page", "parent-page")
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        body = client.get("/").text
+    nav = body[body.index('class="navlist'):body.index("</aside>")]
+    assert 'class="nav-node"' in nav
+    # The child sits inside the parent's <details>, not as its own top-level row.
+    node = nav[nav.index('class="nav-node"'):]
+    assert '/wiki/child-page' in node.split("</details>", 1)[0]
+
+
+def test_sidebar_starred_filter_stays_flat(wiki):
+    """Starred is top-level-only already (list_pages' own long-standing
+    behavior — a starred child still wouldn't show here). What nesting must
+    not do is wrap a starred *parent* in <details> just because it happens to
+    have children: this view skips tree-building entirely."""
+    store.create_page("Parent Page", "p")
+    store.create_page("Child Page", "c")
+    store.set_parent("child-page", "parent-page")
+    store.toggle_star("parent-page")
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        body = client.get("/", cookies={"waikiki_nav_filter": "starred"}).text
+    nav = body[body.index('class="navlist'):body.index("</aside>")]
+    assert 'class="nav-node"' not in nav
+    assert '/wiki/parent-page' in nav
+
+
+def test_only_top_level_rows_get_a_drag_handle(wiki):
+    """Custom-order dragging is top-level-siblings-only; a nested sub-page
+    must never render a handle that would let it be dragged loose."""
+    store.create_page("Parent Page", "p")
+    store.create_page("Child Page", "c")
+    store.set_parent("child-page", "parent-page")
+    with TestClient(app, client=("127.0.0.1", 1)) as client:
+        body = client.get("/", cookies={"waikiki_nav_sort": "custom"}).text
+    nav = body[body.index('class="navlist'):body.index("</aside>")]
+    assert nav.count('class="draghandle"') == 1        # Parent Page only
+
+
 def test_the_parent_selector_is_on_edit_and_knows_the_current_parent(wiki):
     """It moved off Page options — and it must not default to 'none'.
 

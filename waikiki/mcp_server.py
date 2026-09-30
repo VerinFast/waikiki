@@ -222,6 +222,19 @@ def _require_wiki() -> str:
             "restored automatically, so if this server restarted mid-task you "
             "must switch again — do not assume you are where you started."
         )
+    if not wikis.exists(active):
+        # The pointer is per-session and holds a *slug*, so a wiki that was
+        # renamed or deleted leaves it naming nothing. Refusing is the only
+        # safe answer: `db.active_wiki()` falls back to the registry default
+        # for a slug it cannot find, so carrying on would write this agent's
+        # pages into whichever wiki happens to be default — silently, and into
+        # someone else's content. Rule 4: refusing is correct, inheriting is
+        # not.
+        raise RuntimeError(
+            f"Your active wiki '{active}' no longer exists — it was renamed or "
+            "deleted while you were working. Call list_wikis() and "
+            "switch_wiki(slug) to pick it up again under its new address. "
+            "Nothing was written.")
     db.current_wiki.set(active)  # scope direct DB access to this wiki
     return active
 
@@ -291,6 +304,36 @@ def create_wiki(name: str) -> dict:
 # in one line naming the field or argument to use — and only when it is true.
 # A hint that appears unconditionally is one agents learn to skip, at which
 # point it is pure token cost.
+
+@mcp.tool
+def rename_wiki(name: str = "", address: str = "") -> dict:
+    """Rename the active wiki: its display `name`, its `address` (slug), or both.
+
+    They are different things. The name is a label a person reads. The address
+    is in every URL, is the filename of the wiki's database, and is what
+    `switch_wiki` takes — changing it renames the file, so links using the old
+    address stop working and anyone with the wiki open must reload.
+
+    Pass whichever you mean; the other is left alone. Your active wiki follows
+    an address change automatically. The Help wiki's address cannot change (the
+    app re-creates it), though its name can.
+    """
+    wiki = _require_wiki()
+    out: dict = {"wiki": wiki}
+    try:
+        if name.strip():
+            out["name"] = wikis.rename(wiki, name)
+        if address.strip():
+            target = wikis.change_slug(wiki, address)
+            if target != wiki:
+                _set_active_wiki(target)     # follow it; the old slug is gone
+            out["wiki"] = out["address"] = target
+    except ValueError as exc:
+        return {"wiki": wiki, "error": str(exc)}
+    if not name.strip() and not address.strip():
+        return {"wiki": wiki, "error": "give a name, an address, or both"}
+    return out
+
 
 @mcp.tool
 def list_pages(children: bool | list[str] | None = False) -> dict:

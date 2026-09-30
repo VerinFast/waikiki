@@ -13,6 +13,7 @@ under the room's own wiki context.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import time
 
 import sys
@@ -21,7 +22,7 @@ import anyio
 from pycrdt import Text
 from pycrdt.websocket import ASGIServer, WebsocketServer
 
-from . import db, store
+from . import db, store, wikis
 
 server = WebsocketServer(auto_clean_rooms=False)
 asgi_app = ASGIServer(server)
@@ -131,6 +132,31 @@ async def live_markdown(wiki: str, slug: str) -> str | None:
     return str(_ytext(room))
 
 
+def _forget(key: str) -> None:
+    """Drop every trace of a room from this module's bookkeeping."""
+    _seeded.discard(key)
+    for book in (_last_text, _last_saved, _stable_since, _claude_seen):
+        book.pop(key, None)
+
+
+def _orphaned(key: str, wiki: str) -> bool:
+    """True when a room's wiki is gone — renamed or deleted out from under it.
+
+    The safety net under `release_wiki`. A room key names its wiki, and both
+    save paths set that as the context before writing; for a slug the registry
+    no longer knows, `db.active_wiki()` answers with the *default* wiki, so the
+    write would land there — a page quietly appearing in a wiki nobody was
+    editing. Anything still unsaved in such a room is already unreachable, so
+    the room is dropped rather than written somewhere it does not belong.
+    """
+    if wikis.exists(wiki):
+        return False
+    print(f"[waikiki] dropping collab room {key}: wiki '{wiki}' no longer "
+          f"exists, so there is nowhere to save it", file=sys.stderr)
+    _forget(key)
+    return True
+
+
 def _claude_present(key: str, room) -> None:
     _claude_seen[key] = time.monotonic()
     try:
@@ -153,6 +179,8 @@ async def flusher() -> None:
 
         for key in list(_seeded):
             wiki, slug = _split(key)
+            if _orphaned(key, wiki):
+                continue
             try:
                 room = await server.get_room(key)
                 current = str(_ytext(room))
@@ -183,6 +211,44 @@ async def flusher() -> None:
                     pass
 
 
+async def release_wiki(wiki: str) -> int:
+    """Flush every room belonging to `wiki`, then forget them. Returns how many.
+
+    Called before a wiki's slug changes. Rooms are keyed `wiki::slug` and the
+    flusher persists each one *under the wiki its key names* — so a room left
+    behind under an address that no longer exists would resolve through
+    `db.active_wiki()`'s fallback and write that page into the **default**
+    wiki, which is a page appearing in a wiki nobody edited. Flushing first
+    means nothing anyone typed is lost; forgetting after means nothing is
+    written where it does not belong.
+
+    A browser still holding the old room keeps its text on screen and stops
+    being saved, so whoever renamed the wiki is told to reload those tabs.
+    """
+    prefix = f"{wiki}::"
+    keys = [k for k in list(_seeded) if k.startswith(prefix)]
+    for key in keys:
+        _, slug = _split(key)
+        try:
+            room = await server.get_room(key)
+            current = str(_ytext(room))
+        except Exception:
+            current = None
+        if current is not None and current != _last_saved.get(key):
+            token = db.current_wiki.set(wiki)
+            try:
+                await anyio.to_thread.run_sync(_persist, slug, current)
+            except Exception as exc:
+                print(f"[waikiki] flush before releasing {key} failed: {exc}",
+                      file=sys.stderr)
+            finally:
+                db.current_wiki.reset(token)
+        _forget(key)
+        with contextlib.suppress(Exception):
+            await server.delete_room(name=key)
+    return len(keys)
+
+
 async def flush_all() -> None:
     """Persist every room that is owed a write, ignoring the debounce.
 
@@ -198,6 +264,8 @@ async def flush_all() -> None:
     """
     for key in list(_seeded):
         wiki, slug = _split(key)
+        if _orphaned(key, wiki):
+            continue
         try:
             room = await server.get_room(key)
             current = str(_ytext(room))

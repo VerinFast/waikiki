@@ -109,6 +109,119 @@ def create_wiki(name: str) -> str:
     return slug
 
 
+# --- Renaming: two operations, deliberately ---------------------------------
+#
+# A wiki has a display **name** and a **slug**, and they are not the same kind
+# of fact. The name is a label a person reads; the slug is the wiki's address —
+# it is in every URL, it is the filename of its database, it keys the CRDT
+# rooms and each agent's active-wiki pointer. Changing the label is free.
+# Changing the address moves a file and invalidates things pointing at the old
+# one, so they are separate calls and the UI offers them separately: a wiki
+# imported as `startupos` that should read *StartupOS* needs the first, not the
+# second.
+
+
+def rename(slug: str, name: str) -> str:
+    """Change a wiki's display name. Its address and file are untouched."""
+    title = (name or "").strip()
+    if not title:
+        raise ValueError("A wiki needs a name")
+    with _lock:
+        reg = _load()
+        for w in reg["wikis"]:
+            if w["slug"] == slug:
+                w["name"] = title
+                _save(reg)
+                return title
+    raise ValueError(f"no wiki '{slug}'")
+
+
+def change_slug(slug: str, new_slug: str) -> str:
+    """Change a wiki's slug: its URLs, and the name of its database file.
+
+    Returns the slug it now has. The display name and the Kahala link ride
+    along unchanged — the link records a *remote* name, which this does not
+    touch, so a renamed wiki still pushes and pulls where it always did.
+
+    Four things have to happen together, and the order is the whole job.
+    **This thread's handle is checkpointed and closed first**, so the `-wal`
+    can be dropped rather than left beside a file that no longer matches it.
+    **The file moves before the registry does**, because a registry that names
+    a file which is not there yet would have the next reader create an empty
+    one in its place (`db.get_conn`) — a rename that silently empties the wiki
+    is the worst outcome available here, so a failure to record the move puts
+    the file back instead. **Every cached handle is retired**
+    (`db.invalidate_connections`): they are per (thread, wiki) and a stale one
+    follows the renamed file, so writes for the old name would land in the
+    renamed wiki. And **the caller releases the CRDT rooms first** — see
+    `collab.release_wiki`, which cannot be done from here because it is async.
+
+    Refused, rather than half-done: an unknown wiki, an address that is empty
+    once slugified, one another wiki already answers to, and the built-in Help
+    wiki — `ensure_help_wiki` re-creates `help` whenever it is missing, so a
+    renamed one would simply come back beside it as a second copy.
+    """
+    if not exists(slug):
+        raise ValueError(f"no wiki '{slug}'")
+    if slug == config.HELP_WIKI:
+        raise ValueError(
+            "The Help wiki's address is built in: the app re-creates 'help' "
+            "whenever it is missing, so a renamed one would come back as a "
+            "second copy beside it. Its display name can be changed.")
+    # `slugify` falls back to "wiki" for input with nothing usable in it, which
+    # is right when naming a new wiki and wrong here: it would silently move a
+    # wiki to /wiki because someone typed punctuation.
+    if not re.sub(r"[^\w]", "", new_slug or ""):
+        raise ValueError("A wiki address needs at least one letter or digit")
+    target = slugify(new_slug)
+    if target == slug:
+        return slug
+    if exists(target):
+        raise ValueError(f"'{target}' is already another wiki's address")
+    src, dest = db_path(slug), db_path(target)
+    if dest.exists():
+        raise ValueError(
+            f"{dest.name} is already in the wikis folder without a wiki "
+            "registered to it; move it aside first rather than have this "
+            "overwrite it")
+
+    # Copied with SQLite's own backup API rather than renamed. A plain rename
+    # leaves the `-wal` and `-shm` behind, and removing them while another
+    # thread still has the database open is how you get "the disk reported an
+    # I/O error" on the next open — a hot WAL is not ours to delete. The backup
+    # API reads a live database consistently (it is what "Save wiki" uses), and
+    # it leaves the original untouched until everything else has succeeded, so
+    # a failure anywhere below costs a copy and nothing else.
+    db.release_wiki_handles(slug)          # checkpoint + close ours first
+    copied = False
+    if src.exists():
+        db.backup_db(str(src), str(dest))
+        copied = True
+    try:
+        with _lock:
+            reg = _load()
+            for w in reg["wikis"]:
+                if w["slug"] == slug:
+                    w["slug"] = target
+            if reg.get("default") == slug:
+                reg["default"] = target
+            _save(reg)
+    except Exception:
+        if copied:
+            dest.unlink(missing_ok=True)   # the registry still names the old one
+        raise
+    finally:
+        db.invalidate_connections()
+    # Only now is the old name unreachable, so the old files can go. Handles
+    # other threads still hold keep working against the unlinked inode until
+    # the epoch retires them, which is exactly as harmless as it sounds: the
+    # registry no longer routes anything to that address.
+    if copied:
+        for suffix in ("", "-wal", "-shm"):
+            Path(str(src) + suffix).unlink(missing_ok=True)
+    return target
+
+
 def delete_wiki(slug: str) -> bool:
     with _lock:
         reg = _load()

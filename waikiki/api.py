@@ -674,13 +674,14 @@ def connect_page(request: Request):
 
 
 @app.get("/wikis", response_class=HTMLResponse)
-def wikis_manage(request: Request, error: str = ""):
+def wikis_manage(request: Request, error: str = "", ok: str = ""):
     # stats() reports a wiki it cannot open rather than raising — this page is
     # where someone comes to escape a broken wiki or open a backup, so it has to
     # render even when one of the files is damaged (issue #71).
     stats = {w["slug"]: wikis.stats(w["slug"]) for w in wikis.list_wikis()}
     return templates.TemplateResponse(request, "wikis.html", _ctx(
-        request, error=error, stats=stats, restore=backups.restore_hint()))
+        request, error=error, ok=ok, stats=stats,
+        help_wiki=config.HELP_WIKI, restore=backups.restore_hint()))
 
 
 @app.post("/switch-wiki")
@@ -699,6 +700,43 @@ def wikis_create(name: str = Form(...)):
     slug = wikis.create_wiki(name)
     resp = RedirectResponse("/", status_code=303)
     resp.set_cookie("waikiki_wiki", slug, max_age=60 * 60 * 24 * 365, samesite="lax")
+    return resp
+
+
+@app.post("/wikis/{slug}/rename")
+def wikis_rename(slug: str, name: str = Form(...)):
+    """Change a wiki's display name. Its address is untouched."""
+    try:
+        wikis.rename(slug, name)
+    except ValueError as exc:
+        return RedirectResponse(f"/wikis?error={exc}", status_code=303)
+    return RedirectResponse("/wikis", status_code=303)
+
+
+@app.post("/wikis/{slug}/address")
+async def wikis_change_slug(request: Request, slug: str,
+                            new_slug: str = Form(...)):
+    """Change a wiki's slug — its URLs and the name of its database file.
+
+    Async because the CRDT rooms have to be released before the file moves:
+    a room outlives the request and persists under the wiki its key names, so
+    one left pointing at an address that no longer exists would write its page
+    into the default wiki (`collab.release_wiki`).
+    """
+    try:
+        await collab.release_wiki(slug)
+        target = await anyio.to_thread.run_sync(wikis.change_slug, slug, new_slug)
+    except ValueError as exc:
+        return RedirectResponse(f"/wikis?error={exc}", status_code=303)
+    resp = RedirectResponse("/wikis?ok=" + quote(
+        f"Address changed to /{target}. Reload any tab that had this wiki open."),
+        status_code=303)
+    # The cookie is the browser's pointer at the active wiki, and it still names
+    # the old address — which no longer resolves, so the next bare POST would
+    # land in the default wiki rather than this one.
+    if request.cookies.get("waikiki_wiki") == slug:
+        resp.set_cookie("waikiki_wiki", target, max_age=60 * 60 * 24 * 365,
+                        samesite="lax")
     return resp
 
 

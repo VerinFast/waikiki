@@ -9,6 +9,7 @@
     </div>
   </div>
   {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
+  {% if ok %}<div class="banner">{{ ok }}</div>{% endif %}
   <p class="muted">Each wiki is a fully isolated database file — pages, search, and
     <code>[[links]]</code> never cross between them. Save a wiki to a file to back
     it up or move it; open one to bring it in. Open takes any shape Waikiki
@@ -70,6 +71,34 @@
             {% if s.trashed %} · {{ s.trashed }} in trash{% endif %}
           </div>
           {% endif %}
+        </td>
+        <td>
+          <details class="muted wikistats">
+            <summary>Rename…</summary>
+            <form method="post" action="/wikis/{{ w.slug }}/rename" class="addmodel">
+              <label>Name <input type="text" name="name" value="{{ w.name }}"
+                                 required></label>
+              <button class="btn" type="submit">Rename</button>
+            </form>
+            <p class="muted">The name is just the label. The <em>address</em> is
+              in every link to this wiki and is the name of its file, so
+              changing it renames the file and any tab with this wiki open
+              needs a reload.</p>
+            <form method="post" action="/wikis/{{ w.slug }}/address"
+                  class="addmodel"
+                  onsubmit="return confirm('Change the address of {{ w.name }} from /{{ w.slug }}? Links using the old address will stop working.')">
+              <label>Address <input type="text" name="new_slug"
+                                    value="{{ w.slug }}" required
+                                    {{ 'disabled' if w.slug == help_wiki }}></label>
+              <button class="btn" type="submit"
+                      {{ 'disabled' if w.slug == help_wiki }}>Change address</button>
+            </form>
+            {% if w.slug == help_wiki %}
+              <p class="muted">The Help wiki's address is built in — the app
+                re-creates it whenever it is missing, so a renamed one would
+                come back as a second copy.</p>
+            {% endif %}
+          </details>
         </td>
         <td>
           <form method="post" action="/switch-wiki">

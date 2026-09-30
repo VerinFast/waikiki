@@ -149,6 +149,26 @@ two in parity (same substance, different voice) whenever you change either.
    idempotent, so paying it per connection is cheap; `_schema_ready` survives
    only to tell a first open apart from a disappearance, which is **reported**
    rather than passed off as an empty wiki.
+   **A slug is an address other things hold, which is why renaming it is its own
+   operation.** `wikis.rename` changes the display name and touches nothing
+   else; `wikis.change_slug` moves the database file, and four things point at
+   the old name when it does. The file is **copied with the backup API, not
+   renamed** — a plain rename strands the `-wal`, and deleting a hot WAL out
+   from under another thread's handle earns "the disk reported an I/O error" on
+   the next open — and the original is removed only once the registry write has
+   succeeded, so a failure costs a copy rather than a wiki. Cached handles are
+   retired through `db.invalidate_connections` (an epoch, because no thread can
+   reach into another's cache) or they keep writing through an fd that followed
+   the file. **CRDT rooms are released first** (`collab.release_wiki`): a room
+   key names its wiki and both save paths write under it, so one left pointing
+   at a slug the registry no longer knows resolves through `active_wiki()`'s
+   fallback and lands that page in the **default** wiki — flushed first so
+   nothing typed is lost, and `collab._orphaned` is the net under every other
+   caller. And an agent still pointed at the old slug is **refused**, not
+   redirected, for the reason above: the fallback would have written its pages
+   into whatever wiki happens to be default. `help` cannot be re-addressed at
+   all, since `ensure_help_wiki` would bring it back as a second copy.
+   `tests/test_wiki_rename.py` guards each of those.
 5. **One code path for Human and LLM.** REST, HTML views, and MCP tools all go
    through `store`/`rag` so both callers get identical render + version + index.
    The same applies to *which model answers*: the Doorman-or-local decision lives

@@ -45,8 +45,21 @@ a:hover{text-decoration:underline}
 .seg button{border:none;background:var(--surface);color:var(--muted);padding:.25rem .55rem;cursor:pointer;font-size:.85rem}
 .seg button.on{background:var(--accent);color:var(--accent-contrast)}
 .nav-sort{flex:1;padding:.25rem .4rem;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:.85rem}
-.navlist li{display:flex;align-items:center;gap:.35rem}
+/* flex-start, not center: an expanded .nav-node's <details> grows tall (it
+   now contains the whole nested <ul>), and align-items:center would center
+   the star/draghandle against that full expanded height, sliding them down
+   to the middle of the block instead of staying level with the summary row. */
+.navlist li{display:flex;align-items:flex-start;gap:.35rem}
 .navlist li a{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Sidebar sub-page nesting: same ▸/▾ disclosure convention as .tag-group,
+   not a new widget. The <details> stands in for the row's <a> in the flex
+   layout, so it needs flex:1 the way the plain link gets it above. */
+.navlist li details.nav-node{flex:1;min-width:0}
+.navlist li details.nav-node>summary{display:flex;align-items:center;gap:.3rem;cursor:pointer;list-style:none}
+.navlist li details.nav-node>summary::-webkit-details-marker{display:none}
+.navlist li details.nav-node>summary::before{content:"▸";color:var(--muted);font-size:.75em;flex:0 0 auto}
+.navlist li details.nav-node[open]>summary::before{content:"▾"}
+.navlist-nested{list-style:none;margin:0;padding-left:1.1rem}
 .star-form{display:inline;margin:0}
 .star{border:none;background:none;cursor:pointer;font-size:1rem;line-height:1;color:var(--muted);padding:0}
 .star.on{color:#e3b341}

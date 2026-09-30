@@ -483,6 +483,25 @@ async def collab_ws(websocket: WebSocket, wiki: str, slug: str):
         pass
 
 
+def _nav_tree(pages: list[dict]) -> list[dict]:
+    """Nest a flat `list_pages(include_children=True)` result under a
+    `children` key, keyed by `parent_slug`.
+
+    Order within each sibling group follows `pages`' own order, so whatever
+    the SQL-level sort (recent/title/custom) produced is preserved per level
+    rather than re-sorted here. A page whose parent isn't in `pages` — cut by
+    the [:500] cap below, say — is promoted to top-level so it's shown rather
+    than silently dropped."""
+    by_slug = {p["slug"]: p for p in pages}
+    roots: list[dict] = []
+    for p in pages:
+        p["children"] = []
+    for p in pages:
+        parent = by_slug.get(p.get("parent_slug"))
+        (parent["children"] if parent else roots).append(p)
+    return roots
+
+
 def _ctx(request: Request, **extra) -> dict:
     """Common template context: active wiki, theme, nav pages, pygments styles.
 
@@ -496,8 +515,14 @@ def _ctx(request: Request, **extra) -> dict:
     unreadable = wikis.health(wiki)
     if unreadable["ok"]:
         theme = store.get_setting("theme", "default")
-        nav_pages = store.list_pages(
-            sort=nav_sort, starred_only=(nav_filter == "starred"))[:500]
+        starred_only = nav_filter == "starred"
+        # Starred stays flat: nesting a starred child would need its unstarred
+        # ancestors pulled in too just to place it in the tree, which isn't
+        # worth the complexity for a filtered view.
+        flat_pages = store.list_pages(
+            sort=nav_sort, starred_only=starred_only,
+            include_children=not starred_only)[:500]
+        nav_pages = flat_pages if starred_only else _nav_tree(flat_pages)
     else:
         theme, nav_pages = "default", []
     base = {

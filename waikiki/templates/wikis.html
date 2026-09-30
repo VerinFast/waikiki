@@ -5,17 +5,21 @@
     <h1>Wikis</h1>
     <div class="tools">
       <button class="btn" type="button" id="open-file">Open wiki file…</button>
+      <button class="btn" type="button" id="open-md" hidden>Open markdown folder…</button>
     </div>
   </div>
   {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
   <p class="muted">Each wiki is a fully isolated database file — pages, search, and
     <code>[[links]]</code> never cross between them. Save a wiki to a file to back
-    it up or move it; open one to bring it in.</p>
+    it up or move it; open one to bring it in. Open takes any shape Waikiki
+    writes — a <code>.wiki</code> save, a wiki bundle, or a folder (or zip) of
+    exported <code>.md</code> pages — and reads the file's shape, not its
+    name.</p>
 
   {# Browser fallback for Open (the desktop app uses a native dialog instead). #}
   <form id="import-form" method="post" action="/wikis/import"
         enctype="multipart/form-data" class="addmodel" style="display:none">
-    <input type="file" name="file" accept=".wiki,.db" required>
+    <input type="file" name="file" accept=".wiki,.db,.zip" required>
     <button class="btn primary" type="submit">Open</button>
   </form>
 
@@ -112,6 +116,21 @@
           });
         } else {
           window.location = '/wikis/' + slug + '/export';   // browser: download
+        }
+      });
+    });
+
+    // A folder can only be picked by the native dialog; in a browser the same
+    // pages arrive as the zip that "Export .md" downloads, through Open.
+    if (native()) document.getElementById('open-md').hidden = false;
+
+    document.getElementById('open-md').addEventListener('click', function () {
+      window.pywebview.api.open_markdown_folder().then(function (r) {
+        if (r.ok) {
+          document.cookie = 'waikiki_wiki=' + r.slug + ';path=/;max-age=31536000';
+          window.location = '/';
+        } else if (!r.cancelled) {
+          alert('Open failed: ' + r.error);
         }
       });
     });

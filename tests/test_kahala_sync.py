@@ -928,3 +928,263 @@ def test_the_pane_polls_rather_than_leaving_a_stale_answer(wiki, monkeypatch):
         assert client.get("/kahala/state?wiki=main").json()["signed_in"] is False
         monkeypatch.setattr(kahalaauth, "signed_in", lambda: True)
         assert client.get("/kahala/state?wiki=main").json()["signed_in"] is True
+
+
+# --- a push cannot create the wiki on Kahala ---------------------------------
+#
+# Creating one there is `POST /wikis/create`, a session-authenticated browser
+# form, and Kahala only accepts our bearer token on `/api/*` — so Waikiki
+# genuinely cannot do it, and the interface has to say so rather than let
+# someone link to a name that was never going to work.
+
+
+def test_status_points_at_where_a_wiki_gets_created(wiki):
+    kahala.link("main", "https://kahala.example", "remote-wiki")
+    assert kahala.status("main")["manage_url"] == "https://kahala.example/wikis"
+
+
+def test_an_unlinked_wiki_offers_no_stray_link(wiki):
+    assert kahala.status("main")["manage_url"] == ""
+
+
+def test_a_missing_remote_wiki_says_a_push_cannot_create_it(wiki, http,
+                                                            monkeypatch):
+    """The 404 used to send people hunting for a typo or the wrong account.
+
+    Those are real causes, but the likeliest one by far — for anybody setting
+    this up for the first time — is that they never made the wiki on Kahala.
+    """
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "remote-wiki")
+    http(lambda r: httpx.Response(404, json={"detail": "No such wiki"}))
+
+    out = kahala.push("main")
+    assert not out["ok"]
+    assert "cannot create a wiki" in out["error"], out["error"]
+    assert "No such wiki" in out["error"], \
+        "the server's own words were dropped in favour of our interpretation"
+    assert "another tenant" in out["error"], \
+        "the other genuine causes were dropped rather than de-emphasised"
+
+
+def test_the_pane_says_a_push_cannot_create_and_offers_the_way_there(wiki,
+                                                                     monkeypatch):
+    from fastapi.testclient import TestClient
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "signed_in", lambda: True)
+    wikis.set_link("main", "https://kahala.example", "remote-wiki")
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        body = client.get("/kahala?wiki=main").text
+    assert "can’t create the wiki on Kahala" in body
+    assert 'data-open-url="https://kahala.example/wikis"' in body, \
+        "no way to reach the page where a wiki is actually created"
+
+
+# --- the link form's defaults -------------------------------------------------
+
+
+def test_the_remote_name_defaults_to_this_wikis_own_slug(wiki):
+    """Not its display name: the field wants a slug.
+
+    Kahala derives its slug from the name typed into *its* form, so "StartupOS"
+    and "startupos" are not interchangeable there — and the placeholder used to
+    say "beaconlight" no matter which wiki you were looking at, which is a
+    suggestion that is wrong for everyone but one.
+    """
+    assert kahala.suggested_link("startupos")["remote"] == "startupos"
+
+
+def test_the_address_defaults_to_one_already_in_use(wiki):
+    """People have one Kahala, not one per wiki."""
+    assert kahala.suggested_link("main")["base_url"] == ""
+    wikis.set_link("beaconlight", "https://kahala.example", "beaconlight")
+    assert kahala.suggested_link("main")["base_url"] == "https://kahala.example"
+    assert kahala.suggested_link("main")["remote"] == "main", \
+        "the borrowed address dragged the other wiki's name along with it"
+
+
+def test_the_pane_prefills_both(wiki):
+    from fastapi.testclient import TestClient
+    from waikiki.api import app
+
+    wikis.set_link("beaconlight", "https://kahala.example", "beaconlight")
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        body = client.get("/kahala?wiki=startupos").text
+    assert 'value="https://kahala.example"' in body
+    assert 'value="startupos"' in body
+
+
+# --- the slug is not the display name ----------------------------------------
+#
+# Kahala's Wikis page shows both ("StartupOS /startupos") and the interchange
+# wire addresses by slug. Linking to the display name produces a 404 that reads
+# like a permissions problem, at push time, long after the mistake. Both sides
+# derive slugs with the same `slugify`, so we can catch it where it is typed and
+# say what the answer is.
+
+
+def test_linking_to_a_display_name_is_refused_with_the_slug(wiki):
+    out = kahala.link("main", "https://kahala.example", "StartupOS")
+    assert not out["ok"]
+    assert "startupos" in out["error"] and "slug" in out["error"]
+    assert wikis.get_link("main") is None, "the bad link was stored anyway"
+
+
+@pytest.mark.parametrize("good", ["startupos", "beaconlight", "ever-afterlife"])
+def test_a_real_slug_still_links(wiki, good):
+    assert kahala.link("main", "https://kahala.example", good)["ok"]
+
+
+def test_an_existing_bad_link_gets_the_answer_in_the_404(wiki, http, monkeypatch):
+    """Links made before the check existed are still out there — like the one
+    that prompted this."""
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "StartupOS")   # bypasses link()
+    http(lambda r: httpx.Response(404, json={"detail": "No such wiki"}))
+
+    out = kahala.push("main")
+    assert not out["ok"]
+    assert "probably “startupos”" in out["error"], out["error"]
+    assert "Forget this link" in out["error"]
+
+
+def test_a_404_for_a_slug_that_is_already_a_slug_offers_no_false_hint(wiki, http,
+                                                                      monkeypatch):
+    """Don't tell someone their correct slug is wrong."""
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "startupos")
+    http(lambda r: httpx.Response(404, json={"detail": "No such wiki"}))
+    out = kahala.push("main")
+    assert "display name" not in out["error"]
+    assert "another tenant" in out["error"]
+
+
+# --- which Kahala am I signed in to? -----------------------------------------
+
+
+def test_the_pane_names_the_sign_in_server(wiki, monkeypatch):
+    """"Signed in." alone is a claim the reader cannot check, and there is more
+    than one Kahala."""
+    from fastapi.testclient import TestClient
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    monkeypatch.setattr(kahalaauth, "signed_in", lambda: True)
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        body = client.get("/kahala").text
+    assert "https://kc.example/realms/gp" in body
+    assert "One sign-in per install" in body
+
+
+# --- report what the server said, then interpret ------------------------------
+#
+# Two 404s wear the same clothes. FastAPI answers an unmatched route with
+# {"detail": "Not Found"}; Kahala's own handler says "No such wiki". Collapsing
+# them into one confident sentence about wiki names sent two separate
+# investigations down the wrong road, so the server's words come first now.
+
+
+def test_an_absent_route_is_not_reported_as_a_missing_wiki(wiki, http,
+                                                            monkeypatch):
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "startupos")
+    http(lambda r: httpx.Response(404, json={"detail": "Not Found"}))
+
+    out = kahala.push("main")
+    assert not out["ok"]
+    assert "too old for the interchange API" in out["error"], out["error"]
+    assert "Nothing is wrong with the link" in out["error"]
+    assert "cannot create a wiki" not in out["error"], \
+        "a framework 404 was still blamed on the wiki name"
+
+
+def test_a_missing_wiki_during_the_probe_is_not_retried_as_a_full_push(
+        wiki, http, monkeypatch):
+    """Falling back would upload the whole wiki before failing for a reason we
+    already had."""
+    _signed_in(monkeypatch)
+    store.create_page("Big", "x" * 500)
+    wikis.set_link("main", "https://kahala.example", "startupos")
+    seen = http(lambda r: httpx.Response(404, json={"detail": "No such wiki"}))
+
+    out = kahala.push("main")
+    assert not out["ok"] and "No such wiki" in out["error"]
+    assert not any(r.method == "POST" and r.url.path.endswith("/snapshot")
+                   for r in seen), "it uploaded the wiki anyway"
+
+
+def test_the_servers_own_words_survive_into_every_404(wiki, http, monkeypatch):
+    _signed_in(monkeypatch)
+    wikis.set_link("main", "https://kahala.example", "startupos")
+    http(lambda r: httpx.Response(404, json={"detail": "Wiki is archived"}))
+    assert "Wiki is archived" in kahala.push("main")["error"]
+
+
+# --- the changelog path, when BOTH sides already have the page ----------------
+#
+# The gap that let a real bug ship. Every other test here starts from a peer
+# holding nothing, so every page travels as a SNAPSHOT and the changelog branch
+# is never exercised end to end. The one shape that matters in practice — two
+# peers that both already have a page — was untested, and in it we wrapped an
+# already-serialized Changelog envelope a second time. The receiver's CRDT
+# decoder then read past the end of the buffer and said so, and two layers of
+# over-broad error handling turned that into "there is no wiki called startupos".
+
+
+def _two_wikis_sharing_a_page(slug="waikiki-repo"):
+    """Sender and receiver both hold the page, with independent Y.Doc lineages."""
+    sender, receiver = wikis.create_wiki("Sender"), wikis.create_wiki("Receiver")
+    for w, body in ((sender, "written locally"), (receiver, "written on the server")):
+        token = db.current_wiki.set(w)
+        try:
+            db.init_db()
+            store.create_page("Waikiki Repo", body)
+        finally:
+            db.current_wiki.reset(token)
+    return sender, receiver
+
+
+def test_a_page_both_sides_have_travels_as_a_usable_changelog(wiki):
+    sender, receiver = _two_wikis_sharing_a_page()
+    peer = _as(receiver, store.wiki_state_vector)
+    log = _as(sender, lambda: store.wiki_changelog_for(peer))
+
+    entry = next(p for p in log.pages if p.slug == "waikiki-repo")
+    assert entry.changelog is not None and entry.snapshot is None, \
+        "the peer already had this page, so it should travel as an update"
+
+    # The envelope must carry raw Yjs bytes. JSON here is the bug: it decodes as
+    # an envelope and then runs off the end of the buffer inside pycrdt.
+    inner = wi.Changelog.deserialize(entry.changelog).ydoc_update
+    assert not inner.startswith(b"{"), \
+        "ydoc_update contains a serialized envelope, not Yjs bytes — double-wrapped"
+
+    summary = _as(receiver, lambda: store.apply_wiki_changelog(log))
+    assert summary["updated"] == ["waikiki-repo"], summary
+    assert "double_wrapped" not in summary
+
+
+def test_a_double_wrapped_changelog_from_a_peer_is_repaired_and_reported(wiki):
+    """Kahala still ships this shape. Tolerate it — but never silently."""
+    sender, receiver = _two_wikis_sharing_a_page()
+    peer = _as(receiver, store.wiki_state_vector)
+    log = _as(sender, lambda: store.wiki_changelog_for(peer))
+
+    broken = wi.WikiChangelog(pages=[
+        wi.WikiChangelogPage(
+            slug=p.slug,
+            changelog=wi.Changelog(ydoc_update=p.changelog).serialize(),
+            title=p.title)
+        for p in log.pages if p.changelog is not None])
+
+    summary = _as(receiver, lambda: store.apply_wiki_changelog(broken))
+    assert summary["updated"] == ["waikiki-repo"]
+    assert summary["double_wrapped"] == ["waikiki-repo"], \
+        "a peer's broken payload was straightened out without saying so"
+
+
+def test_a_changelog_that_is_not_an_envelope_is_left_alone(wiki):
+    """The repair must not mangle a payload it merely fails to parse."""
+    junk = b"\x01\x02 not an envelope"
+    assert store._unwrap_double_changelog(junk) == (junk, False)

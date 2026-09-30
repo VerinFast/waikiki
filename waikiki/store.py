@@ -1343,11 +1343,14 @@ def wiki_changelog_for(peer: "wi.WikiStateVector") -> "wi.WikiChangelog":
             raw = export_changelog(slug, peer_sv)
             if raw is None:
                 continue
-            # Wrap the bare update in a per-page envelope so its version pair
-            # travels inline and the peer's own gate fires when it applies.
+            # ``export_changelog`` ALREADY returns a serialized Changelog
+            # envelope (ydoc.export_changelog ends in ``.serialize()``), so it
+            # goes in as-is. Wrapping it again put JSON where Yjs bytes belong
+            # and the receiver's CRDT decoder ran off the end of the buffer --
+            # reported, through two layers of over-broad error handling, as
+            # "there is no wiki called startupos".
             pages.append(wi.WikiChangelogPage(
-                slug=slug, changelog=wi.Changelog(ydoc_update=raw).serialize(),
-                title=row.get("title")))
+                slug=slug, changelog=raw, title=row.get("title")))
             incremental.append(slug)
         else:
             snap = export_snapshot(slug)
@@ -1391,6 +1394,7 @@ def apply_wiki_changelog(log: "wi.WikiChangelog", author: str = "kahala") -> dic
     created: list[str] = []
     updated: list[str] = []
     skipped: list[str] = []
+    double_wrapped: list[str] = []
     for entry in log.pages:
         if entry.snapshot is not None:
             existed = get_page(entry.slug) is not None
@@ -1400,7 +1404,10 @@ def apply_wiki_changelog(log: "wi.WikiChangelog", author: str = "kahala") -> dic
             if get_page(entry.slug) is None:
                 skipped.append(entry.slug)
                 continue
-            if import_changelog(entry.slug, entry.changelog, author=author):
+            payload, rewrapped = _unwrap_double_changelog(entry.changelog)
+            if rewrapped:
+                double_wrapped.append(entry.slug)
+            if import_changelog(entry.slug, payload, author=author):
                 updated.append(entry.slug)
 
     # The sender's image ids are its own. A snapshot gets remapped as it is
@@ -1410,10 +1417,38 @@ def apply_wiki_changelog(log: "wi.WikiChangelog", author: str = "kahala") -> dic
         _remap_merged_image_ids([e.slug for e in log.pages
                                  if e.changelog is not None], remap, author)
 
-    return {"pages": len(created) + len(updated), "created": created,
-            "updated": updated, "skipped": skipped,
-            "elements": len(log.elements), "templates": len(log.templates),
-            "images": len(remap)}
+    out = {"pages": len(created) + len(updated), "created": created,
+           "updated": updated, "skipped": skipped,
+           "elements": len(log.elements), "templates": len(log.templates),
+           "images": len(remap)}
+    if double_wrapped:
+        # Reported, never silent: the peer is shipping a known-broken shape and
+        # somebody should fix it rather than rely on us straightening it out.
+        out["double_wrapped"] = double_wrapped
+    return out
+
+
+def _unwrap_double_changelog(raw: bytes) -> tuple[bytes, bool]:
+    """Undo a peer's double-wrapped changelog. Returns (payload, was_wrapped).
+
+    A correct per-page changelog carries raw Yjs bytes in ``ydoc_update``. A
+    peer that wraps an already-serialized envelope a second time puts JSON
+    there instead, and the CRDT decoder then reads past the end of the buffer —
+    an error that says nothing about what actually happened. We shipped that bug
+    ourselves, and Kahala still has it, so tolerate the shape on the way in.
+
+    Safe to unwrap: the inner payload is a full ``Changelog`` envelope with its
+    own version gate, which runs on apply exactly as it would have anyway. The
+    caller records which pages arrived this way; straightening it out silently
+    would leave the peer's bug to be found by someone else, later, the hard way.
+    """
+    try:
+        inner = wi.Changelog.deserialize(raw).ydoc_update
+    except Exception:
+        return raw, False                     # not an envelope we can read; leave it
+    if inner[:1] == b"{" and b'"format"' in inner[:64]:
+        return inner, True
+    return raw, False
 
 
 def unresolved_image_refs(slugs: Iterable[str]) -> list[str]:
@@ -1654,6 +1689,81 @@ def import_wiki_bundle(source, author: str = "import",
 
     return {"pages": len(landed), "elements": len(els),
             "templates": len(tpls), "images": len(set(remap.values()))}
+
+
+def import_markdown(docs: Sequence[dict], author: str = "import",
+                    on_writes_begin=None) -> dict:
+    """Merge decoded markdown documents into the **active** wiki (rule 12).
+
+    This is the writing half of the markdown round-trip: ``wikis.import_markdown``
+    turns a folder (or a zip) of ``<slug>.md`` into ``docs`` and this lands them.
+    Each doc is ``{"slug", "title", "markdown", "parent"}`` — already decoded, so
+    nothing here reads a file and the layering holds (rule 2).
+
+    **Merged by slug, never deleted.** A page whose slug is already here is
+    updated in place, which means versioned: the text it had is one click away in
+    its history, because an import that silently overwrote a page the person had
+    since edited would be a data-loss path wearing a restore's clothes. A slug
+    that is new is created *under that slug* (``_upsert_by_slug``, the same call
+    the bundle import makes) — the filename is the slug on the way out, so it has
+    to be on the way in, or nothing that references it resolves. Pages present
+    locally and absent from the folder are left alone.
+
+    **A parent is applied only when the document states one.** Markdown cannot
+    tell "top level" apart from "doesn't say", so a file with no ``parent:`` key
+    leaves an existing page where it is rather than flattening a hierarchy the
+    folder never claimed to describe. Placement runs after every page has landed,
+    like the bundle's, so a parent later in the folder still resolves; one naming
+    a page that is in neither the folder nor the wiki leaves its child top-level
+    and is *reported* (``unplaced``) rather than raising — a hand-edited folder
+    should not fail the whole import over one stale line.
+
+    Every write goes through the ordinary repository path, so imported pages are
+    rendered, versioned, tag-indexed and re-embedded exactly like a human's edit
+    (rules 2, 5 and 6).
+
+    The gates — a slug that survives slugification, and no two documents claiming
+    the same one — all run **before** the first write, and ``on_writes_begin`` is
+    called once when they have passed. A caller reporting to a person needs the
+    "refused, nothing changed" and "partly imported, run it again" sentences to
+    be different, and guessing produces the one that isn't true (rule 11).
+    """
+    prepared: dict[str, dict] = {}
+    for doc in docs:
+        slug = render.slugify(str(doc.get("slug") or ""))
+        if not slug:
+            raise ValueError(
+                f"{doc.get('source') or doc.get('slug')!r} has no usable page "
+                "name — the file name is the page's slug, so it needs at least "
+                "one letter or digit")
+        if slug in prepared:
+            raise ValueError(
+                f"two documents both want the slug '{slug}' "
+                f"({prepared[slug].get('source') or prepared[slug]['slug']} and "
+                f"{doc.get('source') or doc.get('slug')}); one page cannot be "
+                "two files, so nothing was imported")
+        prepared[slug] = doc
+
+    if on_writes_begin is not None:
+        on_writes_begin()
+
+    created: list[str] = []
+    updated: list[str] = []
+    for slug, doc in prepared.items():
+        existing = get_page(slug) is not None
+        _upsert_by_slug(slug, str(doc.get("title") or slug),
+                        str(doc.get("markdown") or ""), author)
+        (updated if existing else created).append(slug)
+
+    unplaced: list[str] = []
+    for slug, doc in prepared.items():
+        parent = render.slugify(str(doc.get("parent") or ""))
+        if not parent:
+            continue                      # "doesn't say" is not "top level"
+        if parent == slug or set_parent(slug, parent) is None:
+            unplaced.append(slug)
+    return {"pages": len(prepared), "created": created, "updated": updated,
+            "unplaced": unplaced}
 
 
 # --- Settings -----------------------------------------------------------------

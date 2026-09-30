@@ -15,9 +15,10 @@ import os
 import re
 import shutil
 import threading
+import zipfile
 from pathlib import Path
 
-from . import config, db, render
+from . import config, db, render, structure
 
 _lock = threading.Lock()
 
@@ -290,7 +291,6 @@ def _extract_db(src_path: str) -> str:
         head = f.read(2)
     if head == b"PK":  # zip bundle
         import tempfile
-        import zipfile
 
         with zipfile.ZipFile(src_path) as z:
             name = "wiki.db" if "wiki.db" in z.namelist() else next(
@@ -304,9 +304,126 @@ def _extract_db(src_path: str) -> str:
     return src_path  # assume raw SQLite
 
 
+def _bundle_manifest(src_path: str) -> dict | None:
+    """The interchange manifest if ``src_path`` is a **wiki bundle**, else ``None``.
+
+    Two unrelated archives arrive through Open and they are not interchangeable.
+    A Waikiki *wiki file* wraps a whole SQLite database (``wiki.db``); a
+    wiki-*interchange bundle* — what Kahala's export and `export_wiki_bundle`
+    both produce — carries ``manifest.json`` plus one ``pages/<slug>.snapshot``
+    per page and no database at all. Only the format tag tells them apart, so
+    this reads that and nothing else: the version gate, the content-only guard
+    and every per-page envelope stay the vendored library's judgement (rule 7).
+
+    ``None`` means "not a bundle" — a raw ``.db``, the zip that wraps one, or a
+    file that is not a zip at all. A file that *is* tagged as a bundle but is
+    unreadable for some other reason still returns its manifest, so the import
+    fails with that real reason instead of the misleading "not a Waikiki wiki
+    file" that a non-bundle earns.
+    """
+    from .vendor import wiki_interchange as wi
+
+    try:
+        with open(src_path, "rb") as f:
+            if f.read(2) != b"PK":
+                return None
+        with zipfile.ZipFile(src_path) as z:
+            manifest = json.loads(z.read("manifest.json"))
+    except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+        return None
+    if not isinstance(manifest, dict) or manifest.get("format") != wi.FORMAT_BUNDLE:
+        return None
+    return manifest
+
+
+def _import_bundle(src_path: str, display: str) -> str:
+    """Apply a wiki-interchange bundle into a freshly registered wiki.
+
+    A bundle is not a wiki *file*, so there is nothing to copy into place: the
+    pages are interchange snapshots, not rows. We register an empty wiki and let
+    ``store.import_wiki_bundle`` merge the bundle into it through the ordinary
+    repository path — the same call Kahala's pull makes (rule 7), so pages are
+    rendered, versioned and re-embedded locally exactly as they are on a sync.
+    That is also why this path does **not** end in ``_reindex_import``: the
+    embeddings were regenerated page by page as they landed, so there is no
+    imported index to distrust.
+
+    Failure splits the same way it does on a pull, and for the same reason —
+    "refused" is a promise that nothing changed, so it is only said when that is
+    true. Every gate runs before the first write, so a refused bundle leaves the
+    empty wiki we just made with nothing in it and we remove it again rather than
+    strand a shell in the registry. A failure *after* writes began keeps the
+    wiki: it is a partly-merged import, and one we created this call — never a
+    file of the user's to delete — so it is named and left for them.
+    """
+    from . import store
+
+    slug = create_wiki(display)
+    started = False
+
+    def writing() -> None:
+        nonlocal started
+        started = True
+
+    token = db.current_wiki.set(slug)
+    try:
+        with open(src_path, "rb") as fh:
+            store.import_wiki_bundle(fh, author="import", on_writes_begin=writing)
+    except Exception as exc:
+        if started:
+            raise ValueError(
+                f"'{display}' was only partly imported: {exc}. Nothing was "
+                "deleted, every page that did arrive is an ordinary versioned "
+                "page, and importing the same bundle again finishes it.") from exc
+        delete_wiki(slug)          # nothing was written; leave no empty shell
+        raise ValueError(f"Bundle refused rather than imported: {exc}") from exc
+    finally:
+        db.current_wiki.reset(token)
+    return slug
+
+
 def import_from(src_path: str, name: str | None = None) -> str:
-    """Open an external wiki file (zip bundle or raw .db): validate it, copy it
-    into the managed wikis dir under a fresh slug, and register it."""
+    """Open an external wiki, whichever of the two shapes it arrives in.
+
+    A **wiki file** (raw ``.db``, or the zip wrapping one) is validated and
+    copied into the managed wikis dir under a fresh slug, registered, and its
+    retrieval index rebuilt if the file arrived without a usable one. A
+    **wiki-interchange bundle** goes to ``_import_bundle`` instead, which lands
+    it into a new wiki through the repository. A **folder of markdown**, or the
+    zip of one that ``markdown_zip`` downloads, goes to ``import_markdown``.
+    Rule 12: every export this app can write, it can read back, and this is the
+    one door all three arrive at.
+
+    Which shape it is, is **sniffed, never assumed**: a bundle by its format
+    tag, a markdown archive by carrying `.md` and neither a database nor an
+    interchange manifest, a wiki file last. An extension is not evidence — and
+    the ordering is what keeps a refusal honest, because the wiki-file branch
+    says "not a Waikiki wiki file" about anything it cannot parse, which is the
+    wrong thing to tell someone holding a perfectly good export of another
+    shape.
+
+    The rebuild is the load-bearing part. A wiki file carries `pages` and
+    `pages_fts`, but every search in the app runs over `chunks`/`vec_chunks`
+    (`rag.py`), so a file exported without that cache — or embedded at another
+    machine's dimension — imports as a wiki that renders and links perfectly and
+    answers *nothing*, silently. `rag.reindex_if_stale` is a no-op when the index
+    came across intact, so a large healthy wiki is not re-embedded for nothing.
+    """
+    if Path(src_path).is_dir():
+        return import_markdown(src_path, name=name)["slug"]
+
+    manifest = _bundle_manifest(src_path)
+    if manifest is not None:
+        # The bundle names the wiki it came from; the filename is incidental
+        # (Kahala's export lands as `<slug>-wiki-bundle.zip`), so the label wins
+        # and the caller's name is only the fallback.
+        label = str(manifest.get("label") or "").strip()
+        return _import_bundle(
+            src_path, label or (name or Path(src_path).stem or "Imported").strip())
+
+    if _is_markdown_archive(src_path):
+        return import_markdown(src_path, name=name)["slug"]
+
     display = (name or Path(src_path).stem or "Imported").strip()
     src_path = _extract_db(src_path)  # zip bundle -> temp wiki.db, or raw .db
     if not db.is_wiki_db(src_path):
@@ -323,47 +440,299 @@ def import_from(src_path: str, name: str | None = None) -> str:
         if not reg.get("default"):
             reg["default"] = slug
         _save(reg)
+    _reindex_import(slug)
     return slug
+
+
+def _reindex_import(slug: str) -> int:
+    """Rebuild the freshly imported wiki's index, in *its* db context.
+
+    Failure here is reported, never fatal: the wiki is imported and readable
+    either way, and an index is a cache the user can rebuild from Settings.
+    """
+    from . import rag
+
+    token = db.current_wiki.set(slug)
+    try:
+        return rag.reindex_if_stale()
+    except Exception as exc:  # a cache rebuild must not fail an import
+        import sys
+
+        print(f"[waikiki] could not index imported wiki '{slug}': {exc}",
+              file=sys.stderr)
+        return 0
+    finally:
+        db.current_wiki.reset(token)
+
+
+# --- Markdown: a folder of <slug>.md, and the reader that takes it back ------
+#
+# Markdown is the lossy, portable shape: text only, one file per page, meant to
+# land in a repo's `docs/` where a person edits it with everything else. Rule 12
+# still applies — if the app can write wiki state to a file it must read that
+# file back — so what the export writes has to be enough to reconstruct the
+# pages it came from, and the two halves live next to each other here.
+#
+# That is why the exported file carries a frontmatter *header*. The body alone
+# does not name the page: the slug is in the filename, but the title is a column
+# and Waikiki resolves `[[links]]` by title, so a wiki restored from filenames
+# alone comes back with its links pointing at pages that no longer answer to
+# those names. `title:` costs one line and fixes that; `parent:` costs one line
+# on child pages and is the difference between markdown export being flat and it
+# round-tripping the hierarchy, so both are written and both are read back as
+# structure rather than as page properties (`structure.STRUCTURAL_KEYS`).
+#
+# What markdown does *not* carry is everything that is not page text: images,
+# history, comments, suggestions, templates, elements, the trash, manual order
+# and starred flags. A `.wiki` file or a bundle is the faithful copy; this is
+# the one for a repo. `docs/export-import-parity.md` names the limits.
+
+_MD_SUFFIXES = (".md", ".markdown")
+_H1 = re.compile(r"^#[ \t]+(.+?)[ \t]*$")
+
+
+def _export_text(page: dict, parent_slug: str | None) -> str:
+    """One page as the file it exports to: its markdown, plus the header.
+
+    A property of the page's own named `title` or `parent` gives way to the
+    structural key of the same name — there is one `title:` line and the page's
+    actual title has to be it. That is the one thing a markdown round-trip
+    drops silently, and it is named in `docs/export-import-parity.md`.
+    """
+    meta, tags, body = structure.parse_frontmatter(page["markdown"])
+    head = {"title": page["title"] or page["slug"]}
+    if parent_slug:
+        head["parent"] = parent_slug
+    for key, value in meta.items():
+        if key.lower() not in structure.STRUCTURAL_KEYS:
+            head[key] = value
+    return structure.build_frontmatter(head, tags) + body.lstrip("\n")
+
+
+def _markdown_files(slug: str) -> list[tuple[str, str]]:
+    """Every page of a wiki as ``(<slug>.md, text)``, sub-pages included."""
+    from . import store
+
+    out: list[tuple[str, str]] = []
+    token = db.current_wiki.set(slug)
+    try:
+        for p in store.list_pages(include_children=True):
+            page = store.get_page(p["slug"])
+            out.append((f"{p['slug']}.md", _export_text(page, p.get("parent_slug"))))
+    finally:
+        db.current_wiki.reset(token)
+    return out
 
 
 def export_markdown(slug: str, dest_dir: str) -> int:
     """Write every page of a wiki to `dest_dir` as `<slug>.md` (round-trip to a
-    repo's docs/). Returns the number of files written."""
+    repo's docs/). Returns the number of files written.
+
+    Read back by `import_markdown`, which is the same door in reverse: the
+    filename is the slug, and the frontmatter header carries the title and (for
+    a sub-page) its parent."""
     import os
 
-    from . import store
-
-    token = db.current_wiki.set(slug)
-    try:
-        os.makedirs(dest_dir, exist_ok=True)
-        n = 0
-        for p in store.list_pages(include_children=True):
-            page = store.get_page(p["slug"])
-            with open(os.path.join(dest_dir, f"{p['slug']}.md"), "w") as f:
-                f.write(page["markdown"])
-            n += 1
-    finally:
-        db.current_wiki.reset(token)
-    return n
+    os.makedirs(dest_dir, exist_ok=True)
+    files = _markdown_files(slug)
+    for name, text in files:
+        with open(os.path.join(dest_dir, name), "w") as f:
+            f.write(text)
+    return len(files)
 
 
 def markdown_zip(slug: str) -> bytes:
-    """All pages of a wiki as a zip of `<slug>.md` files (for download)."""
-    import io
-    import zipfile
+    """All pages of a wiki as a zip of `<slug>.md` files (for download).
 
+    The same files `export_markdown` writes, so the download is restorable
+    through Open like any other export (rule 12)."""
+    import io
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, text in _markdown_files(slug):
+            z.writestr(name, text)
+    return buf.getvalue()
+
+
+def _first_heading(markdown: str) -> str:
+    """The page's leading `# H1`, if it has one before any fenced block.
+
+    Only the fallback for a file with no `title:` — a hand-written one, since
+    ours always writes the header. Stopping at the first fence is what keeps a
+    `# comment` in a shell example from being read as the page's title."""
+    _meta, _tags, body = structure.parse_frontmatter(markdown)
+    for line in body.splitlines():
+        if line.lstrip().startswith("```"):
+            break
+        m = _H1.match(line)
+        if m:
+            return m.group(1).strip()
+    return ""
+
+
+def _title_from_name(stem: str) -> str:
+    """Last resort: the filename, made readable. `my-notes` -> `My notes`."""
+    text = re.sub(r"[-_]+", " ", stem).strip()
+    return (text[:1].upper() + text[1:]) if text else ""
+
+
+def _decode_markdown(source: str, text: str) -> dict:
+    """One file -> one document for `store.import_markdown`.
+
+    The filename is the slug, because it was the slug on the way out. `title:`
+    and `parent:` are read as structure and removed from the text; `tags:` and
+    every other property stay exactly where they are, so the ordinary write path
+    indexes them as if a person had typed them.
+    """
+    stem = Path(source).stem
+    struct, markdown = structure.take_structural(text)
+    return {
+        "source": source,
+        "slug": render.slugify(stem),
+        "title": (struct.get("title") or _first_heading(markdown)
+                  or _title_from_name(stem)),
+        "markdown": markdown,
+        "parent": struct.get("parent", ""),
+    }
+
+
+def _is_markdown_member(name: str) -> bool:
+    """A `.md` a person meant — not a resource fork, not something's dotfile.
+
+    Skipping hidden paths is not tidiness: macOS zips carry `__MACOSX/._page.md`
+    beside every file, whose name slugifies to the same page, and a folder that
+    happens to be a repo carries `.git`. Either one would turn a good import
+    into a collision refusal."""
+    parts = Path(name).parts
+    if not parts or name.endswith("/") or parts[0] == "__MACOSX":
+        return False
+    if any(part.startswith(".") for part in parts):
+        return False
+    return parts[-1].lower().endswith(_MD_SUFFIXES)
+
+
+def _is_markdown_archive(src_path: str) -> bool:
+    """True when this zip is a folder of markdown — the third shape Open takes.
+
+    Sniffed like the other two and for the same reason (rule 12): a
+    `<slug>-markdown.zip` this app produced must not be reported as "not a
+    Waikiki wiki file", which is the refusal the wiki-file branch gives anything
+    it cannot parse. A database member or an interchange manifest means it is
+    one of those instead, and both are decided before this is asked.
+    """
+    try:
+        with open(src_path, "rb") as f:
+            if f.read(2) != b"PK":
+                return False
+        with zipfile.ZipFile(src_path) as z:
+            names = [n for n in z.namelist() if not n.endswith("/")]
+    except (OSError, ValueError, zipfile.BadZipFile):
+        return False
+    if any(n.endswith(".db") or Path(n).name == "manifest.json" for n in names):
+        return False
+    return any(_is_markdown_member(n) for n in names)
+
+
+def _markdown_docs(src: str) -> list[dict]:
+    """Decode every `.md` under `src` (a folder or a zip) before anything is written.
+
+    Nested files are taken by their **basename**, because that is what carries
+    the slug: a subfolder is not hierarchy (`parent:` is), so `guides/setup.md`
+    is the page `setup`. Two files claiming one slug is refused downstream, with
+    both paths named, rather than one of them quietly winning.
+    """
+    path = Path(src)
+    if not path.exists():
+        # A ValueError, not the OSError `is_zipfile` would raise below: every
+        # caller here reports a refusal to a person or an agent, and a typo'd
+        # path is one of those, not a crash.
+        raise ValueError(f"nothing at {src}")
+    if path.is_dir():
+        found = [(str(f.relative_to(path)), f)
+                 for f in sorted(path.rglob("*")) if f.is_file()]
+        entries = [(name, f) for name, f in found if _is_markdown_member(name)]
+        docs = []
+        for name, f in entries:
+            try:
+                docs.append(_decode_markdown(name, f.read_text(encoding="utf-8")))
+            except UnicodeDecodeError as exc:
+                raise ValueError(f"'{name}' is not UTF-8 text: {exc}") from exc
+        return docs
+    if not zipfile.is_zipfile(src):
+        raise ValueError(f"{path.name} is neither a folder nor a zip of .md files")
+    docs = []
+    with zipfile.ZipFile(src) as z:
+        for name in sorted(n for n in z.namelist() if _is_markdown_member(n)):
+            try:
+                docs.append(_decode_markdown(name, z.read(name).decode("utf-8")))
+            except UnicodeDecodeError as exc:
+                raise ValueError(f"'{name}' is not UTF-8 text: {exc}") from exc
+    return docs
+
+
+def import_markdown(src: str, name: str | None = None,
+                    into: str | None = None) -> dict:
+    """Read a folder (or zip) of `<slug>.md` back in — the reader for
+    `export_markdown`, and rule 12's other half for it.
+
+    **`into=None` makes a new wiki**, which is what Open does: a folder of
+    markdown carries no label saying which wiki it came from (a bundle does),
+    and opening a file has never modified a wiki that was already here.
+    **`into='<slug>'` merges** into that wiki instead — the round-trip the MCP
+    tool exists for, where an agent exported to a repo's `docs/`, the text was
+    edited there, and it comes back. Merging updates a page of the same slug in
+    place and versions it; nothing is ever deleted (`store.import_markdown`).
+
+    Failure splits the way a bundle's does, because "refused" is a promise that
+    nothing changed: every file is decoded and every slug settled before the
+    first write, so a refusal removes the empty wiki it had just registered
+    rather than stranding a shell in the registry, and only a failure *after*
+    writes began is reported as partly imported.
+
+    Returns the target slug and what landed. No reindex pass follows it, for the
+    same reason `_import_bundle` has none: every page went through `store`, so
+    each was embedded as it arrived.
+    """
     from . import store
+
+    docs = _markdown_docs(src)
+    if not docs:
+        raise ValueError(
+            f"No .md files in {Path(src).name} — a markdown import is a folder "
+            "(or a zip) of <slug>.md pages, one per page")
+
+    if into is not None:
+        if not exists(into):
+            raise ValueError(f"no wiki '{into}'")
+        slug, fresh = into, False
+    else:
+        display = (name or Path(src).stem or "Imported").strip()
+        slug, fresh = create_wiki(display), True
+
+    started = False
+
+    def writing() -> None:
+        nonlocal started
+        started = True
 
     token = db.current_wiki.set(slug)
     try:
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-            for p in store.list_pages(include_children=True):
-                page = store.get_page(p["slug"])
-                z.writestr(f"{p['slug']}.md", page["markdown"])
-        return buf.getvalue()
+        landed = store.import_markdown(docs, author="import",
+                                       on_writes_begin=writing)
+    except Exception as exc:
+        if started:
+            raise ValueError(
+                f"'{name_of(slug)}' was only partly imported: {exc}. Nothing "
+                "was deleted, every page that did arrive is an ordinary "
+                "versioned page, and importing the same folder again finishes "
+                "it.") from exc
+        if fresh:
+            delete_wiki(slug)      # nothing was written; leave no empty shell
+        raise ValueError(f"Markdown refused rather than imported: {exc}") from exc
     finally:
         db.current_wiki.reset(token)
+    return {"slug": slug, **landed}
 
 
 def ensure_help_wiki() -> None:

@@ -389,3 +389,97 @@ def _retag(raw: bytes, **fields) -> bytes:
     manifest.update(fields)
     members["manifest.json"] = json.dumps(manifest).encode("utf-8")
     return _rebuild(members)
+
+
+# --- The door a person can actually reach (rule 12) ---------------------------
+#
+# Everything above proves the bundle round-trips between two wikis in-process.
+# None of it proved a person could open one, and for a whole release they could
+# not: `wikis.import_from` knew only the wiki-file shape and reported a valid
+# bundle as "not a Waikiki wiki file". Both halves of the round-trip existed and
+# passed. These tests are the pair being *reachable* — see
+# `tests/test_export_import_parity.py` for the rule that keeps it that way.
+
+def test_a_bundle_file_opens_through_the_same_door_as_a_wiki_file(two_wikis, tmp_path):
+    """`wikis.import_from` takes a bundle, not just a wiki file."""
+    src, _dst = two_wikis
+    path = tmp_path / "startupos-wiki-bundle.zip"
+    with _in(src):
+        with open(path, "wb") as fh:
+            store.export_wiki_bundle(fh)
+
+    slug = wikis.import_from(str(path))
+    assert wikis.exists(slug)
+    with _in(slug):
+        pages = {p["slug"]: p for p in store.list_pages(include_children=True)}
+        assert {"home", "guide", "deep-dive", "roadmap"} <= set(pages)
+        # Hierarchy survives the trip through the file, not just through memory.
+        assert pages["deep-dive"]["parent_slug"] == "guide"
+        assert any(e["slug"] == "infobox" for e in elements.list_elements())
+
+
+def test_the_bundle_names_the_wiki_not_the_file(two_wikis, tmp_path):
+    """The label is the source wiki's name; the filename is incidental.
+
+    Kahala's export lands as `<slug>-wiki-bundle.zip`, so deriving the display
+    name from the file would call the wiki "startupos-wiki-bundle".
+    """
+    src, _dst = two_wikis
+    path = tmp_path / "startupos-wiki-bundle.zip"
+    with _in(src):
+        with open(path, "wb") as fh:
+            store.export_wiki_bundle(fh)
+
+    slug = wikis.import_from(str(path))
+    assert wikis.name_of(slug) == "Source Wiki"
+    assert "bundle" not in wikis.name_of(slug).lower()
+
+
+def test_a_refused_bundle_says_why_and_leaves_no_wiki_behind(two_wikis, tmp_path):
+    """A bundle the version gate rejects must not strand an empty wiki.
+
+    It must also refuse in the bundle's own words: the wiki-file branch reporting
+    "not a Waikiki wiki file" about a valid-but-incompatible bundle is the
+    original bug, dressed as a different error.
+    """
+    src, _dst = two_wikis
+    with _in(src):
+        raw = store.export_wiki_bundle()
+    path = tmp_path / "from-the-future.zip"
+    path.write_bytes(_retag(raw, spec_version=99))
+
+    before = {w["slug"] for w in wikis.list_wikis()}
+    with pytest.raises(ValueError) as exc:
+        wikis.import_from(str(path))
+    assert "spec v99" in str(exc.value), \
+        f"the refusal must name the real reason, got: {exc.value}"
+    assert "not a Waikiki wiki file" not in str(exc.value)
+    assert {w["slug"] for w in wikis.list_wikis()} == before, \
+        "a refused bundle left an empty wiki in the registry"
+
+
+def test_a_wiki_file_is_not_mistaken_for_a_bundle(wiki, tmp_path):
+    """Both shapes are zips, so the format tag — not the name — has to decide."""
+    db.current_wiki.set("main")
+    store.create_page("Portable", "content that should survive a save")
+    saved = tmp_path / "main.zip"          # a wiki FILE, named like a bundle
+    wikis.export_to("main", str(saved))
+
+    assert wikis._bundle_manifest(str(saved)) is None
+    slug = wikis.import_from(str(saved), name="Reopened")
+    with _in(slug):
+        assert any(p["slug"] == "portable" for p in store.list_pages())
+
+
+def test_a_bundle_is_not_mistaken_for_a_wiki_file(two_wikis, tmp_path):
+    """And the converse: a bundle named like a wiki file still reads as a bundle."""
+    src, _dst = two_wikis
+    path = tmp_path / "looks-like-a-save.wiki"
+    with _in(src):
+        with open(path, "wb") as fh:
+            store.export_wiki_bundle(fh)
+
+    assert wikis._bundle_manifest(str(path)) is not None
+    slug = wikis.import_from(str(path))
+    with _in(slug):
+        assert any(p["slug"] == "home" for p in store.list_pages())

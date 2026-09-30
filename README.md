@@ -53,9 +53,52 @@ a location you choose and **Open** an external wiki file back in — from the
   downloads the file.
 - **Open wiki file…** validates the file and brings it in as a new isolated wiki.
   Native Open dialog in the app; a file upload in a browser.
+- **Export .md** downloads every page as a folder of markdown, and **Open
+  markdown folder…** (desktop app) reads one back in.
 
 `.wiki` files are just SQLite, so they're easy to back up, move between machines,
 or share.
+
+**Open takes any shape Waikiki can write.** A `.wiki` save wraps a whole
+database; a **wiki bundle** — what *Push/Pull with Kahala* moves, and what
+Kahala's own export downloads — carries each page as an interchange snapshot and
+no database at all; **markdown** is one `.md` per page and nothing else. They
+are all zips (markdown can also be a plain folder), so Open reads what the file
+*is* rather than what it is called. A bundle opens as a new wiki carrying its
+pages, hierarchy, elements, templates and images, and is named after the wiki it
+came from, not the file: a bundle labelled *StartupOS* opens as StartupOS,
+however the download happened to be named. A bundle that can't be read is
+refused in the bundle's own words and leaves nothing behind.
+
+**A folder of markdown comes back as a wiki.** Each file's name is its page's
+address, and the frontmatter header the export writes carries the page's title
+and — for a sub-page — its parent, so the pages come back under the same names
+with the same shape and their `[[links]]` still resolving. Tags and any other
+frontmatter you wrote stay exactly as they are. Opening a folder makes a new
+wiki; Claude can also read one straight back into a wiki you already have
+(`import_markdown`), which is the loop worth knowing: export a wiki into a
+repo's `docs/`, edit the text there with everything else, bring it back. A page
+that comes back changed is *updated*, not replaced — the previous text is in its
+history — nothing is ever deleted for being absent from the folder, and two
+files that would claim the same page are refused before anything is written.
+
+Markdown is text only, though: no images, history, comments, templates or
+trash. It is the shape for a repo; a `.wiki` file or a bundle is the faithful
+copy.
+
+Anything Waikiki can export, Waikiki can open again. That's a rule, not a
+coincidence — an export you can't restore is a file that only looks like a
+backup. The one exception is PDF, which is a page rendered for a person to read
+rather than a copy of the wiki. The decision, the release this was learned from,
+and what a folder of markdown means on the way in are in
+**[docs/export-import-parity.md](docs/export-import-parity.md)**.
+
+Opening a file also **rebuilds the search index** when the file arrived without a
+usable one. Search runs over a chunk index, not over the page text directly, so a
+file whose index didn't travel — or one embedded by a different model on the other
+machine — would otherwise open as a wiki that renders and links perfectly and finds
+nothing, with no error to explain it. A file that arrives correctly indexed is left
+alone, so opening a large healthy wiki is still instant.
 
 ### History, trash & retention
 
@@ -221,6 +264,11 @@ regenerated on arrival rather than shipped.
 on Kahala and removes nothing there; a pull does the same here. So a page you
 deleted locally is still on Kahala afterwards, and the next pull brings it back.
 Removing a page from both is a deliberate act on both.
+
+The wiki has to already exist on Kahala — a push won't create it, because
+creating one there is a browser form tied to your Kahala session rather than
+something the app's token can reach. *Open Kahala…* takes you to the page where
+you make one.
 
 Only what changed travels — a few kilobytes rather than the whole wiki — and
 custom elements, templates and images travel with the pages, so a page never

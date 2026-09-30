@@ -93,6 +93,11 @@ two in parity (same substance, different voice) whenever you change either.
   crash, a corrupt wiki file, a failed import; how restore actually works; and
   the risks we accept, named. Every answer there was established by making it
   happen, and `tests/test_data_safety.py` pins the properties.
+- `docs/export-import-parity.md` — rule 12 as a standing decision: why every
+  export must have a reachable import, the release where the bundle importer
+  existed and was unreachable anyway, why PDF is exempt, and what a folder of
+  markdown means on the way in (the gap that used to be recorded there, now
+  closed).
 
 ## Architectural rules (load-bearing)
 
@@ -172,6 +177,21 @@ two in parity (same substance, different voice) whenever you change either.
    embeddings are regenerated on import, never shipped. An incompatible spec/Yjs
    version is **rejected**, never merged. Re-sync the vendored lib per
    `docs/vendoring.md` and keep its pin in lockstep.
+   **"Embeddings are regenerated, never shipped" binds the file-import path too**
+   — the one path that *does* carry an index, because it carries the whole SQLite
+   file. Every search in the app runs over `chunks`/`chunks_fts`/`vec_chunks` and
+   never over `pages_fts`, so a `.wiki` whose chunk table is empty — or whose
+   vectors are another machine's width — opens as a wiki whose pages render and
+   link perfectly and answer *nothing*, with no error anywhere. So
+   `wikis.import_from` ends in `rag.reindex_if_stale`: it names its reason on
+   stderr, rebuilds, and is a **no-op on a wiki that arrived indexed** (never
+   re-embed 215 pages for nothing). Three smaller judgements there — a vec
+   dimension mismatch counts, because `db.ensure_vec_table` drops the mismatched
+   table from the *search* path and would otherwise discard the imported vectors
+   on the first query; an embedder this machine cannot load does **not** count,
+   since re-chunking would trade vectors for nothing and BM25 is the whole index
+   there anyway; and a failed rebuild is reported but never fails the import,
+   because the index is a cache and the wiki is readable without it.
    The **whole-wiki bundle** (issue #57) adds three rules of its own:
    *hierarchy travels by slug, never by integer id* — ids are local, so an id
    that crossed would point at whatever page happened to hold that number in the
@@ -288,6 +308,63 @@ two in parity (same substance, different voice) whenever you change either.
     the redirect, credential-location, CSRF, older-peer, path-segment,
     control-character, rotation and partly-merged cases are each written to fail
     if the guard is removed, and must not be relaxed to make something pass.
+
+12. **Every export has an import, and no exception to that is allowed to be
+    silent.** If this app can write wiki state to a file, it must be able to read
+    that file back. An export you cannot restore is not a backup, it is a file
+    that looks like one — and the person only finds out on the day they need it.
+    This is a promise about the *pair*: shipping an export surface without its
+    reader is incomplete work, not a follow-up ticket, and
+    `tests/test_export_import_parity.py` enumerates the export functions and
+    fails the build on one that has no importer. The pairs today are
+    `store.export_snapshot`/`import_snapshot`,
+    `store.export_changelog`/`import_changelog`,
+    `store.export_wiki_bundle`/`import_wiki_bundle`,
+    `wikis.export_to`/`wikis.import_from`, and
+    `wikis.export_markdown`/`wikis.import_markdown` (with the MCP pair above
+    it). **The known-gap list is empty, and may shrink but never grow.**
+    **One door, three archive shapes — sniffed, never assumed.** `wikis.import_from`
+    is the single entry point for a file a person picked, and it reads the format
+    tag rather than trusting the name: a *wiki file* wraps a whole SQLite
+    database (`wiki.db`), an *interchange bundle* carries `manifest.json` plus
+    one `pages/<slug>.snapshot` per page and no database at all, and *markdown*
+    is `<slug>.md` per page with neither. All are zips (markdown also arrives as
+    a plain directory), so a file-picker filter is not a format check and an
+    extension is not evidence, and the order matters — database and manifest are
+    ruled out before the markdown sniff, so a `.wiki` carrying a stray `.md` is
+    still a wiki file. Sniffing is also what keeps the refusal honest: a bundle
+    the version gate rejects must say *that*, because the alternative — the
+    wiki-file branch reporting "not a Waikiki wiki file" about a perfectly valid
+    bundle — is how this was broken for a whole release. A bundle lands through
+    `store.import_wiki_bundle` into a newly registered wiki, the same repository
+    path Kahala's pull uses (rule 7), so its pages are versioned and re-embedded
+    locally as they arrive; a *refused* bundle removes that empty wiki again
+    rather than strand a shell in the registry, while one that failed *after* the
+    first write keeps it and says "partly imported", per rule 11's distinction.
+    **A render target is not an export of state.** The PDF path (`pdfgen`,
+    `mcp_server.export_pdf`) is exempt and always will be — it is a lossy
+    presentation of a page for a person to read, not a serialization anything
+    could restore from. Markdown is **not** exempt, and is no longer a gap:
+    `wikis.import_markdown` reads a folder (or zip) of `<slug>.md` back through
+    `store`, so every page is rendered, versioned and re-embedded like any other
+    write. Four decisions are load-bearing there, and
+    `tests/test_markdown_roundtrip.py` pins each. *The export carries a
+    frontmatter header* — the title is a column and `[[links]]` resolve by
+    title, so a wiki restored from filenames alone comes back with every link
+    broken; `parent:` rides along, which is how the flat format stopped losing
+    hierarchy. *`title`/`parent` are structure, not properties*: read into the
+    columns and taken back out of the text, while `tags:` and every other key
+    are stored verbatim so the ordinary write path indexes them — export →
+    import → export is a fixed point. *The filename is the slug* on the way in
+    because it was on the way out; an existing slug **merges** (updated in
+    place, versioned, never deleted), two files claiming one slug are refused
+    before the first write, and a file with no `parent:` never moves an existing
+    page to top level, because markdown cannot tell "top level" from "doesn't
+    say". *A folder a person opens becomes a new wiki*; merging into an existing
+    one is `into=`, which is what the MCP tool does for the docs/ round-trip.
+    What markdown does **not** carry — images, history, comments, templates,
+    elements, trash, order, stars — is named in the doc rather than implied
+    away: it is the shape for a repo, `.wiki` is the faithful copy.
 
 ## Before committing
 

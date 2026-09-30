@@ -10,7 +10,60 @@ cd "$(dirname "$0")/.."
 # import and the server never starts. Cutting a release must not be able to
 # break the editor you are cutting it from.
 BUILD_VENV=".venv-build"
-python3 -m venv "$BUILD_VENV" 2>/dev/null || true
+
+# Pick the interpreter deliberately instead of trusting bare `python3`. On macOS
+# that name is whatever CommandLineTools ships (3.9 here), while pyproject.toml
+# declares a floor of >=3.10 — so a build that trusts it installs an
+# unsupported interpreter and then fails somewhere that says nothing about
+# versions. Order: an explicit PYTHON override, else the newest pythonX.Y on
+# PATH that clears the floor, else `python3` so the check below can name what
+# it found. The floor is read from pyproject.toml rather than duplicated, so
+# raising it there raises it here too.
+PY_FLOOR="$(sed -n 's/^requires-python[^0-9]*\([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' pyproject.toml | head -1)"
+PY_FLOOR="${PY_FLOOR:-3.10}"
+PY_FLOOR_MAJOR="${PY_FLOOR%%.*}"
+PY_FLOOR_MINOR="${PY_FLOOR#*.}"
+
+# Does $1 exist, run, and clear the floor?
+python_ok() {
+    [ -n "${1:-}" ] || return 1
+    "$1" -c "import sys; sys.exit(0 if sys.version_info[:2] >= ($PY_FLOOR_MAJOR, $PY_FLOOR_MINOR) else 1)" 2>/dev/null
+}
+
+PYTHON="${PYTHON:-}"
+if [ -z "$PYTHON" ]; then
+    for candidate in python3.13 python3.12 python3.11 python3.10; do
+        command -v "$candidate" >/dev/null 2>&1 || continue
+        python_ok "$candidate" || continue
+        PYTHON="$(command -v "$candidate")"
+        break
+    done
+fi
+PYTHON="${PYTHON:-python3}"
+
+if ! python_ok "$PYTHON"; then
+    echo "ERROR: $PYTHON is $("$PYTHON" -V 2>&1 || echo 'not runnable'), but this" >&2
+    echo "       project requires Python >= $PY_FLOOR (pyproject.toml)." >&2
+    echo "       Install a Python that clears it and re-run, e.g.:" >&2
+    echo "         brew install python@$PY_FLOOR" >&2
+    echo "       or point the build at one you already have:" >&2
+    echo "         PYTHON=/path/to/python$PY_FLOOR $0" >&2
+    exit 1
+fi
+
+# A `.venv-build` from an earlier run is reused as-is, so a single build on the
+# wrong interpreter would otherwise keep poisoning every later build — even
+# after the PATH is fixed. Check what the existing one actually is.
+if [ -d "$BUILD_VENV" ] && ! python_ok "$BUILD_VENV/bin/python"; then
+    echo "==> $BUILD_VENV was built with an unsupported Python — recreating it"
+    rm -rf "$BUILD_VENV"
+fi
+# No `|| true` here: if venv creation fails, the next line's `source` is what
+# breaks, and its error points at activate instead of at the real cause.
+if [ ! -d "$BUILD_VENV" ]; then
+    echo "==> creating $BUILD_VENV with $PYTHON ($("$PYTHON" -V 2>&1))"
+    "$PYTHON" -m venv "$BUILD_VENV"
+fi
 source "$BUILD_VENV/bin/activate"
 pip install -q -r requirements.txt
 pip install -q pywebview pyinstaller

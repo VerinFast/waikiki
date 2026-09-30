@@ -162,6 +162,50 @@ says so. There is no file backend to fall back to, not even a hidden one:
 writing a credential to a plain file "just for now" is the outcome this design
 exists to prevent.
 
+## The slug, not the display name
+
+Kahala's *Wikis* page shows both — `StartupOS /startupos` — and the interchange
+wire addresses a wiki by its **slug**. Link to the display name and the push
+404s, which reads like a permissions problem and arrives long after the mistake
+was made.
+
+Both sides derive slugs with the same `slugify`, so `kahala.link` refuses a
+non-slug name *where it is typed* and names the slug it will be. The push 404
+carries the same hint, for links made before that check existed. Neither
+auto-corrects: if the wiki's slug collided when it was created, Kahala's is
+`startupos-2` and guessing would send the push somewhere real and wrong.
+
+## One sign-in per install
+
+The sign-in is app-global and keyed by **issuer** (`kahala:{issuer}` in the
+Keychain), while a *link* is per wiki and carries its own base URL. So every
+linked wiki uses the same identity, and a Kahala on a different sign-in server
+needs `kahala_issuer` changed in `app_config.json` and a fresh sign-in.
+
+That asymmetry is a real gap — if you choose which Kahala to push to, you should
+choose which one you are signed in to — and the pane now at least *names* the
+server rather than saying "Signed in." with nothing to check it against. The
+Keychain already keys by issuer, so several identities can coexist; what is
+missing is carrying the issuer on the link and threading it through
+`kahalaauth`.
+
+## A push cannot create the wiki on Kahala
+
+The wiki has to exist there first. This is not a gap we chose: creating one is
+`POST /wikis/create`, a **session-authenticated browser form**, and Kahala only
+accepts a bearer token on `/api/*` (`oidc.py`, the middleware's
+`path.startswith("/api/")` gate). The credential Waikiki holds cannot reach that
+route, so there is nothing to automate against.
+
+So the pane says so plainly, and *Open Kahala…* sends you to that server's own
+*Wikis* page — in the browser you are already signed in to, via the same
+`data-open-url` hook the app uses for PDFs. Create it there, then link to the
+name Kahala gives it. Note that Kahala derives the slug from the name you type,
+so the two can differ; the link wants the slug.
+
+Automating this properly needs an `/api/*` creation route on Kahala, which is
+server-side work tracked separately.
+
 ## Refusals
 
 Every one of these is a normal state that reports itself and changes nothing

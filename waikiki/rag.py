@@ -119,6 +119,92 @@ def reindex_all() -> int:
     return len(pages)
 
 
+# --- Index health -------------------------------------------------------------
+#
+# The chunk index is a cache, rebuildable from `pages.markdown` — but nothing
+# rebuilds it when a whole wiki *file* arrives from somewhere else
+# (`wikis.import_from`). Every search in the app runs over `chunks` /
+# `chunks_fts` / `vec_chunks`, never over `pages_fts`, so a file whose cache
+# didn't travel with it renders its pages fine, resolves their [[links]], and
+# returns zero results for every query — with nothing anywhere saying why. Rule
+# 7 already regenerates local embeddings on interchange import rather than
+# shipping them; these two functions are the same promise for a wiki file.
+
+
+def _embedder_dim() -> int | None:
+    """The dimension this machine embeds at, or None if it can't embed at all."""
+    try:
+        return embeddings.get_embedder().dim
+    except Exception:
+        return None
+
+
+def _table_exists(name: str) -> bool:
+    return db.get_conn().execute(
+        "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name=?",
+        (name,),
+    ).fetchone() is not None
+
+
+def stale_index_reason() -> str | None:
+    """Why the active wiki's index can't answer a search — None when it can.
+
+    Three ways a wiki file arrives unsearchable, in the order they bite:
+
+    * **No chunks at all.** Pages, `pages_fts`, links and render are all fine;
+      search is empty. This is what an imported `.wiki` whose chunks table never
+      travelled actually does.
+    * **Vectors of another machine's dimension.** `db.ensure_vec_table` drops and
+      rebuilds a vec0 table whose dimension changed, and it is called from the
+      *search* path — so left alone, the first query silently throws the imported
+      vectors away and every query after it is BM25-only.
+    * **Chunks but no vectors** (exported from a machine without sqlite-vec).
+      Search answers, but with half the index it claims.
+
+    An embedder we cannot load is *not* a reason: re-chunking would drop the
+    vectors to replace them with nothing, and BM25 is the whole index on that
+    machine anyway.
+    """
+    conn = db.get_conn()
+    pages = conn.execute(
+        "SELECT COUNT(*) AS n FROM pages WHERE deleted_at IS NULL").fetchone()["n"]
+    if not pages:
+        return None
+    chunks = conn.execute("SELECT COUNT(*) AS n FROM chunks").fetchone()["n"]
+    if not chunks:
+        return f"{pages} page(s), no chunks"
+
+    if not db.VEC_AVAILABLE:
+        return None
+    dim = _embedder_dim()
+    if dim is None:
+        return None
+    stored = db.get_setting("vec_dim")
+    if stored is not None and str(stored).isdigit() and int(stored) != dim:
+        return f"vectors are {stored}-dim, this machine embeds {dim}-dim"
+    vectors = sum(
+        conn.execute(f"SELECT COUNT(*) AS n FROM {t}").fetchone()["n"]
+        for t in ("vec_chunks", "vec_chunks_sub") if _table_exists(t)
+    )
+    if not vectors:
+        return f"{chunks} chunk(s), no vectors"
+    return None
+
+
+def reindex_if_stale() -> int:
+    """Rebuild the active wiki's index if it cannot answer a search.
+
+    Returns the number of pages reindexed; 0 means the index was already usable.
+    Safe with no embedder configured — `reindex_page` reports the embedding
+    failure and still writes the BM25 chunks.
+    """
+    reason = stale_index_reason()
+    if reason is None:
+        return 0
+    print(f"[waikiki] reindexing '{db.active_wiki()}': {reason}", file=sys.stderr)
+    return reindex_all()
+
+
 # --- Retrieval ----------------------------------------------------------------
 
 def _fts_query(text: str) -> str:

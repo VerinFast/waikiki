@@ -80,6 +80,19 @@ def _bad_remote(remote: str) -> str:
                     "as it appears there, with nothing around it.")
     if any(ch < " " or ch == "\x7f" for ch in remote):
         return "That wiki name contains a character that can't be sent."
+    # Kahala addresses a wiki by its SLUG, not its display name, and its Wikis
+    # page shows both ("StartupOS /startupos") -- so the name is the one that
+    # catches the eye and the slug is the one the wire needs. Linking to the
+    # display name produces a 404 that reads like a permissions problem, hours
+    # later, at push time. Caught here instead, with the answer in hand: both
+    # sides derive slugs with the same `slugify`, so we can say what it will be.
+    guess = wikis.slugify(remote)
+    if guess != remote:
+        return (f"Kahala addresses a wiki by its slug, not its display name — "
+                f"its Wikis page shows both, like “{remote} /{guess}”. "
+                f"Use “{guess}”. (If that wiki's slug ends in a number, Kahala "
+                "hit a name collision when it was created; copy the slug from "
+                "that page instead.)")
     return ""
 
 
@@ -108,6 +121,27 @@ def unlink(slug: str) -> dict:
     return {"ok": True, "error": ""}
 
 
+def suggested_link(slug: str) -> dict:
+    """Sensible defaults for the link form: {base_url, remote}.
+
+    ``remote`` defaults to this wiki's **own slug**, because that is nearly
+    always what it is called on the other side, and because the field wants a
+    slug rather than a display name -- Kahala derives its slug from the name you
+    type into its form, so "StartupOS" and "startupos" are not interchangeable
+    there. Offering the local slug also matches what a create-on-Kahala call
+    would ask for.
+
+    ``base_url`` comes from any wiki already linked on this machine: people have
+    one Kahala, not one per wiki, and re-typing it is the step where a typo turns
+    into a 404 that reads like a permissions problem.
+    """
+    for other in wikis.list_wikis():
+        lk = wikis.get_link(other["slug"])
+        if lk and lk.get("base_url"):
+            return {"base_url": lk["base_url"], "remote": slug}
+    return {"base_url": "", "remote": slug}
+
+
 def status(slug: str) -> dict:
     """Everything the UI and the MCP tool need, without touching the network."""
     can, why = kahalaauth.can_sign_in()
@@ -121,6 +155,15 @@ def status(slug: str) -> dict:
         "can_sign_in": can,
         "reason": why,
         "secure_store": secretstore.available(),
+        # WHICH Kahala the sign-in is for. "Signed in." on its own is a claim
+        # the reader cannot check, and there is more than one Kahala — so name
+        # the realm, and let the pane say that one sign-in covers the install.
+        "issuer": kahalaauth.issuer(),
+        # Where to create a wiki on that Kahala. Waikiki cannot do it: creating
+        # one is `POST /wikis/create`, a session-authenticated browser form, and
+        # our bearer token is only accepted on `/api/*`. So we send the person
+        # to the page they are already signed in to rather than pretending.
+        "manage_url": f"{lk['base_url']}/wikis" if lk.get("base_url") else "",
     }
 
 
@@ -280,8 +323,13 @@ def _push_incremental(slug: str, lk: dict, token: str) -> dict:
     except httpx.HTTPError as exc:
         return _err(_unreachable(lk["base_url"], exc))
     if their.status_code == 404:
-        # No such route at all: a Kahala from before the changelog wire.
-        return _fallback(_OLD_PEER)
+        # Only an ABSENT ROUTE means an older Kahala. A 404 that says "No such
+        # wiki" means the wiki isn't there, and falling back would push ~57MB
+        # before failing for the reason we already had in our hands.
+        if _reason(their).strip().lower() in ("not found", "not_found"):
+            return _fallback(_OLD_PEER)
+        bad = _refusal(their, lk, "push")
+        return bad if bad else _fallback(_OLD_PEER)
     bad = _refusal(their, lk, "push")
     if bad:
         return bad
@@ -489,11 +537,35 @@ def _refusal(resp, lk: dict, action: str, streaming: bool = False) -> dict | Non
                     f"admin of “{lk['remote']}” on Kahala, and only they may "
                     "push a whole wiki.")
     if code == 404:
-        return _err(f"There is no wiki called “{lk['remote']}” on "
-                    f"{lk['base_url']} that this account can see. Kahala "
-                    "answers the same way for a wiki that doesn't exist and one "
-                    "belonging to another tenant, so check both the name and "
-                    "which account you signed in as.")
+        # Two different 404s wear the same clothes, and telling them apart is
+        # the difference between "fix your link" and "that server is too old".
+        # FastAPI answers an unmatched route with {"detail": "Not Found"};
+        # Kahala's own handler says "No such wiki". Guessing between them sent
+        # two separate investigations down the wrong road, so: report what the
+        # server said, first, and interpret second.
+        said = _reason(resp)
+        if said.strip().lower() in ("not found", "not_found"):
+            return _err(
+                f"{lk['base_url']} has no {action} route at "
+                f"{_wiki_url(lk, '')} — that is the web framework's own "
+                "\"Not Found\", not Kahala saying the wiki is missing. This "
+                "Kahala is too old for the interchange API, or it isn't a "
+                "Kahala. Nothing is wrong with the link or the wiki name.")
+        hint = ""
+        slugged = wikis.slugify(lk["remote"])
+        if slugged != lk["remote"]:
+            # Almost certainly this: the link holds a display name and the wire
+            # wants a slug. Say it first, and say what to do about it.
+            hint = (f" This link uses “{lk['remote']}”, which looks like a "
+                    f"display name — Kahala addresses wikis by slug, so it is "
+                    f"probably “{slugged}”. Forget this link and make it again "
+                    "with the slug from Kahala's Wikis page.")
+        return _err(f"Kahala said “{said}” for “{lk['remote']}” on "
+                    f"{lk['base_url']}.{hint} A push cannot create a wiki — it "
+                    "has to exist there first, and “Open Kahala” above is where "
+                    "to make it. Kahala also answers this way for a wiki that "
+                    "belongs to another tenant, so check which account you "
+                    "signed in as.")
     if code == 409:
         return _err("Kahala refused the transfer as incompatible rather than "
                     f"merging it: {_reason(resp)}. Nothing changed on either "

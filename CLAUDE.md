@@ -137,6 +137,18 @@ two in parity (same substance, different voice) whenever you change either.
    delete, truncate, rename or in-place repair, because it is the user's data and
    may be recoverable. `backups.run_backup` skips it and snapshots the rest.
    `tests/test_data_safety.py` guards all of it, on both backends.
+   **Schema setup belongs to the connection, not to the process.** Handles are
+   cached per (thread, wiki) but setup used to be memoised process-wide, so any
+   connection after the first skipped it. That is invisible while a file stays
+   put and fatal when it does not: a wiki whose database was replaced or removed
+   underneath a running app came back as an empty file nothing ever created
+   tables in, and every request that reached a thread without a cached handle
+   died on `no such table: pages` for the life of the process — while threads
+   still holding the old handle served its pages as if nothing had happened,
+   which is why it presented as "viewing works, editing 500s". The DDL is
+   idempotent, so paying it per connection is cheap; `_schema_ready` survives
+   only to tell a first open apart from a disappearance, which is **reported**
+   rather than passed off as an empty wiki.
 5. **One code path for Human and LLM.** REST, HTML views, and MCP tools all go
    through `store`/`rag` so both callers get identical render + version + index.
    The same applies to *which model answers*: the Doorman-or-local decision lives

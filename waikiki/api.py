@@ -722,8 +722,14 @@ async def wikis_change_slug(request: Request, slug: str,
     a room outlives the request and persists under the wiki its key names, so
     one left pointing at an address that no longer exists would write its page
     into the default wiki (`collab.release_wiki`).
+
+    Every refusal is collected *first* (`wikis.plan_slug_change`). Releasing the
+    rooms closes whatever anyone has open in that wiki, so doing it before
+    finding out the address was a duplicate — or the Help wiki's — would throw
+    people out of their editors to accomplish nothing at all.
     """
     try:
+        await anyio.to_thread.run_sync(wikis.plan_slug_change, slug, new_slug)
         await collab.release_wiki(slug)
         target = await anyio.to_thread.run_sync(wikis.change_slug, slug, new_slug)
     except ValueError as exc:

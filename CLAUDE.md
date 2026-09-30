@@ -166,8 +166,18 @@ two in parity (same substance, different voice) whenever you change either.
    nothing typed is lost, and `collab._orphaned` is the net under every other
    caller. And an agent still pointed at the old slug is **refused**, not
    redirected, for the reason above: the fallback would have written its pages
-   into whatever wiki happens to be default. `help` cannot be re-addressed at
-   all, since `ensure_help_wiki` would bring it back as a second copy.
+   into whatever wiki happens to be default. Every refusal is collected
+   **before** the rooms come down (`plan_slug_change`): releasing them closes
+   whatever people have open, so running the checks afterwards throws everyone
+   out of their editors for a rename that was never going to happen. A room
+   whose flush **fails** aborts the rename rather than being forgotten with
+   unsaved text in it. The **MCP surface carries the name only** — those rooms
+   live in the web app's process, not the MCP server's, so an address changed
+   from there would strand whatever somebody is typing with neither process in a
+   position to notice. `help` cannot be re-addressed at all, since
+   `ensure_help_wiki` would bring it back as a second copy. The one thing this
+   accepts is a save committing through a stale handle in the instant between
+   the copy and the delete (`docs/data-safety.md`, risk 7).
    `tests/test_wiki_rename.py` guards each of those.
 5. **One code path for Human and LLM.** REST, HTML views, and MCP tools all go
    through `store`/`rag` so both callers get identical render + version + index.

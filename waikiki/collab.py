@@ -239,8 +239,16 @@ async def release_wiki(wiki: str) -> int:
             try:
                 await anyio.to_thread.run_sync(_persist, slug, current)
             except Exception as exc:
-                print(f"[waikiki] flush before releasing {key} failed: {exc}",
-                      file=sys.stderr)
+                # Do NOT forget the room after a failed save. The caller is
+                # about to make this wiki's address unreachable, and a room
+                # dropped with text that never landed is that text gone — while
+                # the release reports success. Raising leaves everything as it
+                # was, which is the only honest outcome: the rename is refused
+                # and the editor still holds what someone typed.
+                raise ValueError(
+                    f"could not save the open editor for '{slug}' first "
+                    f"({exc}); nothing was renamed, so nothing was lost — "
+                    "try again in a moment") from exc
             finally:
                 db.current_wiki.reset(token)
         _forget(key)

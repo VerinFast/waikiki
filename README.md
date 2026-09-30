@@ -62,7 +62,7 @@ different wiki. The **Help** wiki keeps its address (the app re-creates `help`
 whenever it's missing, so a renamed one would come back as a second copy); its
 name is yours to change like any other.
 
-Claude can do both with the `rename_wiki` tool.
+Claude can change the **name** with the `rename_wiki` tool. The address is the app's to change, not Claude's: the live editors that have to be saved and closed first are held by the app itself, in a different process from the one Claude talks to.
 
 ### Save / Open wikis to files
 

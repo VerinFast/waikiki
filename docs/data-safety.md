@@ -565,3 +565,16 @@ Everything below is a deliberate 1.0 position, not an oversight:
    [#73](https://github.com/VerinFast/waikiki/issues/73): every article carries a
    line naming when it last changed and how many earlier versions are kept, and
    that line opens the history. Nothing is accepted here any more.
+7. **A save committing in the same instant a wiki's address changes can be
+   lost.** Changing a slug (`wikis.change_slug`) copies the database to its new
+   name with SQLite's backup API and deletes the old file once the registry has
+   been updated. Handles other threads cached before the move stay usable until
+   each thread next asks for one, so a write that commits through a stale handle
+   *between* the copy and the delete lands in the old file and goes with it.
+   What runs on its own schedule — the collab flusher — is released and saved
+   before any of this starts, so the window needs an HTTP request writing to
+   that exact wiki at that exact moment. Closing it properly means a lock every
+   save pays forever to protect an admin action taken once, which is not a trade
+   1.0 makes. The rename itself is safe against failure: the original is deleted
+   only after the new name is recorded, so a crash anywhere in the middle leaves
+   the wiki where it was.

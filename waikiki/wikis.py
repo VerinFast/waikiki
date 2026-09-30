@@ -136,6 +136,42 @@ def rename(slug: str, name: str) -> str:
     raise ValueError(f"no wiki '{slug}'")
 
 
+def plan_slug_change(slug: str, new_slug: str) -> str:
+    """Every refusal `change_slug` can make, without changing anything.
+
+    Split out because the caller has to take this wiki's live editors down
+    before the file can move (`collab.release_wiki`), and doing that for a
+    rename that was never going to happen would close everyone's editor to
+    accomplish nothing. Ask first, then act.
+
+    Returns the slug the wiki would end up with — which is the one it already
+    has when there is nothing to do.
+    """
+    if not exists(slug):
+        raise ValueError(f"no wiki '{slug}'")
+    if slug == config.HELP_WIKI:
+        raise ValueError(
+            "The Help wiki's address is built in: the app re-creates 'help' "
+            "whenever it is missing, so a renamed one would come back as a "
+            "second copy beside it. Its display name can be changed.")
+    # `slugify` falls back to "wiki" for input with nothing usable in it, which
+    # is right when naming a new wiki and wrong here: it would silently move a
+    # wiki to /wiki because someone typed punctuation.
+    if not re.sub(r"[^\w]", "", new_slug or ""):
+        raise ValueError("A wiki address needs at least one letter or digit")
+    target = slugify(new_slug)
+    if target == slug:
+        return slug
+    if exists(target):
+        raise ValueError(f"'{target}' is already another wiki's address")
+    if db_path(target).exists():
+        raise ValueError(
+            f"{db_path(target).name} is already in the wikis folder without a "
+            "wiki registered to it; move it aside first rather than have this "
+            "overwrite it")
+    return target
+
+
 def change_slug(slug: str, new_slug: str) -> str:
     """Change a wiki's slug: its URLs, and the name of its database file.
 
@@ -156,42 +192,24 @@ def change_slug(slug: str, new_slug: str) -> str:
     renamed wiki. And **the caller releases the CRDT rooms first** — see
     `collab.release_wiki`, which cannot be done from here because it is async.
 
-    Refused, rather than half-done: an unknown wiki, an address that is empty
-    once slugified, one another wiki already answers to, and the built-in Help
-    wiki — `ensure_help_wiki` re-creates `help` whenever it is missing, so a
-    renamed one would simply come back beside it as a second copy.
+    Refused before anything moves, and before the caller takes the editors
+    down: see `plan_slug_change`.
+
+    **The limit this accepts, named rather than implied away.** A handle another
+    thread cached before the move stays usable until that thread next calls
+    `get_conn`, so a write committing through one *between* the copy and the
+    unlink lands in the old file and goes with it. Releasing the rooms first
+    removes the writer that runs on its own schedule (the collab flusher); what
+    is left is an HTTP request writing to this wiki in the same moment somebody
+    renames it. Closing that properly means a lock every save takes forever, to
+    buy safety in an admin action taken once — so it is written down here and in
+    `docs/data-safety.md` instead.
     """
-    if not exists(slug):
-        raise ValueError(f"no wiki '{slug}'")
-    if slug == config.HELP_WIKI:
-        raise ValueError(
-            "The Help wiki's address is built in: the app re-creates 'help' "
-            "whenever it is missing, so a renamed one would come back as a "
-            "second copy beside it. Its display name can be changed.")
-    # `slugify` falls back to "wiki" for input with nothing usable in it, which
-    # is right when naming a new wiki and wrong here: it would silently move a
-    # wiki to /wiki because someone typed punctuation.
-    if not re.sub(r"[^\w]", "", new_slug or ""):
-        raise ValueError("A wiki address needs at least one letter or digit")
-    target = slugify(new_slug)
+    target = plan_slug_change(slug, new_slug)
     if target == slug:
         return slug
-    if exists(target):
-        raise ValueError(f"'{target}' is already another wiki's address")
     src, dest = db_path(slug), db_path(target)
-    if dest.exists():
-        raise ValueError(
-            f"{dest.name} is already in the wikis folder without a wiki "
-            "registered to it; move it aside first rather than have this "
-            "overwrite it")
 
-    # Copied with SQLite's own backup API rather than renamed. A plain rename
-    # leaves the `-wal` and `-shm` behind, and removing them while another
-    # thread still has the database open is how you get "the disk reported an
-    # I/O error" on the next open — a hot WAL is not ours to delete. The backup
-    # API reads a live database consistently (it is what "Save wiki" uses), and
-    # it leaves the original untouched until everything else has succeeded, so
-    # a failure anywhere below costs a copy and nothing else.
     db.release_wiki_handles(slug)          # checkpoint + close ours first
     copied = False
     if src.exists():

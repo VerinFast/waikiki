@@ -306,33 +306,23 @@ def create_wiki(name: str) -> dict:
 # point it is pure token cost.
 
 @mcp.tool
-def rename_wiki(name: str = "", address: str = "") -> dict:
-    """Rename the active wiki: its display `name`, its `address` (slug), or both.
+def rename_wiki(name: str) -> dict:
+    """Rename the active wiki — its display name, the label a person reads.
 
-    They are different things. The name is a label a person reads. The address
-    is in every URL, is the filename of the wiki's database, and is what
-    `switch_wiki` takes — changing it renames the file, so links using the old
-    address stop working and anyone with the wiki open must reload.
-
-    Pass whichever you mean; the other is left alone. Your active wiki follows
-    an address change automatically. The Help wiki's address cannot change (the
-    app re-creates it), though its name can.
+    The wiki's **address** (its slug) is deliberately not changeable from here.
+    Changing it renames the database file, and the live editors that have to be
+    saved and released first are held by the *web app*, in a different process
+    from this one — so an address change made here would strand whatever
+    somebody is typing right now, with no way for either process to know. That
+    one is in the app: Manage wikis → Rename…
     """
     wiki = _require_wiki()
-    out: dict = {"wiki": wiki}
+    if not name.strip():
+        return {"wiki": wiki, "error": "give a name"}
     try:
-        if name.strip():
-            out["name"] = wikis.rename(wiki, name)
-        if address.strip():
-            target = wikis.change_slug(wiki, address)
-            if target != wiki:
-                _set_active_wiki(target)     # follow it; the old slug is gone
-            out["wiki"] = out["address"] = target
+        return {"wiki": wiki, "name": wikis.rename(wiki, name)}
     except ValueError as exc:
         return {"wiki": wiki, "error": str(exc)}
-    if not name.strip() and not address.strip():
-        return {"wiki": wiki, "error": "give a name, an address, or both"}
-    return out
 
 
 @mcp.tool

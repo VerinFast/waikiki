@@ -264,24 +264,45 @@ def test_an_agent_pointed_at_the_old_address_is_refused_not_redirected(wiki,
         mcp_server._require_wiki()
 
 
-def test_the_mcp_tool_follows_the_address_it_just_changed(wiki, monkeypatch):
+def test_the_mcp_tool_renames_the_label(wiki, monkeypatch):
     from waikiki import mcp_server
 
     slug = wikis.create_wiki("Tool Wiki")
     monkeypatch.setattr(mcp_server, "_ACTIVE", slug)
 
-    out = mcp_server.rename_wiki(name="Tool Wiki!", address="tools")
+    out = mcp_server.rename_wiki(name="Tool Wiki!")
 
-    assert out["wiki"] == "tools" and out["address"] == "tools"
-    assert wikis.name_of("tools") == "Tool Wiki!"
-    assert mcp_server._require_wiki() == "tools"      # followed, not stranded
+    assert out == {"wiki": slug, "name": "Tool Wiki!"}
+    assert wikis.name_of(slug) == "Tool Wiki!"
+
+
+def test_the_mcp_tool_cannot_change_an_address(wiki, monkeypatch):
+    """Deliberate: the editors that must be saved first live in another process.
+
+    The MCP server runs separately from the web app, so the rooms holding what
+    somebody is typing right now are not visible from here and cannot be
+    released. An address change made from this side would strand that text with
+    neither process in a position to notice, so this surface only carries the
+    label.
+    """
+    from waikiki import mcp_server
+
+    monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
+    import inspect
+
+    params = inspect.signature(mcp_server.rename_wiki).parameters
+    assert set(params) == {"name"}, (
+        "the MCP surface grew an address argument; the rooms that have to be "
+        "released first are in the app's process, not this one")
+    assert "Manage wikis" in (mcp_server.rename_wiki.__doc__ or ""), \
+        "an agent told it cannot do this needs to know where it can be done"
 
 
 def test_the_mcp_tool_asks_for_something_to_change(wiki, monkeypatch):
     from waikiki import mcp_server
 
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
-    assert "error" in mcp_server.rename_wiki()
+    assert "error" in mcp_server.rename_wiki(name="  ")
 
 
 # --- The live editor ----------------------------------------------------------
@@ -392,3 +413,72 @@ def test_a_refused_address_comes_back_as_a_message_not_a_500(wiki):
     assert r.status_code == 303
     assert "error=" in r.headers["location"]
     assert wikis.exists("main")
+
+
+# --- Refusals must not cost anything ------------------------------------------
+
+def test_a_refused_address_leaves_the_live_editors_alone(wiki, stand_in_rooms):
+    """Releasing rooms closes what people have open, so ask before acting.
+
+    The refusals are all knowable up front (`plan_slug_change`), and running
+    them after the teardown would throw everyone out of their editors to
+    accomplish nothing — the rename was never going to happen.
+    """
+    import anyio
+
+    slug = wikis.create_wiki("Busy")
+    _seed(slug, "Open", "being edited right now")
+
+    async def try_a_doomed_rename():
+        await collab.ensure_room(slug, "open")
+        key = collab.room_key(slug, "open")
+        from fastapi.testclient import TestClient
+
+        from waikiki.api import app
+        with TestClient(app, client=("127.0.0.1", 1)) as c:
+            r = await anyio.to_thread.run_sync(
+                lambda: c.post(f"/wikis/{slug}/address",
+                               data={"new_slug": "beaconlight"},   # taken
+                               follow_redirects=False))
+        return key, r
+
+    key, r = anyio.run(try_a_doomed_rename)
+
+    assert r.status_code == 303 and "error=" in r.headers["location"]
+    assert wikis.exists(slug)                    # nothing renamed...
+    assert key in collab._seeded                 # ...and nobody thrown out
+
+
+def test_a_release_that_cannot_save_refuses_rather_than_dropping_the_text(
+        wiki, stand_in_rooms, monkeypatch):
+    """A failed save must not be followed by forgetting the room.
+
+    The caller is about to make this wiki's address unreachable. A room dropped
+    holding text that never landed is that text gone, while the release reports
+    success — so the failure propagates, the rename does not happen, and what
+    was typed is still in the editor.
+    """
+    import anyio
+
+    slug = wikis.create_wiki("Fragile")
+    _seed(slug, "Draft", "on disk")
+
+    def explode(*a, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(collab, "_persist", explode)
+
+    async def release_with_a_broken_disk():
+        room = await collab.ensure_room(slug, "draft")
+        text = collab._ytext(room)
+        with room.ydoc.transaction():
+            del text[0:len(text)]
+            text += "typed but not yet saved"
+        return await collab.release_wiki(slug)
+
+    with pytest.raises(ValueError, match="nothing was renamed"):
+        anyio.run(release_with_a_broken_disk)
+
+    # The room is still there, still holding the text.
+    assert collab.room_key(slug, "draft") in collab._seeded
+    assert wikis.exists(slug)

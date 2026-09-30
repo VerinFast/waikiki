@@ -109,6 +109,141 @@ def create_wiki(name: str) -> str:
     return slug
 
 
+# --- Renaming: two operations, deliberately ---------------------------------
+#
+# A wiki has a display **name** and a **slug**, and they are not the same kind
+# of fact. The name is a label a person reads; the slug is the wiki's address —
+# it is in every URL, it is the filename of its database, it keys the CRDT
+# rooms and each agent's active-wiki pointer. Changing the label is free.
+# Changing the address moves a file and invalidates things pointing at the old
+# one, so they are separate calls and the UI offers them separately: a wiki
+# imported as `startupos` that should read *StartupOS* needs the first, not the
+# second.
+
+
+def rename(slug: str, name: str) -> str:
+    """Change a wiki's display name. Its address and file are untouched."""
+    title = (name or "").strip()
+    if not title:
+        raise ValueError("A wiki needs a name")
+    with _lock:
+        reg = _load()
+        for w in reg["wikis"]:
+            if w["slug"] == slug:
+                w["name"] = title
+                _save(reg)
+                return title
+    raise ValueError(f"no wiki '{slug}'")
+
+
+def plan_slug_change(slug: str, new_slug: str) -> str:
+    """Every refusal `change_slug` can make, without changing anything.
+
+    Split out because the caller has to take this wiki's live editors down
+    before the file can move (`collab.release_wiki`), and doing that for a
+    rename that was never going to happen would close everyone's editor to
+    accomplish nothing. Ask first, then act.
+
+    Returns the slug the wiki would end up with — which is the one it already
+    has when there is nothing to do.
+    """
+    if not exists(slug):
+        raise ValueError(f"no wiki '{slug}'")
+    if slug == config.HELP_WIKI:
+        raise ValueError(
+            "The Help wiki's address is built in: the app re-creates 'help' "
+            "whenever it is missing, so a renamed one would come back as a "
+            "second copy beside it. Its display name can be changed.")
+    # `slugify` falls back to "wiki" for input with nothing usable in it, which
+    # is right when naming a new wiki and wrong here: it would silently move a
+    # wiki to /wiki because someone typed punctuation.
+    if not re.sub(r"[^\w]", "", new_slug or ""):
+        raise ValueError("A wiki address needs at least one letter or digit")
+    target = slugify(new_slug)
+    if target == slug:
+        return slug
+    if exists(target):
+        raise ValueError(f"'{target}' is already another wiki's address")
+    if db_path(target).exists():
+        raise ValueError(
+            f"{db_path(target).name} is already in the wikis folder without a "
+            "wiki registered to it; move it aside first rather than have this "
+            "overwrite it")
+    return target
+
+
+def change_slug(slug: str, new_slug: str) -> str:
+    """Change a wiki's slug: its URLs, and the name of its database file.
+
+    Returns the slug it now has. The display name and the Kahala link ride
+    along unchanged — the link records a *remote* name, which this does not
+    touch, so a renamed wiki still pushes and pulls where it always did.
+
+    Four things have to happen together, and the order is the whole job.
+    **This thread's handle is checkpointed and closed first**, so the `-wal`
+    can be dropped rather than left beside a file that no longer matches it.
+    **The file moves before the registry does**, because a registry that names
+    a file which is not there yet would have the next reader create an empty
+    one in its place (`db.get_conn`) — a rename that silently empties the wiki
+    is the worst outcome available here, so a failure to record the move puts
+    the file back instead. **Every cached handle is retired**
+    (`db.invalidate_connections`): they are per (thread, wiki) and a stale one
+    follows the renamed file, so writes for the old name would land in the
+    renamed wiki. And **the caller releases the CRDT rooms first** — see
+    `collab.release_wiki`, which cannot be done from here because it is async.
+
+    Refused before anything moves, and before the caller takes the editors
+    down: see `plan_slug_change`.
+
+    **Renamed, not copied, and that is what makes it safe.** A handle another
+    thread cached before the move stays usable until that thread next asks for
+    one, so the question is where its next write lands. Copy-then-delete sent it
+    into the old file, which was then deleted — the write was simply gone, with
+    nothing anywhere saying so. A rename leaves it writing to the *same inode*,
+    which is now this wiki under its new address, so the write arrives where it
+    was always meant to go. Nothing has to be locked and no save pays for this.
+
+    The `-wal` and `-shm` move **with** the database, and before it. Renaming
+    the database alone and deleting its WAL is what "the disk reported an I/O
+    error" looks like: a hot WAL is not ours to delete, and the three files are
+    one thing. Sidecars first, database last, so nothing can observe a database
+    without its log.
+    """
+    target = plan_slug_change(slug, new_slug)
+    if target == slug:
+        return slug
+    src, dest = db_path(slug), db_path(target)
+
+    # Checkpoint and drop our own handle first: it empties the WAL, so the set
+    # being moved is as small and as self-consistent as it can be made.
+    db.release_wiki_handles(slug)
+    moved: list[tuple[Path, Path]] = []
+    # Sidecars before the database. Nothing can open the new name until the
+    # registry names it, below, but the ordering costs nothing and means there
+    # is never an instant where a database is visible without its log.
+    for suffix in ("-shm", "-wal", ""):
+        a, b = Path(str(src) + suffix), Path(str(dest) + suffix)
+        if a.exists():
+            a.rename(b)
+            moved.append((a, b))
+    try:
+        with _lock:
+            reg = _load()
+            for w in reg["wikis"]:
+                if w["slug"] == slug:
+                    w["slug"] = target
+            if reg.get("default") == slug:
+                reg["default"] = target
+            _save(reg)
+    except Exception:
+        for a, b in reversed(moved):
+            b.rename(a)                    # the registry still names the old one
+        raise
+    finally:
+        db.invalidate_connections()
+    return target
+
+
 def delete_wiki(slug: str) -> bool:
     with _lock:
         reg = _load()

@@ -42,6 +42,28 @@ These are all independent by design — the human browsing Crosslake doesn't mov
 Claude, one agent doesn't move another, and vice-versa. To co-edit, ask Claude to
 `switch_wiki` to the one you're in.
 
+### Renaming a wiki
+
+A wiki has a **name** and an **address**, and *Rename…* on the **Wikis** page
+offers them separately, because they are not the same kind of change.
+
+The **name** is the label you read in the switcher and the header. Changing it
+touches nothing else, which is what you want for a wiki that arrived from
+somewhere else under a name you wouldn't have picked — one cloned from Kahala as
+`startupos` that should read *StartupOS*.
+
+The **address** is the wiki's identity: it is in every URL, it is the filename of
+its database, and it is what Claude's `switch_wiki` takes. Changing it renames
+the file, so links using the old address stop working and any tab with that wiki
+open needs a reload. Waikiki handles the rest — your browser follows the new
+address, unsaved editor text is written out first, and an agent still holding the
+old one is told to pick the wiki up again rather than being quietly moved into a
+different wiki. The **Help** wiki keeps its address (the app re-creates `help`
+whenever it's missing, so a renamed one would come back as a second copy); its
+name is yours to change like any other.
+
+Claude can change the **name** with the `rename_wiki` tool. The address is the app's to change, not Claude's: the live editors that have to be saved and closed first are held by the app itself, in a different process from the one Claude talks to.
+
 ### Save / Open wikis to files
 
 Because each wiki is a single self-contained SQLite file, you can **Save** one to

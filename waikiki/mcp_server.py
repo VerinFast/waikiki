@@ -222,6 +222,19 @@ def _require_wiki() -> str:
             "restored automatically, so if this server restarted mid-task you "
             "must switch again — do not assume you are where you started."
         )
+    if not wikis.exists(active):
+        # The pointer is per-session and holds a *slug*, so a wiki that was
+        # renamed or deleted leaves it naming nothing. Refusing is the only
+        # safe answer: `db.active_wiki()` falls back to the registry default
+        # for a slug it cannot find, so carrying on would write this agent's
+        # pages into whichever wiki happens to be default — silently, and into
+        # someone else's content. Rule 4: refusing is correct, inheriting is
+        # not.
+        raise RuntimeError(
+            f"Your active wiki '{active}' no longer exists — it was renamed or "
+            "deleted while you were working. Call list_wikis() and "
+            "switch_wiki(slug) to pick it up again under its new address. "
+            "Nothing was written.")
     db.current_wiki.set(active)  # scope direct DB access to this wiki
     return active
 
@@ -291,6 +304,26 @@ def create_wiki(name: str) -> dict:
 # in one line naming the field or argument to use — and only when it is true.
 # A hint that appears unconditionally is one agents learn to skip, at which
 # point it is pure token cost.
+
+@mcp.tool
+def rename_wiki(name: str) -> dict:
+    """Rename the active wiki — its display name, the label a person reads.
+
+    The wiki's **address** (its slug) is deliberately not changeable from here.
+    Changing it renames the database file, and the live editors that have to be
+    saved and released first are held by the *web app*, in a different process
+    from this one — so an address change made here would strand whatever
+    somebody is typing right now, with no way for either process to know. That
+    one is in the app: Manage wikis → Rename…
+    """
+    wiki = _require_wiki()
+    if not name.strip():
+        return {"wiki": wiki, "error": "give a name"}
+    try:
+        return {"wiki": wiki, "name": wikis.rename(wiki, name)}
+    except ValueError as exc:
+        return {"wiki": wiki, "error": str(exc)}
+
 
 @mcp.tool
 def list_pages(children: bool | list[str] | None = False) -> dict:

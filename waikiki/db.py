@@ -16,6 +16,7 @@ import contextlib
 import contextvars
 import sys
 import threading
+from pathlib import Path
 from typing import Callable, Optional
 
 from . import config
@@ -29,7 +30,21 @@ VEC_AVAILABLE = False  # set True once sqlite-vec loads in this process
 current_wiki: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar(
     "current_wiki", default=None
 )
-_schema_ready: set[str] = set()  # wikis whose schema has been ensured this process
+# Wikis this process has set up. NOT the gate for schema creation -- that is
+# per-connection (see `get_conn`), because this set is process-wide while the
+# connection cache is per (thread, wiki). Its one job now is telling "a wiki
+# being opened for the first time" apart from "a wiki whose file has gone".
+_schema_ready: set[str] = set()
+
+# Bumped whenever a wiki's file moves (a slug change). Cached handles are
+# per (thread, wiki) and no thread can reach into another's cache, so the
+# only way to retire them all is to make them *look* stale where they are
+# used: `get_conn` compares this against the epoch each handle was opened in.
+# Without it, a thread holding a handle from before the move keeps writing
+# through it -- the fd follows the renamed file, so those writes land in the
+# renamed wiki under the old name, which is the same class of bug as serving
+# a file that has been deleted.
+_cache_epoch = 0
 
 
 def active_wiki() -> str:
@@ -285,8 +300,20 @@ def get_conn():
         conns = {}
         _local.conns = conns
     conn = conns.get(wiki)
+    if conn is not None and getattr(conn, "epoch", None) != _cache_epoch:
+        with contextlib.suppress(Exception):
+            conn.close()
+        conns.pop(wiki, None)
+        conn = None
+    vanished = False
     if conn is None:
         path = str(wikis.db_path(wiki))
+        # SQLite creates an empty database for a path that does not exist, so
+        # opening is the last moment we can tell "new wiki, first open" from
+        # "the file this process was already using is gone". Worth saying out
+        # loud: the pages are not coming back on their own, and the wiki is
+        # about to start answering as if it were simply empty.
+        vanished = wiki in _schema_ready and not Path(path).exists()
         try:
             if _HAS_APSW:
                 conn = _ApswConn(path, wiki)
@@ -311,8 +338,19 @@ def get_conn():
             # is a bug and keeps its own traceback.
             raise _as_unreadable(exc, wiki) from exc
         _load_sqlite_vec(conn)
+        conn.epoch = _cache_epoch
         conns[wiki] = conn
-    if wiki not in _schema_ready:
+    # Ensure the schema once per CONNECTION, not once per process. The cache is
+    # per (thread, wiki), so a process-wide memo meant any connection opened
+    # after the first one skipped setup entirely -- fine while the file stays
+    # put, and silently fatal when it does not. A wiki whose database was
+    # replaced or removed underneath a running app came back as an empty file
+    # that nothing ever created tables in, so every request reaching a thread
+    # without a cached handle died on `no such table: pages` for the life of the
+    # process, while threads still holding the old handle served its pages as if
+    # nothing had happened. The DDL is `CREATE TABLE IF NOT EXISTS` plus
+    # idempotent migrations, so paying it per connection is cheap and correct.
+    if not getattr(conn, "schema_ready", False):
         try:
             _ensure_schema(conn)
         except WikiUnreadable:
@@ -320,8 +358,43 @@ def get_conn():
             # good copy over it, the next call should open the new one.
             conns.pop(wiki, None)
             raise
+        conn.schema_ready = True
         _schema_ready.add(wiki)
+        if vanished:
+            print(f"[waikiki] the database for wiki '{wiki}' was gone when it "
+                  f"was opened again ({wikis.db_path(wiki)}); it has been "
+                  f"re-created empty. Whatever it held is not in it -- restore "
+                  f"a backup or re-open a .wiki file.", file=sys.stderr)
     return conn
+
+
+def invalidate_connections() -> None:
+    """Retire every cached handle in every thread, at its next use.
+
+    For a wiki whose file has moved. Closing another thread's connection from
+    here is not possible (the cache is a `threading.local`) and would not be
+    safe if it were, so each thread drops its own the next time it asks.
+    """
+    global _cache_epoch
+    _cache_epoch += 1
+
+
+def release_wiki_handles(wiki: str) -> None:
+    """Checkpoint `wiki`'s WAL and close this thread's handle on it.
+
+    Called before the file is moved. The checkpoint is what makes removing the
+    old `-wal`/`-shm` safe: it is a property of the file rather than of one
+    connection, so after TRUNCATE every committed frame is in the `.db` itself.
+    """
+    conns = getattr(_local, "conns", None) or {}
+    conn = conns.get(wiki)
+    if conn is None:
+        return
+    with contextlib.suppress(Exception):
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    with contextlib.suppress(Exception):
+        conn.close()
+    conns.pop(wiki, None)
 
 
 # --- Transactions -------------------------------------------------------------

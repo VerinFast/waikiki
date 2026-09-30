@@ -883,3 +883,81 @@ def test_yesterdays_text_is_reachable_from_the_article_page(wiki):
     assert store.get_page("packing-list")["markdown"] == "yesterday's careful list"
     # restoring is itself a versioned write, so the regretted text is still there
     assert len(store.page_versions("packing-list")) == 3
+
+
+# --- A wiki whose file goes missing under a running app ----------------------
+#
+# Not corruption (Q2) and not a crash (Q1): the file is simply *gone* while the
+# process is up. That happened in the field — a wiki's pages rendered fine for
+# minutes and then every editor click returned 500 `no such table: pages`, and
+# the file on disk was 4096 bytes with no tables in it.
+#
+# The cause was a seam, not the disappearance: schema setup was memoised in a
+# process-wide `_schema_ready`, while connections are cached per (thread, wiki).
+# The first thread had already marked the wiki ready, so when another thread
+# opened the now-missing path — SQLite happily creates an empty database for one
+# — setup was skipped and that connection had no tables, for the rest of the
+# process's life. Threads still holding the old handle kept serving the old
+# content, which is why it looked like "viewing works, editing is broken".
+
+def test_a_wiki_whose_file_vanishes_is_usable_again_not_permanently_broken(wiki):
+    """Every connection sets up its own schema, whatever the process remembers."""
+    _seed("main", "text that will not survive its file")
+    assert db._schema_ready                      # the memo that used to gate this
+
+    for suffix in ("", "-wal", "-shm"):
+        p = config.WIKIS_DIR / ("main.db" + suffix)
+        p.unlink(missing_ok=True)
+
+    result: dict = {}
+
+    def another_worker():                        # a request on a different thread
+        tok = db.current_wiki.set("main")
+        try:
+            store.create_page("After", "written into the re-created file")
+            result["pages"] = [p["slug"] for p in store.list_pages()]
+        except Exception as exc:                 # noqa: BLE001 - reported, not raised
+            result["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            db.current_wiki.reset(tok)
+
+    t = threading.Thread(target=another_worker)
+    t.start()
+    t.join()
+
+    assert "error" not in result, result["error"]
+    assert result["pages"] == ["after"]
+
+
+def test_the_wiki_that_lost_its_file_says_so(capsys, wiki):
+    """Re-creating it empty is recovery, but it is not a silent one.
+
+    The pages are not coming back on their own, and the wiki is about to answer
+    as though it had simply always been empty — which reads as "nothing here"
+    rather than "something went missing". Opening the file is the only moment
+    the two can be told apart, so that is where it is said.
+    """
+    _seed("main", "text that will not survive its file")
+    (config.WIKIS_DIR / "main.db").unlink()
+    db._local.conns.pop("main", None)            # force a fresh open, same thread
+
+    tok = db.current_wiki.set("main")
+    try:
+        db.get_conn()
+    finally:
+        db.current_wiki.reset(tok)
+
+    warned = capsys.readouterr().err
+    assert "main" in warned and "re-created empty" in warned
+
+
+def test_a_brand_new_wiki_is_not_reported_as_having_lost_anything(wiki):
+    """The report has to distinguish a first open from a disappearance."""
+    slug = wikis.create_wiki("Fresh")
+    tok = db.current_wiki.set(slug)
+    try:
+        db.get_conn()                            # first ever open: creates the file
+    finally:
+        db.current_wiki.reset(tok)
+    # Nothing was lost, so nothing is claimed to be.
+    assert slug in db._schema_ready

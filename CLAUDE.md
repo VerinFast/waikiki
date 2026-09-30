@@ -137,6 +137,52 @@ two in parity (same substance, different voice) whenever you change either.
    delete, truncate, rename or in-place repair, because it is the user's data and
    may be recoverable. `backups.run_backup` skips it and snapshots the rest.
    `tests/test_data_safety.py` guards all of it, on both backends.
+   **Schema setup belongs to the connection, not to the process.** Handles are
+   cached per (thread, wiki) but setup used to be memoised process-wide, so any
+   connection after the first skipped it. That is invisible while a file stays
+   put and fatal when it does not: a wiki whose database was replaced or removed
+   underneath a running app came back as an empty file nothing ever created
+   tables in, and every request that reached a thread without a cached handle
+   died on `no such table: pages` for the life of the process — while threads
+   still holding the old handle served its pages as if nothing had happened,
+   which is why it presented as "viewing works, editing 500s". The DDL is
+   idempotent, so paying it per connection is cheap; `_schema_ready` survives
+   only to tell a first open apart from a disappearance, which is **reported**
+   rather than passed off as an empty wiki.
+   **A slug is an address other things hold, which is why renaming it is its own
+   operation.** `wikis.rename` changes the display name and touches nothing
+   else; `wikis.change_slug` moves the database file, and four things point at
+   the old name when it does. The file is **copied with the backup API, not
+   renamed** — a plain rename strands the `-wal`, and deleting a hot WAL out
+   from under another thread's handle earns "the disk reported an I/O error" on
+   the next open — and the original is removed only once the registry write has
+   succeeded, so a failure costs a copy rather than a wiki. Cached handles are
+   retired through `db.invalidate_connections` (an epoch, because no thread can
+   reach into another's cache) or they keep writing through an fd that followed
+   the file. **CRDT rooms are released first** (`collab.release_wiki`): a room
+   key names its wiki and both save paths write under it, so one left pointing
+   at a slug the registry no longer knows resolves through `active_wiki()`'s
+   fallback and lands that page in the **default** wiki — flushed first so
+   nothing typed is lost, and `collab._orphaned` is the net under every other
+   caller. And an agent still pointed at the old slug is **refused**, not
+   redirected, for the reason above: the fallback would have written its pages
+   into whatever wiki happens to be default. Every refusal is collected
+   **before** the rooms come down (`plan_slug_change`): releasing them closes
+   whatever people have open, so running the checks afterwards throws everyone
+   out of their editors for a rename that was never going to happen. A room
+   whose flush **fails** aborts the rename rather than being forgotten with
+   unsaved text in it. The **MCP surface carries the name only** — those rooms
+   live in the web app's process, not the MCP server's, so an address changed
+   from there would strand whatever somebody is typing with neither process in a
+   position to notice. `help` cannot be re-addressed at all, since
+   `ensure_help_wiki` would bring it back as a second copy. The files are
+   **renamed, never copied-then-deleted**: a handle another thread cached before
+   the move is still pointing at the same inode, so its next write lands in this
+   wiki under its new address instead of in a file that is about to be deleted —
+   which is what closes that race without locking anything, and why the `-wal`
+   and `-shm` move with the database (deleting a hot WAL is what "the disk
+   reported an I/O error" looks like). `tests/test_wiki_rename.py` guards each
+   of those.
 5. **One code path for Human and LLM.** REST, HTML views, and MCP tools all go
    through `store`/`rag` so both callers get identical render + version + index.
    The same applies to *which model answers*: the Doorman-or-local decision lives

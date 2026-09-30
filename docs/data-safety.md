@@ -565,3 +565,15 @@ Everything below is a deliberate 1.0 position, not an oversight:
    [#73](https://github.com/VerinFast/waikiki/issues/73): every article carries a
    line naming when it last changed and how many earlier versions are kept, and
    that line opens the history. Nothing is accepted here any more.
+7. ~~**A save committing in the same instant a wiki's address changes can be
+   lost.**~~ Not accepted — fixed by changing how the move works. Renaming a
+   wiki (`wikis.change_slug`) **renames** its files rather than copying them and
+   deleting the originals, and the `-wal`/`-shm` move with the database. The
+   difference is what happens to a handle another thread cached before the move:
+   under copy-then-delete its next write went into the old file, which was then
+   deleted, and the write was gone with nothing anywhere saying so. Under a
+   rename that handle is still pointing at the same inode — which is now this
+   wiki under its new address — so the write lands where it was always going.
+   Nothing is locked and no save pays anything for it.
+   `tests/test_wiki_rename.py::test_a_write_in_flight_when_the_address_changes_is_not_lost`
+   holds the line, and fails against the copy.

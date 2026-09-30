@@ -482,3 +482,47 @@ def test_a_release_that_cannot_save_refuses_rather_than_dropping_the_text(
     # The room is still there, still holding the text.
     assert collab.room_key(slug, "draft") in collab._seeded
     assert wikis.exists(slug)
+
+
+def test_a_write_in_flight_when_the_address_changes_is_not_lost(wiki):
+    """The whole reason the file is renamed rather than copied.
+
+    A handle another thread cached before the move stays usable until that
+    thread next asks for one. Copy-then-delete sent its next write into the old
+    file and then deleted that file — the write was gone, and nothing anywhere
+    said so. A rename leaves the handle writing to the same inode, which is this
+    wiki under its new address, so the write arrives where it was always going.
+
+    Simulated at the handle, because that is where the race lives: a real one
+    needs a save committing in the same millisecond as the rename.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    _seed("beaconlight", "Existing", "already here")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        # The worker caches a handle for the wiki, the way any request does.
+        def cache_a_handle():
+            db.current_wiki.set("beaconlight")
+            return db.get_conn()
+
+        stale = pool.submit(cache_a_handle).result()
+
+        wikis.change_slug("beaconlight", "beaconlight-renamed")
+
+        # That handle is still open, and still pointing at the same inode. A
+        # write through it now is the one the old design threw away.
+        def write_through(conn):
+            conn.execute(
+                "INSERT INTO pages(slug, title, markdown, html) "
+                "VALUES ('in-flight', 'In Flight', 'written as it moved', '')")
+            conn.commit()
+
+        pool.submit(write_through, stale).result()
+
+    tok = db.current_wiki.set("beaconlight-renamed")
+    try:
+        assert store.get_page("in-flight")["markdown"] == "written as it moved"
+        assert store.get_page("existing")            # and nothing else moved
+    finally:
+        db.current_wiki.reset(tok)

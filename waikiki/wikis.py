@@ -195,26 +195,37 @@ def change_slug(slug: str, new_slug: str) -> str:
     Refused before anything moves, and before the caller takes the editors
     down: see `plan_slug_change`.
 
-    **The limit this accepts, named rather than implied away.** A handle another
-    thread cached before the move stays usable until that thread next calls
-    `get_conn`, so a write committing through one *between* the copy and the
-    unlink lands in the old file and goes with it. Releasing the rooms first
-    removes the writer that runs on its own schedule (the collab flusher); what
-    is left is an HTTP request writing to this wiki in the same moment somebody
-    renames it. Closing that properly means a lock every save takes forever, to
-    buy safety in an admin action taken once — so it is written down here and in
-    `docs/data-safety.md` instead.
+    **Renamed, not copied, and that is what makes it safe.** A handle another
+    thread cached before the move stays usable until that thread next asks for
+    one, so the question is where its next write lands. Copy-then-delete sent it
+    into the old file, which was then deleted — the write was simply gone, with
+    nothing anywhere saying so. A rename leaves it writing to the *same inode*,
+    which is now this wiki under its new address, so the write arrives where it
+    was always meant to go. Nothing has to be locked and no save pays for this.
+
+    The `-wal` and `-shm` move **with** the database, and before it. Renaming
+    the database alone and deleting its WAL is what "the disk reported an I/O
+    error" looks like: a hot WAL is not ours to delete, and the three files are
+    one thing. Sidecars first, database last, so nothing can observe a database
+    without its log.
     """
     target = plan_slug_change(slug, new_slug)
     if target == slug:
         return slug
     src, dest = db_path(slug), db_path(target)
 
-    db.release_wiki_handles(slug)          # checkpoint + close ours first
-    copied = False
-    if src.exists():
-        db.backup_db(str(src), str(dest))
-        copied = True
+    # Checkpoint and drop our own handle first: it empties the WAL, so the set
+    # being moved is as small and as self-consistent as it can be made.
+    db.release_wiki_handles(slug)
+    moved: list[tuple[Path, Path]] = []
+    # Sidecars before the database. Nothing can open the new name until the
+    # registry names it, below, but the ordering costs nothing and means there
+    # is never an instant where a database is visible without its log.
+    for suffix in ("-shm", "-wal", ""):
+        a, b = Path(str(src) + suffix), Path(str(dest) + suffix)
+        if a.exists():
+            a.rename(b)
+            moved.append((a, b))
     try:
         with _lock:
             reg = _load()
@@ -225,18 +236,11 @@ def change_slug(slug: str, new_slug: str) -> str:
                 reg["default"] = target
             _save(reg)
     except Exception:
-        if copied:
-            dest.unlink(missing_ok=True)   # the registry still names the old one
+        for a, b in reversed(moved):
+            b.rename(a)                    # the registry still names the old one
         raise
     finally:
         db.invalidate_connections()
-    # Only now is the old name unreachable, so the old files can go. Handles
-    # other threads still hold keep working against the unlinked inode until
-    # the epoch retires them, which is exactly as harmless as it sounds: the
-    # registry no longer routes anything to that address.
-    if copied:
-        for suffix in ("", "-wal", "-shm"):
-            Path(str(src) + suffix).unlink(missing_ok=True)
     return target
 
 

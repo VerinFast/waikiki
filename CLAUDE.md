@@ -175,10 +175,14 @@ two in parity (same substance, different voice) whenever you change either.
    live in the web app's process, not the MCP server's, so an address changed
    from there would strand whatever somebody is typing with neither process in a
    position to notice. `help` cannot be re-addressed at all, since
-   `ensure_help_wiki` would bring it back as a second copy. The one thing this
-   accepts is a save committing through a stale handle in the instant between
-   the copy and the delete (`docs/data-safety.md`, risk 7).
-   `tests/test_wiki_rename.py` guards each of those.
+   `ensure_help_wiki` would bring it back as a second copy. The files are
+   **renamed, never copied-then-deleted**: a handle another thread cached before
+   the move is still pointing at the same inode, so its next write lands in this
+   wiki under its new address instead of in a file that is about to be deleted —
+   which is what closes that race without locking anything, and why the `-wal`
+   and `-shm` move with the database (deleting a hot WAL is what "the disk
+   reported an I/O error" looks like). `tests/test_wiki_rename.py` guards each
+   of those.
 5. **One code path for Human and LLM.** REST, HTML views, and MCP tools all go
    through `store`/`rag` so both callers get identical render + version + index.
    The same applies to *which model answers*: the Doorman-or-local decision lives

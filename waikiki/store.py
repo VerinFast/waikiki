@@ -1691,6 +1691,81 @@ def import_wiki_bundle(source, author: str = "import",
             "templates": len(tpls), "images": len(set(remap.values()))}
 
 
+def import_markdown(docs: Sequence[dict], author: str = "import",
+                    on_writes_begin=None) -> dict:
+    """Merge decoded markdown documents into the **active** wiki (rule 12).
+
+    This is the writing half of the markdown round-trip: ``wikis.import_markdown``
+    turns a folder (or a zip) of ``<slug>.md`` into ``docs`` and this lands them.
+    Each doc is ``{"slug", "title", "markdown", "parent"}`` — already decoded, so
+    nothing here reads a file and the layering holds (rule 2).
+
+    **Merged by slug, never deleted.** A page whose slug is already here is
+    updated in place, which means versioned: the text it had is one click away in
+    its history, because an import that silently overwrote a page the person had
+    since edited would be a data-loss path wearing a restore's clothes. A slug
+    that is new is created *under that slug* (``_upsert_by_slug``, the same call
+    the bundle import makes) — the filename is the slug on the way out, so it has
+    to be on the way in, or nothing that references it resolves. Pages present
+    locally and absent from the folder are left alone.
+
+    **A parent is applied only when the document states one.** Markdown cannot
+    tell "top level" apart from "doesn't say", so a file with no ``parent:`` key
+    leaves an existing page where it is rather than flattening a hierarchy the
+    folder never claimed to describe. Placement runs after every page has landed,
+    like the bundle's, so a parent later in the folder still resolves; one naming
+    a page that is in neither the folder nor the wiki leaves its child top-level
+    and is *reported* (``unplaced``) rather than raising — a hand-edited folder
+    should not fail the whole import over one stale line.
+
+    Every write goes through the ordinary repository path, so imported pages are
+    rendered, versioned, tag-indexed and re-embedded exactly like a human's edit
+    (rules 2, 5 and 6).
+
+    The gates — a slug that survives slugification, and no two documents claiming
+    the same one — all run **before** the first write, and ``on_writes_begin`` is
+    called once when they have passed. A caller reporting to a person needs the
+    "refused, nothing changed" and "partly imported, run it again" sentences to
+    be different, and guessing produces the one that isn't true (rule 11).
+    """
+    prepared: dict[str, dict] = {}
+    for doc in docs:
+        slug = render.slugify(str(doc.get("slug") or ""))
+        if not slug:
+            raise ValueError(
+                f"{doc.get('source') or doc.get('slug')!r} has no usable page "
+                "name — the file name is the page's slug, so it needs at least "
+                "one letter or digit")
+        if slug in prepared:
+            raise ValueError(
+                f"two documents both want the slug '{slug}' "
+                f"({prepared[slug].get('source') or prepared[slug]['slug']} and "
+                f"{doc.get('source') or doc.get('slug')}); one page cannot be "
+                "two files, so nothing was imported")
+        prepared[slug] = doc
+
+    if on_writes_begin is not None:
+        on_writes_begin()
+
+    created: list[str] = []
+    updated: list[str] = []
+    for slug, doc in prepared.items():
+        existing = get_page(slug) is not None
+        _upsert_by_slug(slug, str(doc.get("title") or slug),
+                        str(doc.get("markdown") or ""), author)
+        (updated if existing else created).append(slug)
+
+    unplaced: list[str] = []
+    for slug, doc in prepared.items():
+        parent = render.slugify(str(doc.get("parent") or ""))
+        if not parent:
+            continue                      # "doesn't say" is not "top level"
+        if parent == slug or set_parent(slug, parent) is None:
+            unplaced.append(slug)
+    return {"pages": len(prepared), "created": created, "updated": updated,
+            "unplaced": unplaced}
+
+
 # --- Settings -----------------------------------------------------------------
 # Route-facing settings access. The SQL itself lives in the ``db`` infrastructure
 # chokepoint (the settings table is created and seeded there); these thin

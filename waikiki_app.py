@@ -86,6 +86,18 @@ def _install_deeplink_handler(base: str) -> None:
 
 _DEEPLINK_HANDLER = None    # see _install_deeplink_handler
 
+# The Open dialog's file filters, and they are **not** free text. pywebview
+# parses each one with `^([\w ]+)\((\*...)\)$` (`webview.util.parse_file_type`)
+# and raises `ValueError` on anything else — a **comma** in the description is
+# enough — and `Window.create_file_dialog` validates every filter *before* it
+# opens a dialog. So a stray punctuation mark here is not a cosmetic bug: it is
+# an Open button that does nothing at all, which is exactly what shipped when
+# this read "Waikiki wiki, bundle or markdown zip". Word characters and spaces
+# only; `tests/test_packaging.py` fails the build on a filter pywebview would
+# reject.
+OPEN_FILE_TYPES = ("Waikiki wiki or export (*.wiki;*.db;*.zip)",
+                   "All files (*.*)")
+
 
 def main() -> None:
     # MCP mode: run the stdio MCP server instead of the window. Lets Claude
@@ -199,15 +211,23 @@ def main() -> None:
                 print(f"[waikiki] clipboard read failed: {exc}", file=sys.stderr)
                 return ""
 
+        # Each of these opens its dialog *inside* the try, which is not
+        # stylistic: the dialog call itself can raise (pywebview validates the
+        # file filters first, see OPEN_FILE_TYPES), and an exception escaping a
+        # JS-API method rejects the promise the page is awaiting — so the
+        # `alert()` on the other side never runs and the button reads as dead.
+        # A failure a person can see beats a correct-looking no-op.
+
         def save_wiki(self, slug):
             from waikiki import wikis
             win = webview.windows[0]
-            result = win.create_file_dialog(
-                webview.SAVE_DIALOG, save_filename=f"{wikis.name_of(slug)}.wiki")
-            if not result:
-                return {"ok": False, "cancelled": True}
-            path = result if isinstance(result, str) else result[0]
             try:
+                result = win.create_file_dialog(
+                    webview.SAVE_DIALOG,
+                    save_filename=f"{wikis.name_of(slug)}.wiki")
+                if not result:
+                    return {"ok": False, "cancelled": True}
+                path = result if isinstance(result, str) else result[0]
                 wikis.export_to(slug, path)
                 return {"ok": True, "path": path}
             except Exception as exc:
@@ -216,15 +236,35 @@ def main() -> None:
         def open_wiki(self):
             from waikiki import wikis
             win = webview.windows[0]
-            result = win.create_file_dialog(
-                webview.OPEN_DIALOG,
-                file_types=("Waikiki wiki (*.wiki;*.db)", "All files (*.*)"))
-            if not result:
-                return {"ok": False, "cancelled": True}
-            path = result[0] if isinstance(result, (list, tuple)) else result
             try:
+                result = win.create_file_dialog(
+                    webview.OPEN_DIALOG, file_types=OPEN_FILE_TYPES)
+                if not result:
+                    return {"ok": False, "cancelled": True}
+                path = result[0] if isinstance(result, (list, tuple)) else result
                 slug = wikis.import_from(path)
                 return {"ok": True, "slug": slug, "name": wikis.name_of(slug)}
+            except Exception as exc:
+                return {"ok": False, "error": str(exc)}
+
+        def open_markdown_folder(self):
+            """Open a *folder* of `<slug>.md` files as a new wiki.
+
+            Rule 12 is about the pair being reachable, and a file dialog cannot
+            pick a directory — which is the shape `export_markdown` writes (the
+            MCP tool, or a repo's docs/). The zip of the same files needs no
+            button of its own: it goes through Open like any other archive.
+            """
+            from waikiki import wikis
+            win = webview.windows[0]
+            try:
+                result = win.create_file_dialog(webview.FOLDER_DIALOG)
+                if not result:
+                    return {"ok": False, "cancelled": True}
+                path = result[0] if isinstance(result, (list, tuple)) else result
+                r = wikis.import_markdown(path)
+                return {"ok": True, "slug": r["slug"],
+                        "name": wikis.name_of(r["slug"]), "pages": r["pages"]}
             except Exception as exc:
                 return {"ok": False, "error": str(exc)}
 

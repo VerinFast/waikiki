@@ -697,10 +697,20 @@ def wikis_export(slug: str):
 @app.post("/wikis/import")
 async def wikis_import(file: UploadFile):
     """Open a wiki from an uploaded file (browser fallback for Open)."""
+    import anyio
+
     tmp = Path(tempfile.mkdtemp()) / (file.filename or "import.wiki")
     tmp.write_bytes(await file.read())
+    name = Path(file.filename or "Imported").stem
     try:
-        slug = wikis.import_from(str(tmp), name=Path(file.filename or "Imported").stem)
+        # Off the event loop: importing now rebuilds the retrieval index when the
+        # file arrives without one, which re-embeds every page. The sync
+        # re-embed routes (`/settings/models/*`) are plain `def` and get the
+        # threadpool for free; this one is `async` for the upload read, so it has
+        # to ask. Like those routes, the request simply waits — there is no job
+        # runner here to report progress through.
+        slug = await anyio.to_thread.run_sync(
+            lambda: wikis.import_from(str(tmp), name=name))
     except ValueError as exc:
         return RedirectResponse(f"/wikis?error={exc}", status_code=303)
     resp = RedirectResponse("/", status_code=303)

@@ -145,3 +145,109 @@ def test_cookie_untouched_without_an_explicit_wiki(wiki):
         c.cookies.set("waikiki_wiki", "crosslake")
         c.get("/")
         assert c.cookies.get("waikiki_wiki") == "crosslake"
+
+
+def test_the_upload_route_opens_a_bundle_too(wiki, tmp_path):
+    """The browser fallback for Open must take a bundle, not just a wiki file.
+
+    The desktop app uses a native dialog and its own JS bridge; this route is the
+    other door to the same `wikis.import_from`, and rule 12 is about a door a
+    person can actually reach, so both are covered.
+    """
+    from fastapi.testclient import TestClient
+
+    from waikiki.api import app
+
+    db.current_wiki.set("main")
+    store.create_page("Shipped", "content that travels as a snapshot")
+    bundle = tmp_path / "main-wiki-bundle.zip"
+    with open(bundle, "wb") as fh:
+        store.export_wiki_bundle(fh)
+
+    with TestClient(app, client=("127.0.0.1", 1)) as c:
+        with open(bundle, "rb") as fh:
+            r = c.post("/wikis/import",
+                       files={"file": ("main-wiki-bundle.zip", fh,
+                                       "application/zip")},
+                       follow_redirects=False)
+    assert r.status_code == 303, r.status_code
+    # The route switches to what it just opened, so the cookie names it — a
+    # registry diff would also catch the Help wiki the lifespan seeds.
+    landed = r.cookies.get("waikiki_wiki")
+    assert landed and wikis.exists(landed), r.headers.get("set-cookie")
+    assert wikis.name_of(landed) == "Main"      # the bundle's label, not the file
+    db.current_wiki.set(landed)
+    assert any(p["slug"] == "shipped"
+               for p in store.list_pages(include_children=True))
+
+
+# --- Imported wikis are searchable -------------------------------------------
+#
+# A wiki file carries `pages` and `pages_fts`, but every search in the app runs
+# over `chunks`/`chunks_fts`/`vec_chunks` (`rag.py`). Importing a file whose
+# chunk index didn't travel used to produce a wiki that rendered every page and
+# resolved every [[link]] and answered *nothing* — no error, no warning.
+
+
+def _wiki_file_without_chunks(tmp_path, src_slug="main"):
+    """A consistent copy of a wiki file with its chunk index emptied.
+
+    This is what a real export from an older/other install looked like: pages and
+    `pages_fts` fully populated, `chunks` at zero.
+    """
+    import sqlite3
+
+    dest = tmp_path / "no-chunks.db"
+    db.backup_db(str(wikis.db_path(src_slug)), str(dest))
+    conn = sqlite3.connect(str(dest))
+    conn.execute("DELETE FROM chunks")  # the FTS trigger clears chunks_fts too
+    conn.commit()
+    conn.close()
+    return dest
+
+
+def test_import_indexes_a_wiki_whose_chunks_did_not_travel(wiki, tmp_path):
+    db.current_wiki.set("main")
+    store.create_page("Turtles", "green sea turtles nest on this beach in summer")
+
+    src = _wiki_file_without_chunks(tmp_path)
+    slug = wikis.import_from(str(src), name="Unindexed")
+
+    db.current_wiki.set(slug)
+    assert store.get_page("turtles")                      # the page came across
+    hits = rag.search_chunks("sea turtles nest")
+    assert hits and hits[0]["slug"] == "turtles"          # ...and so did search
+
+
+def test_import_leaves_a_healthy_index_alone(wiki, tmp_path, monkeypatch):
+    """A 200-page wiki that arrives indexed must not be re-embedded for nothing."""
+    db.current_wiki.set("main")
+    store.create_page("Kayaking", "the eskimo roll rights a capsized kayak")
+
+    dest = tmp_path / "healthy.wiki"
+    wikis.export_to("main", str(dest))
+
+    calls = []
+    monkeypatch.setattr(rag, "reindex_all", lambda: calls.append(1) or 0)
+    slug = wikis.import_from(str(dest), name="Healthy")
+
+    assert calls == []
+    db.current_wiki.set(slug)
+    assert rag.search_chunks("eskimo roll")[0]["slug"] == "kayaking"
+
+
+def test_import_survives_a_broken_index_rebuild(wiki, tmp_path, monkeypatch):
+    """The index is a cache; failing to rebuild it must not fail the import."""
+    db.current_wiki.set("main")
+    store.create_page("Turtles", "green sea turtles nest on this beach in summer")
+    src = _wiki_file_without_chunks(tmp_path)
+
+    def boom():
+        raise RuntimeError("no embedder, no disk, no luck")
+
+    monkeypatch.setattr(rag, "reindex_all", boom)
+    slug = wikis.import_from(str(src), name="Unindexed")
+
+    assert wikis.exists(slug)
+    db.current_wiki.set(slug)
+    assert store.get_page("turtles")

@@ -947,6 +947,42 @@ def export_markdown(dest_dir: str) -> dict:
 
 
 @mcp.tool
+def import_markdown(src_dir: str, new_wiki: str = "") -> dict:
+    """Read a folder of `<slug>.md` files back in — the reader for export_markdown.
+
+    The round-trip: export to a repo's docs/, edit the text there, bring it
+    back. By default it **merges into your active wiki** — a file whose name
+    matches an existing page updates that page in place (versioned, so the
+    previous text stays in its history), a new name creates a page, and nothing
+    is ever deleted. Pass `new_wiki` to land the folder in a freshly created
+    wiki instead, leaving the active one untouched.
+
+    The filename is the page's slug. A `title:` line in the frontmatter is the
+    page's title (falling back to the first `# heading`, then the filename), and
+    `parent:` names the parent page's slug; both are read as structure and do
+    not become page properties. `tags:` and every other frontmatter key are kept
+    as the page's own. `unplaced` names any page whose `parent:` pointed at a
+    page that isn't here — those land at top level.
+
+    Two files claiming the same slug is refused before anything is written.
+    """
+    import os
+
+    wiki = _require_wiki()
+    path = os.path.expanduser(src_dir)
+    try:
+        r = wikis.import_markdown(path, name=new_wiki or None,
+                                  into=None if new_wiki else wiki)
+    except ValueError as exc:
+        return {"wiki": wiki, "error": str(exc), "dir": path}
+    if new_wiki:
+        _set_active_wiki(r["slug"])     # you asked for it; work in it
+    return {"wiki": r["slug"], "name": wikis.name_of(r["slug"]), "dir": path,
+            "created": r["created"], "updated": r["updated"],
+            "unplaced": r["unplaced"]}
+
+
+@mcp.tool
 def set_property(slug: str, key: str, value: str) -> dict:
     """Set an arbitrary property on a page (stored as frontmatter). Reference it
     elsewhere as {{Key}} on the same page or {{Slug.Key}} on another page —

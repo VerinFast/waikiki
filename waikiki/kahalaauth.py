@@ -55,6 +55,23 @@ _TIMEOUT = 20.0
 _FLOW_TTL = 600          # a sign-in the user never finishes expires quietly
 _SKEW = 30               # refresh this many seconds before the token expires
 
+# RFC 6749 §5.2: the token endpoint says `invalid_grant` when the credential it
+# was handed is expired, revoked or already spent. It is the one refusal that
+# tells us the stored refresh token is *gone* rather than that this attempt went
+# wrong, so it is the one that may delete a credential.
+_DEAD_GRANT = frozenset({"invalid_grant", "invalid_token"})
+
+
+class GrantRejected(ValueError):
+    """The sign-in server refused the credential, not the request.
+
+    Separate from every other token-endpoint failure because the handling is
+    opposite: a 5xx, a timeout or an unreachable host say nothing about the
+    refresh token and want it kept for the next attempt, while this says it will
+    never work again and keeping it strands the account (see `access_token`).
+    """
+
+
 # Pending sign-ins, keyed by state. In memory only: an interrupted flow should
 # not survive a restart, and a verifier on disk is a credential on disk.
 _pending: dict[str, dict] = {}
@@ -105,6 +122,13 @@ def can_sign_in() -> tuple[bool, str]:
 
 
 def signed_in() -> bool:
+    """Whether a refresh token is stored -- NOT whether it still works.
+
+    Proving it works means spending it against the sign-in server, which is a
+    network round trip this is called too often to make. `access_token` is what
+    finds out, and it clears the credential when the server rejects it, so the
+    two only disagree until the next push or pull.
+    """
     return bool(secretstore.get_secret(_account()))
 
 
@@ -210,6 +234,10 @@ def access_token() -> str | None:
     Never raises: every caller of this is about to make a network request that
     has its own error path, and "we could not get a token" is the same outcome
     as "not signed in" from the caller's point of view.
+
+    **Signs out** when the server rejects the stored refresh token, so that the
+    reported state is the true one. A failure that says nothing about the
+    credential -- unreachable, 5xx, timeout -- leaves it alone.
     """
     iss = issuer()
     held = _access.get(iss)
@@ -225,7 +253,20 @@ def access_token() -> str | None:
             "refresh_token": refresh,
             "client_id": client_id(),
         }, _discover())
+    except GrantRejected:
+        # The stored token is dead and every later refresh will fail the same
+        # way. Leaving it in the Keychain is what makes `signed_in` keep
+        # answering True while push and pull fail -- an account that reads as
+        # signed in, with nothing on screen the person can act on, and no way
+        # out except a sign-out they have no reason to press. Drop it, so the
+        # pane offers the sign-in that actually fixes this.
+        sign_out()
+        return None
     except Exception:
+        # Everything else -- a 5xx, a timeout, Kahala unreachable, a discovery
+        # document we could not fetch -- says nothing about the credential. Keep
+        # it: signing someone out because their train went into a tunnel loses a
+        # sign-in they still have.
         return None
 
     # Keycloak rotates refresh tokens by default, and the one just spent is dead
@@ -278,11 +319,19 @@ def _post_token(form: dict, meta: dict) -> dict:
         # Keycloak puts a machine-readable reason in the body; surface that
         # rather than the body itself, which can echo the code back.
         try:
-            reason = resp.json().get("error_description") or resp.json().get("error")
+            body = resp.json()
         except Exception:
-            reason = ""
-        raise ValueError(f"the sign-in server answered {resp.status_code}"
-                         + (f" ({reason})" if reason else ""))
+            body = {}
+        code = body.get("error") or ""
+        reason = body.get("error_description") or code
+        message = (f"the sign-in server answered {resp.status_code}"
+                   + (f" ({reason})" if reason else ""))
+        # The machine-readable code, not the status: Keycloak answers 400 both
+        # for a dead refresh token and for a request we built wrong, and only
+        # the first of those should cost the person their sign-in.
+        if code in _DEAD_GRANT:
+            raise GrantRejected(message)
+        raise ValueError(message)
     return resp.json()
 
 

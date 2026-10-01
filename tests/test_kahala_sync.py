@@ -183,6 +183,82 @@ def test_a_failed_write_on_rotation_signs_out_instead_of_keeping_a_dead_token(
     assert "spent-refresh-token" not in vault.values()
 
 
+def test_a_rejected_refresh_token_is_dropped_rather_than_kept(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """A dead credential must not survive as a sign-in that reads as live (#100).
+
+    `signed_in` only asks whether the Keychain holds something. If a refresh
+    token the server has already rejected stays there, it answers True forever
+    while every push and pull fails -- and the pane offers Sign out, which is
+    the one button nobody presses when they are being told they are signed in.
+    """
+    vault = _no_real_keychain
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    vault[kahalaauth._account()] = "expired-refresh-token"
+    assert kahalaauth.signed_in(), "the test did not manage to seed a sign-in"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid-configuration"):
+            return httpx.Response(200, json={
+                "authorization_endpoint": "https://kc.example/auth",
+                "token_endpoint": "https://kc.example/token"})
+        return httpx.Response(400, json={
+            "error": "invalid_grant",
+            "error_description": "Token is not active"})
+    http(handler)
+
+    assert kahalaauth.access_token() is None
+    assert not kahalaauth.signed_in(), \
+        "the rejected refresh token is still stored, so the app reads as " \
+        "signed in and every push and pull from here on fails"
+    assert "expired-refresh-token" not in vault.values()
+
+
+def test_an_unreachable_sign_in_server_does_not_sign_you_out(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """The opposite case, and the reason the two are told apart.
+
+    A dropped connection says nothing about the refresh token. Treating it like
+    a rejection would cost a sign-in that is still perfectly good every time a
+    laptop goes into a tunnel.
+    """
+    vault = _no_real_keychain
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    vault[kahalaauth._account()] = "good-refresh-token"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("kahala is unreachable")
+    http(handler)
+
+    assert kahalaauth.access_token() is None, "no token without the server"
+    assert kahalaauth.signed_in(), \
+        "a network failure signed the person out of a session they still have"
+    assert vault[kahalaauth._account()] == "good-refresh-token"
+
+
+def test_a_server_error_does_not_sign_you_out(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """A 5xx is Kahala's problem, not the credential's.
+
+    Keycloak answers 400 for a dead grant *and* for a request we built wrong,
+    so the status alone cannot decide this -- the machine-readable `error` can.
+    """
+    vault = _no_real_keychain
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    vault[kahalaauth._account()] = "good-refresh-token"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid-configuration"):
+            return httpx.Response(200, json={
+                "authorization_endpoint": "https://kc.example/auth",
+                "token_endpoint": "https://kc.example/token"})
+        return httpx.Response(503, text="upstream is having a day")
+    http(handler)
+
+    assert kahalaauth.access_token() is None
+    assert kahalaauth.signed_in(), "a 5xx threw away a working refresh token"
+
+
 def test_a_sign_in_state_is_single_use(wiki, http, monkeypatch):
     """A replayed callback must not complete a second sign-in."""
     monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")

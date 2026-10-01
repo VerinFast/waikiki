@@ -652,6 +652,33 @@ def test_the_kahala_pane_renders_in_every_state(wiki, monkeypatch):
         assert "neither deletes" in out.text.lower()
 
 
+def test_signing_in_does_not_bring_the_old_error_banner_back(wiki, monkeypatch):
+    """The reload after a sign-in must drop the flash it was sent here by.
+
+    The pane polls while the sign-in happens in another application, then
+    reloads. `location.reload()` re-requests the CURRENT url -- which still
+    carries the `?error=you aren't signed in` that sent the person to the
+    sign-in button -- so the banner the sign-in just resolved reappears on top
+    of a pane that now correctly says they are signed in.
+    """
+    from fastapi.testclient import TestClient
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "signed_in", lambda: False)
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        out = client.get("/kahala?error=You+aren%27t+signed+in+to+Kahala.")
+        assert out.status_code == 200
+        assert "You aren" in out.text, "the banner under test is not rendered"
+
+        # Scoped to the sign-in poll's own handler: base.html reloads for
+        # unrelated reasons, and this is about what happens on `signed_in`.
+        assert "clearInterval(timer); location.reload();" not in out.text, \
+            "the post-sign-in reload re-requests the url with its stale ?error="
+        assert "clearInterval(timer); resume();" in out.text
+        assert "searchParams.delete('error')" in out.text
+        assert "searchParams.delete('ok')" in out.text
+
+
 def test_the_pane_says_why_when_there_is_no_secure_store(wiki, monkeypatch):
     from fastapi.testclient import TestClient
     from waikiki.api import app

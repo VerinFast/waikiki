@@ -56,10 +56,13 @@ _FLOW_TTL = 600          # a sign-in the user never finishes expires quietly
 _SKEW = 30               # refresh this many seconds before the token expires
 
 # RFC 6749 §5.2: the token endpoint says `invalid_grant` when the credential it
-# was handed is expired, revoked or already spent. It is the one refusal that
-# tells us the stored refresh token is *gone* rather than that this attempt went
-# wrong, so it is the one that may delete a credential.
-_DEAD_GRANT = frozenset({"invalid_grant", "invalid_token"})
+# was handed is expired, revoked, or was issued to another client. It is the one
+# refusal that tells us the stored refresh token is *gone* rather than that this
+# attempt went wrong, so it is the only one that may delete a credential -- a
+# malformed request earns `invalid_request` or `invalid_client`, which must not.
+# Kept as a set because the decision is "is this code in the dead list", not
+# "does it equal a string", and a second provider may yet justify a second code.
+_DEAD_GRANT = frozenset({"invalid_grant"})
 
 
 class GrantRejected(ValueError):
@@ -321,6 +324,12 @@ def _post_token(form: dict, meta: dict) -> dict:
         try:
             body = resp.json()
         except Exception:
+            body = {}
+        # Valid JSON that isn't an object -- a bare string or array from a proxy
+        # rather than the IdP -- would make `.get` raise out of here, and this
+        # function's contract is that a non-200 always arrives as a written
+        # reason (`_clean` says as much, and `complete` puts it on screen).
+        if not isinstance(body, dict):
             body = {}
         code = body.get("error") or ""
         reason = body.get("error_description") or code

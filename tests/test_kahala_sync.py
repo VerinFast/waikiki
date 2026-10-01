@@ -259,6 +259,68 @@ def test_a_server_error_does_not_sign_you_out(
     assert kahalaauth.signed_in(), "a 5xx threw away a working refresh token"
 
 
+def test_a_non_object_error_body_still_reports_as_a_refusal(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """A JSON error body that isn't an object must not escape as AttributeError.
+
+    `_post_token` promises that a non-200 always arrives as a written reason:
+    `_clean` says it is only ever handed this module's own exceptions, and
+    `complete` puts that text straight on screen. A bare array or string --
+    from a proxy in front of the IdP rather than the IdP itself -- would
+    otherwise make `.get` raise out of the JSON guard, and the person signing
+    in would be shown "'list' object has no attribute 'get'".
+
+    Driven through `complete` rather than `access_token`, because
+    `access_token` catches everything and returns None either way: the sign-in
+    flow is where the difference is something a person reads.
+    """
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid-configuration"):
+            return httpx.Response(200, json={
+                "authorization_endpoint": "https://kc.example/auth",
+                "token_endpoint": "https://kc.example/token"})
+        return httpx.Response(400, json=["invalid_grant"])
+    http(handler)
+
+    _url, state = kahalaauth.begin()
+    out = kahalaauth.complete("the-code", state)
+
+    assert not out["ok"]
+    assert "400" in out["error"], \
+        f"the refusal lost its written reason: {out['error']}"
+    assert "attribute" not in out["error"].lower(), \
+        f"a Python attribute error reached the sign-in page: {out['error']}"
+
+
+def test_a_malformed_request_does_not_delete_the_credential(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """`invalid_request` is our bug, not a dead token (RFC 6749 §5.2).
+
+    Only `invalid_grant` says the stored credential will never work again.
+    Treating every 400 as that would sign people out over a request we built
+    wrong, which is a bug they cannot see and did not cause.
+    """
+    vault = _no_real_keychain
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    vault[kahalaauth._account()] = "good-refresh-token"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid-configuration"):
+            return httpx.Response(200, json={
+                "authorization_endpoint": "https://kc.example/auth",
+                "token_endpoint": "https://kc.example/token"})
+        return httpx.Response(400, json={
+            "error": "invalid_request",
+            "error_description": "Missing form parameter: grant_type"})
+    http(handler)
+
+    assert kahalaauth.access_token() is None
+    assert kahalaauth.signed_in(), \
+        "a request we built wrong cost the person their sign-in"
+
+
 def test_a_sign_in_state_is_single_use(wiki, http, monkeypatch):
     """A replayed callback must not complete a second sign-in."""
     monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")

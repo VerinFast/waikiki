@@ -183,6 +183,144 @@ def test_a_failed_write_on_rotation_signs_out_instead_of_keeping_a_dead_token(
     assert "spent-refresh-token" not in vault.values()
 
 
+def test_a_rejected_refresh_token_is_dropped_rather_than_kept(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """A dead credential must not survive as a sign-in that reads as live (#100).
+
+    `signed_in` only asks whether the Keychain holds something. If a refresh
+    token the server has already rejected stays there, it answers True forever
+    while every push and pull fails -- and the pane offers Sign out, which is
+    the one button nobody presses when they are being told they are signed in.
+    """
+    vault = _no_real_keychain
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    vault[kahalaauth._account()] = "expired-refresh-token"
+    assert kahalaauth.signed_in(), "the test did not manage to seed a sign-in"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid-configuration"):
+            return httpx.Response(200, json={
+                "authorization_endpoint": "https://kc.example/auth",
+                "token_endpoint": "https://kc.example/token"})
+        return httpx.Response(400, json={
+            "error": "invalid_grant",
+            "error_description": "Token is not active"})
+    http(handler)
+
+    assert kahalaauth.access_token() is None
+    assert not kahalaauth.signed_in(), \
+        "the rejected refresh token is still stored, so the app reads as " \
+        "signed in and every push and pull from here on fails"
+    assert "expired-refresh-token" not in vault.values()
+
+
+def test_an_unreachable_sign_in_server_does_not_sign_you_out(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """The opposite case, and the reason the two are told apart.
+
+    A dropped connection says nothing about the refresh token. Treating it like
+    a rejection would cost a sign-in that is still perfectly good every time a
+    laptop goes into a tunnel.
+    """
+    vault = _no_real_keychain
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    vault[kahalaauth._account()] = "good-refresh-token"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("kahala is unreachable")
+    http(handler)
+
+    assert kahalaauth.access_token() is None, "no token without the server"
+    assert kahalaauth.signed_in(), \
+        "a network failure signed the person out of a session they still have"
+    assert vault[kahalaauth._account()] == "good-refresh-token"
+
+
+def test_a_server_error_does_not_sign_you_out(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """A 5xx is Kahala's problem, not the credential's.
+
+    Keycloak answers 400 for a dead grant *and* for a request we built wrong,
+    so the status alone cannot decide this -- the machine-readable `error` can.
+    """
+    vault = _no_real_keychain
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    vault[kahalaauth._account()] = "good-refresh-token"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid-configuration"):
+            return httpx.Response(200, json={
+                "authorization_endpoint": "https://kc.example/auth",
+                "token_endpoint": "https://kc.example/token"})
+        return httpx.Response(503, text="upstream is having a day")
+    http(handler)
+
+    assert kahalaauth.access_token() is None
+    assert kahalaauth.signed_in(), "a 5xx threw away a working refresh token"
+
+
+def test_a_non_object_error_body_still_reports_as_a_refusal(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """A JSON error body that isn't an object must not escape as AttributeError.
+
+    `_post_token` promises that a non-200 always arrives as a written reason:
+    `_clean` says it is only ever handed this module's own exceptions, and
+    `complete` puts that text straight on screen. A bare array or string --
+    from a proxy in front of the IdP rather than the IdP itself -- would
+    otherwise make `.get` raise out of the JSON guard, and the person signing
+    in would be shown "'list' object has no attribute 'get'".
+
+    Driven through `complete` rather than `access_token`, because
+    `access_token` catches everything and returns None either way: the sign-in
+    flow is where the difference is something a person reads.
+    """
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid-configuration"):
+            return httpx.Response(200, json={
+                "authorization_endpoint": "https://kc.example/auth",
+                "token_endpoint": "https://kc.example/token"})
+        return httpx.Response(400, json=["invalid_grant"])
+    http(handler)
+
+    _url, state = kahalaauth.begin()
+    out = kahalaauth.complete("the-code", state)
+
+    assert not out["ok"]
+    assert "400" in out["error"], \
+        f"the refusal lost its written reason: {out['error']}"
+    assert "attribute" not in out["error"].lower(), \
+        f"a Python attribute error reached the sign-in page: {out['error']}"
+
+
+def test_a_malformed_request_does_not_delete_the_credential(
+        wiki, http, monkeypatch, _no_real_keychain):
+    """`invalid_request` is our bug, not a dead token (RFC 6749 §5.2).
+
+    Only `invalid_grant` says the stored credential will never work again.
+    Treating every 400 as that would sign people out over a request we built
+    wrong, which is a bug they cannot see and did not cause.
+    """
+    vault = _no_real_keychain
+    monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
+    vault[kahalaauth._account()] = "good-refresh-token"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("openid-configuration"):
+            return httpx.Response(200, json={
+                "authorization_endpoint": "https://kc.example/auth",
+                "token_endpoint": "https://kc.example/token"})
+        return httpx.Response(400, json={
+            "error": "invalid_request",
+            "error_description": "Missing form parameter: grant_type"})
+    http(handler)
+
+    assert kahalaauth.access_token() is None
+    assert kahalaauth.signed_in(), \
+        "a request we built wrong cost the person their sign-in"
+
+
 def test_a_sign_in_state_is_single_use(wiki, http, monkeypatch):
     """A replayed callback must not complete a second sign-in."""
     monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
@@ -574,6 +712,33 @@ def test_the_kahala_pane_renders_in_every_state(wiki, monkeypatch):
         assert "Push to Kahala" in out.text
         # The one sentence that keeps a merge from being a surprise.
         assert "neither deletes" in out.text.lower()
+
+
+def test_signing_in_does_not_bring_the_old_error_banner_back(wiki, monkeypatch):
+    """The reload after a sign-in must drop the flash it was sent here by.
+
+    The pane polls while the sign-in happens in another application, then
+    reloads. `location.reload()` re-requests the CURRENT url -- which still
+    carries the `?error=you aren't signed in` that sent the person to the
+    sign-in button -- so the banner the sign-in just resolved reappears on top
+    of a pane that now correctly says they are signed in.
+    """
+    from fastapi.testclient import TestClient
+    from waikiki.api import app
+
+    monkeypatch.setattr(kahalaauth, "signed_in", lambda: False)
+    with TestClient(app, client=("127.0.0.1", 12345)) as client:
+        out = client.get("/kahala?error=You+aren%27t+signed+in+to+Kahala.")
+        assert out.status_code == 200
+        assert "You aren" in out.text, "the banner under test is not rendered"
+
+        # Scoped to the sign-in poll's own handler: base.html reloads for
+        # unrelated reasons, and this is about what happens on `signed_in`.
+        assert "clearInterval(timer); location.reload();" not in out.text, \
+            "the post-sign-in reload re-requests the url with its stale ?error="
+        assert "clearInterval(timer); resume();" in out.text
+        assert "searchParams.delete('error')" in out.text
+        assert "searchParams.delete('ok')" in out.text
 
 
 def test_the_pane_says_why_when_there_is_no_secure_store(wiki, monkeypatch):

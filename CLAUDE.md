@@ -257,6 +257,18 @@ two in parity (same substance, different voice) whenever you change either.
    `app_config.json`, or any other writable place — a replaceable pinned key is
    not a trust root. The bundle's ad-hoc `codesign --sign -` proves nothing about
    origin; it is not a substitute. See `docs/updates.md`.
+   **The private half is the opposite case, and the two must not be confused.**
+   Fetching the *signing* key from the network is exactly what `release.sh` does
+   — from Google Secret Manager (`waikikey`, via `gcloud`) — because the only
+   machine that ever holds it is the one cutting a release, and keeping it off
+   disk is the point. Three things are load-bearing there: it is **held in a
+   variable and handed to the one signing process**, never written to a file
+   (the only temp file is gcloud's stderr, and it is removed); a local key file
+   is used **only when named** (`WAIKIKI_UPDATE_KEY`), with no silent fallback
+   between the two sources; and it is fetched **before** the build, so a missing
+   or wrong key costs seconds. `--check-key` proves a machine can sign without
+   building anything. `tests/test_release_script.py` runs the script against a
+   stand-in `gcloud`, and its no-file-on-disk check fails if the temp file stays.
 
 9. **A missing tool is reported, never discovered on click — and never as a
    command to paste.** `capabilities.py` probes each optional tool and hands the

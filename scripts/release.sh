@@ -3,6 +3,7 @@
 # Build, sign, and publish a Waikiki release.
 #
 #   ./scripts/release.sh --genkey        # one-time: make the update signing key
+#   ./scripts/release.sh --check-key     # can this machine sign? (no build)
 #   ./scripts/release.sh v0.14.0         # build + sign + upload assets to a tag
 #   ./scripts/release.sh v0.14.0 --dry-run   # everything except the upload
 #
@@ -10,18 +11,84 @@
 # waikiki/updater.py (PUBLIC_KEY_HEX), so a release without these assets is a
 # release nobody can install. See docs/updates.md.
 #
-# The PRIVATE key never lives in this repo. It is read from WAIKIKI_UPDATE_KEY
-# (default ~/.waikiki/update-key.pem) and this script refuses to use one stored
-# inside the working tree, where it could be committed by accident.
+# Where the PRIVATE key comes from, in order:
+#
+#   1. WAIKIKI_UPDATE_KEY, if set — a PEM file you name explicitly. Refused if it
+#      lives inside the working tree, where it could be committed by accident.
+#   2. Otherwise Google Secret Manager: the latest version of the secret
+#      `waikikey` (WAIKIKI_UPDATE_SECRET overrides the name), read with the
+#      gcloud CLI. WAIKIKI_GCP_PROJECT picks the project; unset, gcloud's own
+#      configured project is used.
+#
+# There is deliberately no silent third option. A key that turns up from
+# somewhere nobody chose is how a release ends up signed by the wrong one —
+# and the key fetched from Secret Manager is never written to disk: it is held
+# in a variable and handed to the one process that signs.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-KEY_PATH="${WAIKIKI_UPDATE_KEY:-$HOME/.waikiki/update-key.pem}"
+KEY_FILE="${WAIKIKI_UPDATE_KEY:-}"                     # explicit file, or empty
+KEY_PATH="${WAIKIKI_UPDATE_KEY:-$HOME/.waikiki/update-key.pem}"   # --genkey's output
+SECRET_NAME="${WAIKIKI_UPDATE_SECRET:-waikikey}"
+GCP_PROJECT="${WAIKIKI_GCP_PROJECT:-}"
 PY="${PYTHON:-$REPO_ROOT/.venv/bin/python}"
 [ -x "$PY" ] || PY="$(command -v python3)"
 
 die() { echo "error: $*" >&2; exit 1; }
 say() { echo "==> $*"; }
+
+# Puts the signing key's PEM in SIGNING_KEY_PEM and says where it came from in
+# SIGNING_KEY_SOURCE. Called before anything slow happens, so a key that cannot
+# be had fails the release in seconds rather than after a two-minute build.
+load_signing_key() {
+    if [ -n "$KEY_FILE" ]; then
+        [ -f "$KEY_FILE" ] || die "WAIKIKI_UPDATE_KEY names $KEY_FILE, which does not exist"
+        case "$(cd "$(dirname "$KEY_FILE")" && pwd)" in
+            "$REPO_ROOT"|"$REPO_ROOT"/*)
+                die "signing key lives inside the repo ($KEY_FILE) — move it outside" ;;
+        esac
+        SIGNING_KEY_PEM="$(cat "$KEY_FILE")"
+        SIGNING_KEY_SOURCE="the file $KEY_FILE (WAIKIKI_UPDATE_KEY)"
+        return
+    fi
+
+    command -v gcloud >/dev/null 2>&1 || die "the signing key is read from Google \
+Secret Manager ('$SECRET_NAME') and gcloud is not installed.
+       Install it: https://cloud.google.com/sdk/docs/install — then
+       gcloud auth login
+       Or sign with a local key file instead: WAIKIKI_UPDATE_KEY=/path/to/key.pem"
+
+    local args=(secrets versions access latest --secret="$SECRET_NAME")
+    [ -n "$GCP_PROJECT" ] && args+=(--project="$GCP_PROJECT")
+    # gcloud's stderr is kept, because it is the only useful explanation when
+    # this fails (not logged in, wrong project, no permission, no such secret).
+    # It never contains the secret; stdout does, and stdout goes nowhere but the
+    # variable.
+    # An explicit template, because bare `mktemp` on macOS ignores $TMPDIR and
+    # writes under /var/folders — so the one temporary file this makes would
+    # land somewhere neither the operator nor a test is looking.
+    local err
+    err="$(mktemp "${TMPDIR:-/tmp}/waikiki-release.XXXXXX")"
+    if ! SIGNING_KEY_PEM="$(gcloud "${args[@]}" 2>"$err")"; then
+        local why
+        why="$(cat "$err")"
+        rm -f "$err"
+        die "could not read '$SECRET_NAME' from Google Secret Manager${GCP_PROJECT:+ (project $GCP_PROJECT)}:
+       $why"
+    fi
+    rm -f "$err"
+    [ -n "$SIGNING_KEY_PEM" ] || die "'$SECRET_NAME' in Google Secret Manager is empty"
+    SIGNING_KEY_SOURCE="Google Secret Manager: $SECRET_NAME${GCP_PROJECT:+ (project $GCP_PROJECT)}"
+}
+
+# Runs Python with the signing key in ITS environment only — `VAR=x cmd` exports
+# to that one command, never to the rest of this script. The program reads it
+# from WAIKIKI_UPDATE_KEY_PEM. An environment variable is readable by the same
+# user's other processes while this runs, which is a far smaller exposure than
+# the file on disk it replaces: it lasts as long as one signature takes.
+with_signing_key() {
+    WAIKIKI_UPDATE_KEY_PEM="$SIGNING_KEY_PEM" "$@"
+}
 
 # --- One-time key generation --------------------------------------------------
 if [ "${1:-}" = "--genkey" ]; then
@@ -44,6 +111,46 @@ print(f'PUBLIC_KEY_HEX = "{pub.hex()}"\n')
 PYCODE
     echo "Back up the private key somewhere safe. Losing it means you cannot"
     echo "ship an update that existing installs will accept."
+    echo
+    echo "Releases read it from Google Secret Manager. To put it there:"
+    echo "  gcloud secrets create $SECRET_NAME --data-file=\"$KEY_PATH\"${GCP_PROJECT:+ --project=$GCP_PROJECT}"
+    echo "then delete $KEY_PATH, so the only copy that signs is the managed one."
+    exit 0
+fi
+
+# --- Can this machine sign? ---------------------------------------------------
+# Fetches the key exactly as a release would and proves it against the public
+# keys pinned in this checkout — without building or uploading anything. Worth
+# running before a release: the build takes minutes, and finding out afterwards
+# that gcloud was logged out, or that the secret holds a key no client trusts,
+# is minutes wasted at best.
+if [ "${1:-}" = "--check-key" ]; then
+    cd "$REPO_ROOT"
+    load_signing_key
+    say "signing key from $SIGNING_KEY_SOURCE"
+    with_signing_key "$PY" - <<'PYCODE'
+import os, sys
+from cryptography.hazmat.primitives import serialization as ser
+from cryptography.hazmat.primitives.asymmetric import ed25519
+
+from waikiki import updater
+
+try:
+    priv = ser.load_pem_private_key(
+        os.environ.pop("WAIKIKI_UPDATE_KEY_PEM").encode(), password=None)
+except ValueError as exc:
+    sys.exit(f"    that is not a PEM private key: {exc}")
+if not isinstance(priv, ed25519.Ed25519PrivateKey):
+    sys.exit(f"    that is a {type(priv).__name__}, not an Ed25519 key — the "
+             "updater only verifies Ed25519 signatures")
+pub = priv.public_key().public_bytes(ser.Encoding.Raw, ser.PublicFormat.Raw)
+keys = updater._pinned_keys()
+print(f"    public half: {pub.hex()[:16]}…")
+if pub not in keys:
+    sys.exit(f"    NOT one of the {len(keys)} key(s) pinned in waikiki/updater.py —\n"
+             "    a release signed with it would be refused by every client.")
+print(f"    matches pinned key #{keys.index(pub)} of {len(keys)} — this machine can sign a release")
+PYCODE
     exit 0
 fi
 
@@ -51,7 +158,7 @@ fi
 TAG="${1:-}"
 DRY_RUN=""
 [ "${2:-}" = "--dry-run" ] && DRY_RUN="1"
-[ -n "$TAG" ] || die "usage: $(basename "$0") <tag> [--dry-run] | --genkey"
+[ -n "$TAG" ] || die "usage: $(basename "$0") <tag> [--dry-run] | --check-key | --genkey"
 
 cd "$REPO_ROOT"
 VERSION="${TAG#v}"
@@ -62,11 +169,10 @@ CODE_VERSION="$("$PY" -c 'import waikiki; print(waikiki.__version__)')"
 [ "$CODE_VERSION" = "$VERSION" ] || \
     die "tag $TAG disagrees with waikiki.__version__ ($CODE_VERSION)"
 
-[ -f "$KEY_PATH" ] || die "no signing key at $KEY_PATH — run: $(basename "$0") --genkey"
-case "$(cd "$(dirname "$KEY_PATH")" && pwd)" in
-    "$REPO_ROOT"|"$REPO_ROOT"/*)
-        die "signing key lives inside the repo ($KEY_PATH) — move it outside" ;;
-esac
+# Before the build, not after it: a logged-out gcloud or a missing secret should
+# cost seconds, not a full PyInstaller run.
+load_signing_key
+say "signing key from $SIGNING_KEY_SOURCE"
 
 # build_macos.sh owns the build: PyInstaller, the ad-hoc codesign, and the zip.
 # Reuse it so a released bundle is byte-for-byte the thing `build_macos.sh`
@@ -84,20 +190,22 @@ say "signing"
 # Signs the zip's streamed SHA-256, NOT the archive bytes — updater.verify_file
 # checks exactly that, so the two must stay in lockstep. Signing the digest lets
 # a ~100MB download be verified in constant memory.
-"$PY" - "$KEY_PATH" "$ZIP" "$SIG" <<'PYCODE'
-import pathlib, sys
+with_signing_key "$PY" - "$ZIP" "$SIG" <<'PYCODE'
+import os, pathlib, sys
 from cryptography.hazmat.primitives import serialization as ser
 
 from waikiki import updater
 
-key_path, zip_path, sig_path = (pathlib.Path(p) for p in sys.argv[1:4])
-priv = ser.load_pem_private_key(key_path.read_bytes(), password=None)
+zip_path, sig_path = (pathlib.Path(p) for p in sys.argv[1:3])
+priv = ser.load_pem_private_key(
+    os.environ.pop("WAIKIKI_UPDATE_KEY_PEM").encode(), password=None)
 digest = updater.file_digest(zip_path)          # the value the client verifies
 sig = priv.sign(digest)
 sig_path.write_text(sig.hex() + "\n")
 print(f"    sha256:    {digest.hex()}")
 print(f"    signature: {sig_path} ({len(sig)} bytes, hex-encoded)")
 PYCODE
+unset SIGNING_KEY_PEM
 
 # Verify against the key actually pinned in this build, not just the private key
 # we signed with. Catches the case where updater.py still holds an old public key

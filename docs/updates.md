@@ -65,9 +65,17 @@ So Waikiki carries its own trust root:
   substituting content would require a SHA-256 collision.
 - The **public** half is pinned in `updater.PUBLIC_KEYS_HEX`, compiled into the
   app. It is a *set*: a release has to satisfy one of them.
-- The **private** half never enters this repo. `release.sh` reads it from
-  `WAIKIKI_UPDATE_KEY` (default `~/.waikiki/update-key.pem`) and refuses to use
-  a key stored inside the working tree, where it could be committed by accident.
+- The **private** half never enters this repo, and normally never touches a
+  disk either. `release.sh` reads it from **Google Secret Manager** — the latest
+  version of the secret `waikikey`, through the `gcloud` CLI — holds it in a
+  variable, and hands it only to the one process that signs. The secret's name
+  and project can be overridden (`WAIKIKI_UPDATE_SECRET`, `WAIKIKI_GCP_PROJECT`;
+  unset, the project is gcloud's own configured one).
+- A local PEM file is still possible, but only if you **name it**:
+  `WAIKIKI_UPDATE_KEY=/path/to/key.pem`. It wins over Secret Manager, and is
+  still refused if it sits inside the working tree, where it could be committed
+  by accident. There is no silent fallback between the two — a key that turns up
+  from somewhere nobody chose is how a release gets signed by the wrong one.
 - Verification happens **before** the archive is expanded. An unverified payload
   never gets to write files.
 
@@ -101,7 +109,20 @@ One-time, to create the signing key:
 That prints the public half. Paste it into `updater.PUBLIC_KEYS_HEX`, commit, and
 **back up the private key** — losing it means you cannot ship an update that
 existing installs will accept. There is no recovery path short of users
-reinstalling by hand.
+reinstalling by hand. It also prints the `gcloud secrets create waikikey …`
+command that puts the key where releases read it from; after that, delete the
+local file so the managed copy is the only one that signs.
+
+Before a release, check this machine can actually sign:
+
+```bash
+./scripts/release.sh --check-key
+```
+
+It fetches the key exactly as a release would and proves it against the public
+keys pinned in the checkout, without building anything. A logged-out `gcloud`, a
+wrong project, or a secret holding a key no client trusts all show up here in a
+few seconds instead of after a multi-minute build.
 
 Then, per release:
 
@@ -112,8 +133,11 @@ Then, per release:
 Which builds via `build_macos.sh`, signs the zip, and uploads both the zip and
 its `.sig`. Add `--dry-run` to do everything except the upload.
 
-Two guards worth knowing about, because they fail the release rather than ship a
-broken one:
+Three guards worth knowing about, because they fail the release rather than ship
+a broken one:
+
+- The signing key is fetched **before** the build, so a key that cannot be had
+  costs seconds rather than a full PyInstaller run.
 
 - The tag must match `waikiki.__version__`. A mismatch would make the updater's
   own staging check reject the build.

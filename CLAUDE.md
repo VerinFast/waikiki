@@ -257,6 +257,29 @@ two in parity (same substance, different voice) whenever you change either.
    `app_config.json`, or any other writable place — a replaceable pinned key is
    not a trust root. The bundle's ad-hoc `codesign --sign -` proves nothing about
    origin; it is not a substitute. See `docs/updates.md`.
+   **The private half is the opposite case, and the two must not be confused.**
+   Fetching the *signing* key from the network is exactly what `release.sh` does
+   — from Google Secret Manager (`waikikey` in `startupos-328814`, via
+   `gcloud`) — because the only
+   machine that ever holds it is the one cutting a release, and keeping it off
+   disk is the point. Three things are load-bearing there: it is **held in a
+   variable and handed to the one signing process**, never written to a file
+   (the only temp file is gcloud's stderr, and it is removed); a local key file
+   is used **only when named** (`WAIKIKI_UPDATE_KEY`), with no silent fallback
+   between the two sources; and it is fetched **and checked** before the build
+   (parsed, Ed25519, matched against the compiled keys), so a missing, malformed
+   or untrusted key costs seconds rather than a wiped `dist/`. Two leaks are
+   closed by construction: **xtrace is off** around every step that touches the
+   key (`bash -x` prints assignments with values), and **inherited variables that
+   could carry it are unset** first (bash keeps the export flag on reassignment,
+   so the key would ride into the build). And the script **refuses
+   `WAIKIKI_UPDATE_PUBKEY`** — that override is for tests and private builds of
+   the app; here it would make both verification steps measure against the
+   environment and approve a release no installed copy accepts.
+   `tests/test_release_script.py` runs the real script in a sandboxed checkout
+   with the test key compiled in and a stub build, so the release path is
+   exercised up to the build without one; each of those guards fails when its
+   fix is removed.
 
 9. **A missing tool is reported, never discovered on click — and never as a
    command to paste.** `capabilities.py` probes each optional tool and hands the

@@ -65,9 +65,24 @@ So Waikiki carries its own trust root:
   substituting content would require a SHA-256 collision.
 - The **public** half is pinned in `updater.PUBLIC_KEYS_HEX`, compiled into the
   app. It is a *set*: a release has to satisfy one of them.
-- The **private** half never enters this repo. `release.sh` reads it from
-  `WAIKIKI_UPDATE_KEY` (default `~/.waikiki/update-key.pem`) and refuses to use
-  a key stored inside the working tree, where it could be committed by accident.
+- The **private** half never enters this repo, and normally never touches a
+  disk either. `release.sh` reads it from **Google Secret Manager** — the latest
+  version of the secret `waikikey`, through the `gcloud` CLI — holds it in a
+  variable, and hands it only to the one process that signs. It lives in the
+  `startupos-328814` project; `WAIKIKI_UPDATE_SECRET` and `WAIKIKI_GCP_PROJECT`
+  override the name and project. The project is named rather than left to
+  gcloud's configured default, which is per machine and often unset.
+- A local PEM file is still possible, but only if you **name it**:
+  `WAIKIKI_UPDATE_KEY=/path/to/key.pem`. It wins over Secret Manager, and is
+  still refused if it sits inside the working tree, where it could be committed
+  by accident. There is no silent fallback between the two — a key that turns up
+  from somewhere nobody chose is how a release gets signed by the wrong one.
+- The key is kept out of everything that could leak it. **xtrace is switched off**
+  around each step that touches it — `bash -x` prints assignments with their
+  values, and is the first thing anyone reaches for when a release misbehaves —
+  and the script **unsets any inherited variable** that could carry it, because
+  bash keeps the export flag on a reassigned variable and the key would otherwise
+  ride into the build and everything it starts.
 - Verification happens **before** the archive is expanded. An unverified payload
   never gets to write files.
 
@@ -101,7 +116,34 @@ One-time, to create the signing key:
 That prints the public half. Paste it into `updater.PUBLIC_KEYS_HEX`, commit, and
 **back up the private key** — losing it means you cannot ship an update that
 existing installs will accept. There is no recovery path short of users
-reinstalling by hand.
+reinstalling by hand. It also prints how to put the key where releases read it
+from — and the command differs, which matters:
+
+- **The first key ever:** `gcloud secrets create waikikey
+  --replication-policy=automatic --data-file=…`.
+- **Rotating:** `gcloud secrets versions add waikikey --data-file=…`. `create`
+  refuses a secret that already exists, so followed during a rotation it would
+  fail and leave Secret Manager serving the old key — every release still signed
+  with it. Ship a build that pins the new public key *alongside* the old one
+  first; then add the version, which becomes `latest`.
+
+Either way, delete the local file afterwards so the managed copy is the only one
+that signs.
+
+Before a release, check this machine can actually sign:
+
+```bash
+./scripts/release.sh --check-key
+```
+
+It fetches the key exactly as a release would and proves it against the public
+keys **compiled into the checkout**, without building anything. Both this and a
+release refuse to run with `WAIKIKI_UPDATE_PUBKEY` set: it replaces the pinned
+keys at runtime, so verifying against it would approve a release that no
+installed copy accepts — even set to the right key, since the script cannot tell
+that from the wrong one. A logged-out `gcloud`, a
+wrong project, or a secret holding a key no client trusts all show up here in a
+few seconds instead of after a multi-minute build.
 
 Then, per release:
 
@@ -112,8 +154,13 @@ Then, per release:
 Which builds via `build_macos.sh`, signs the zip, and uploads both the zip and
 its `.sig`. Add `--dry-run` to do everything except the upload.
 
-Two guards worth knowing about, because they fail the release rather than ship a
-broken one:
+Three guards worth knowing about, because they fail the release rather than ship
+a broken one:
+
+- The signing key is fetched **and checked** before the build — parsed, confirmed
+  Ed25519, and matched against the compiled public keys. A key that cannot be had,
+  or one no client would accept, costs seconds; `build_macos.sh` begins by wiping
+  `dist/`, so finding out afterwards would throw away the previous build too.
 
 - The tag must match `waikiki.__version__`. A mismatch would make the updater's
   own staging check reject the build.

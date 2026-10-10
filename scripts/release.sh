@@ -16,9 +16,8 @@
 #   1. WAIKIKI_UPDATE_KEY, if set — a PEM file you name explicitly. Refused if it
 #      lives inside the working tree, where it could be committed by accident.
 #   2. Otherwise Google Secret Manager: the latest version of the secret
-#      `waikikey` (WAIKIKI_UPDATE_SECRET overrides the name), read with the
-#      gcloud CLI. WAIKIKI_GCP_PROJECT picks the project; unset, gcloud's own
-#      configured project is used.
+#      `waikikey` in the project `startupos-328814`, read with the gcloud CLI.
+#      WAIKIKI_UPDATE_SECRET and WAIKIKI_GCP_PROJECT override either.
 #
 # There is deliberately no silent third option. A key that turns up from
 # somewhere nobody chose is how a release ends up signed by the wrong one —
@@ -30,7 +29,10 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 KEY_FILE="${WAIKIKI_UPDATE_KEY:-}"                     # explicit file, or empty
 KEY_PATH="${WAIKIKI_UPDATE_KEY:-$HOME/.waikiki/update-key.pem}"   # --genkey's output
 SECRET_NAME="${WAIKIKI_UPDATE_SECRET:-waikikey}"
-GCP_PROJECT="${WAIKIKI_GCP_PROJECT:-}"
+# Named here rather than left to gcloud's configured default, which is per
+# machine and often unset: a release should not depend on how somebody's laptop
+# happens to be set up.
+GCP_PROJECT="${WAIKIKI_GCP_PROJECT:-startupos-328814}"
 PY="${PYTHON:-$REPO_ROOT/.venv/bin/python}"
 [ -x "$PY" ] || PY="$(command -v python3)"
 

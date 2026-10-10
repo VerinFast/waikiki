@@ -68,9 +68,10 @@ So Waikiki carries its own trust root:
 - The **private** half never enters this repo, and normally never touches a
   disk either. `release.sh` reads it from **Google Secret Manager** — the latest
   version of the secret `waikikey`, through the `gcloud` CLI — holds it in a
-  variable, and hands it only to the one process that signs. The secret's name
-  and project can be overridden (`WAIKIKI_UPDATE_SECRET`, `WAIKIKI_GCP_PROJECT`;
-  unset, the project is gcloud's own configured one).
+  variable, and hands it only to the one process that signs. It lives in the
+  `startupos-328814` project; `WAIKIKI_UPDATE_SECRET` and `WAIKIKI_GCP_PROJECT`
+  override the name and project. The project is named rather than left to
+  gcloud's configured default, which is per machine and often unset.
 - A local PEM file is still possible, but only if you **name it**:
   `WAIKIKI_UPDATE_KEY=/path/to/key.pem`. It wins over Secret Manager, and is
   still refused if it sits inside the working tree, where it could be committed

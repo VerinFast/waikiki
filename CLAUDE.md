@@ -259,7 +259,8 @@ two in parity (same substance, different voice) whenever you change either.
    origin; it is not a substitute. See `docs/updates.md`.
    **The private half is the opposite case, and the two must not be confused.**
    Fetching the *signing* key from the network is exactly what `release.sh` does
-   — from Google Secret Manager (`waikikey`, via `gcloud`) — because the only
+   — from Google Secret Manager (`waikikey` in `startupos-328814`, via
+   `gcloud`) — because the only
    machine that ever holds it is the one cutting a release, and keeping it off
    disk is the point. Three things are load-bearing there: it is **held in a
    variable and handed to the one signing process**, never written to a file

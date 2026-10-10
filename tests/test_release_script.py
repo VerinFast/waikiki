@@ -88,9 +88,11 @@ def test_the_key_comes_from_secret_manager_by_default(tmp_path, gcloud):
     r = _run(tmp_path, gcloud, WAIKIKI_UPDATE_PUBKEY=pub)
 
     assert r.returncode == 0, r.stderr
-    assert "Google Secret Manager: waikikey" in r.stdout
+    assert "Google Secret Manager: waikikey (project startupos-328814)" in r.stdout
     assert "matches pinned key #0" in r.stdout
-    assert gcloud.calls == ["secrets versions access latest --secret=waikikey"]
+    # The project is named explicitly, never left to gcloud's per-machine default.
+    assert gcloud.calls == [
+        "secrets versions access latest --secret=waikikey --project=startupos-328814"]
 
 
 def test_the_secret_name_and_project_can_be_chosen(tmp_path, gcloud):

@@ -39,10 +39,31 @@ PY="${PYTHON:-$REPO_ROOT/.venv/bin/python}"
 die() { echo "error: $*" >&2; exit 1; }
 say() { echo "==> $*"; }
 
+# Nothing that can hold the key is let in from the caller's environment. bash
+# keeps the export attribute when a script reassigns a variable it inherited, so
+# a SIGNING_KEY_PEM the caller happened to export would — once this script put
+# the real key in it — carry that key into build_macos.sh and every process the
+# build starts. Unset first, and every assignment below is local to this shell.
+unset SIGNING_KEY_PEM SIGNING_KEY_SOURCE WAIKIKI_UPDATE_KEY_PEM
+
+# xtrace prints assignments WITH their values, so `bash -x release.sh` — the
+# first thing anyone reaches for when a release misbehaves — would put the PEM
+# in the terminal, and in a CI log if this ever runs there. Every step that
+# touches the key runs with tracing off and puts it back afterwards; the braces
+# and 2>/dev/null keep even the `set +x` itself out of the trace.
+quietly() {
+    local was="$-" rc=0
+    { set +x; } 2>/dev/null
+    "$@" || rc=$?
+    case "$was" in *x*) set -x ;; esac
+    return "$rc"
+}
+
 # Puts the signing key's PEM in SIGNING_KEY_PEM and says where it came from in
 # SIGNING_KEY_SOURCE. Called before anything slow happens, so a key that cannot
 # be had fails the release in seconds rather than after a two-minute build.
-load_signing_key() {
+load_signing_key() { quietly _load_signing_key; }
+_load_signing_key() {
     if [ -n "$KEY_FILE" ]; then
         [ -f "$KEY_FILE" ] || die "WAIKIKI_UPDATE_KEY names $KEY_FILE, which does not exist"
         case "$(cd "$(dirname "$KEY_FILE")" && pwd)" in
@@ -88,8 +109,40 @@ Secret Manager ('$SECRET_NAME') and gcloud is not installed.
 # from WAIKIKI_UPDATE_KEY_PEM. An environment variable is readable by the same
 # user's other processes while this runs, which is a far smaller exposure than
 # the file on disk it replaces: it lasts as long as one signature takes.
-with_signing_key() {
+with_signing_key() { quietly _with_signing_key "$@"; }
+_with_signing_key() {
     WAIKIKI_UPDATE_KEY_PEM="$SIGNING_KEY_PEM" "$@"
+}
+
+# Proves the loaded key is one a client would accept: a PEM, Ed25519, and one of
+# the public keys compiled into this checkout. Run before the build as well as by
+# --check-key — fetching it early only saved the build when the key was MISSING;
+# a malformed or untrusted one sailed through to the post-build verification,
+# after build_macos.sh had already wiped dist/.
+verify_signing_key() {
+    with_signing_key "$PY" - <<'PYCODE'
+import os, sys
+from cryptography.hazmat.primitives import serialization as ser
+from cryptography.hazmat.primitives.asymmetric import ed25519
+
+from waikiki import updater
+
+try:
+    priv = ser.load_pem_private_key(
+        os.environ.pop("WAIKIKI_UPDATE_KEY_PEM").encode(), password=None)
+except ValueError as exc:
+    sys.exit(f"    that is not a PEM private key: {exc}")
+if not isinstance(priv, ed25519.Ed25519PrivateKey):
+    sys.exit(f"    that is a {type(priv).__name__}, not an Ed25519 key — the "
+             "updater only verifies Ed25519 signatures")
+pub = priv.public_key().public_bytes(ser.Encoding.Raw, ser.PublicFormat.Raw)
+keys = updater._pinned_keys()
+print(f"    public half: {pub.hex()[:16]}…")
+if pub not in keys:
+    sys.exit(f"    NOT one of the {len(keys)} key(s) pinned in waikiki/updater.py —\n"
+             "    a release signed with it would be refused by every client.")
+print(f"    matches pinned key #{keys.index(pub)} of {len(keys)} — this machine can sign a release")
+PYCODE
 }
 
 # --- One-time key generation --------------------------------------------------
@@ -114,10 +167,35 @@ PYCODE
     echo "Back up the private key somewhere safe. Losing it means you cannot"
     echo "ship an update that existing installs will accept."
     echo
-    echo "Releases read it from Google Secret Manager. To put it there:"
-    echo "  gcloud secrets create $SECRET_NAME --data-file=\"$KEY_PATH\"${GCP_PROJECT:+ --project=$GCP_PROJECT}"
-    echo "then delete $KEY_PATH, so the only copy that signs is the managed one."
+    echo "Releases read it from Google Secret Manager, as the 'latest' version"
+    echo "of '$SECRET_NAME'. To put it there — the FIRST key ever (no secret yet):"
+    echo "  gcloud secrets create $SECRET_NAME --replication-policy=automatic \\"
+    echo "      --data-file=\"$KEY_PATH\"${GCP_PROJECT:+ --project=$GCP_PROJECT}"
+    echo
+    echo "ROTATING (the secret already exists — 'create' would refuse, and releases"
+    echo "would go on signing with the old key). First ship a build that pins the"
+    echo "new public key above ALONGSIDE the old one, then add it as a new version:"
+    echo "  gcloud secrets versions add $SECRET_NAME \\"
+    echo "      --data-file=\"$KEY_PATH\"${GCP_PROJECT:+ --project=$GCP_PROJECT}"
+    echo
+    echo "Either way, then delete $KEY_PATH so the only copy that signs is the"
+    echo "managed one, and confirm with: $(basename "$0") --check-key"
     exit 0
+fi
+
+# --- Verification uses the keys this checkout ships, and nothing else --------
+# WAIKIKI_UPDATE_PUBKEY replaces the pinned public keys at runtime; it exists so
+# tests and private builds of the APP can trust a key of their own. Here it would
+# be a trapdoor: both checks below — "this key is one clients trust" before the
+# build, and "this signature verifies" after it — would quietly measure against
+# whatever the environment said, and approve a release that no installed copy
+# will accept. Refused rather than ignored, because whoever set it meant
+# something by it and should hear that it cannot apply here. Set-but-empty
+# counts: to the updater, an empty value is a deliberate override too.
+if [ -n "${WAIKIKI_UPDATE_PUBKEY+set}" ]; then
+    die "WAIKIKI_UPDATE_PUBKEY is set. It overrides the public keys compiled into
+       waikiki/updater.py, so verifying against it proves nothing about what
+       installed copies will accept. Unset it to release or to --check-key."
 fi
 
 # --- Can this machine sign? ---------------------------------------------------
@@ -130,29 +208,7 @@ if [ "${1:-}" = "--check-key" ]; then
     cd "$REPO_ROOT"
     load_signing_key
     say "signing key from $SIGNING_KEY_SOURCE"
-    with_signing_key "$PY" - <<'PYCODE'
-import os, sys
-from cryptography.hazmat.primitives import serialization as ser
-from cryptography.hazmat.primitives.asymmetric import ed25519
-
-from waikiki import updater
-
-try:
-    priv = ser.load_pem_private_key(
-        os.environ.pop("WAIKIKI_UPDATE_KEY_PEM").encode(), password=None)
-except ValueError as exc:
-    sys.exit(f"    that is not a PEM private key: {exc}")
-if not isinstance(priv, ed25519.Ed25519PrivateKey):
-    sys.exit(f"    that is a {type(priv).__name__}, not an Ed25519 key — the "
-             "updater only verifies Ed25519 signatures")
-pub = priv.public_key().public_bytes(ser.Encoding.Raw, ser.PublicFormat.Raw)
-keys = updater._pinned_keys()
-print(f"    public half: {pub.hex()[:16]}…")
-if pub not in keys:
-    sys.exit(f"    NOT one of the {len(keys)} key(s) pinned in waikiki/updater.py —\n"
-             "    a release signed with it would be refused by every client.")
-print(f"    matches pinned key #{keys.index(pub)} of {len(keys)} — this machine can sign a release")
-PYCODE
+    verify_signing_key
     exit 0
 fi
 
@@ -171,10 +227,13 @@ CODE_VERSION="$("$PY" -c 'import waikiki; print(waikiki.__version__)')"
 [ "$CODE_VERSION" = "$VERSION" ] || \
     die "tag $TAG disagrees with waikiki.__version__ ($CODE_VERSION)"
 
-# Before the build, not after it: a logged-out gcloud or a missing secret should
-# cost seconds, not a full PyInstaller run.
+# Before the build, not after it — and checked, not merely fetched. A logged-out
+# gcloud, a missing secret, a malformed key or one no client trusts should each
+# cost seconds; build_macos.sh starts by wiping dist/, so finding out afterwards
+# throws away the previous build as well as the time.
 load_signing_key
 say "signing key from $SIGNING_KEY_SOURCE"
+verify_signing_key
 
 # build_macos.sh owns the build: PyInstaller, the ad-hoc codesign, and the zip.
 # Reuse it so a released bundle is byte-for-byte the thing `build_macos.sh`

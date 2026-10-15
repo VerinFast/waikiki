@@ -689,7 +689,10 @@ def wikis_manage(request: Request, error: str = "", ok: str = ""):
     stats = {w["slug"]: wikis.stats(w["slug"]) for w in wikis.list_wikis()}
     return templates.TemplateResponse(request, "wikis.html", _ctx(
         request, error=error, ok=ok, stats=stats,
-        help_wiki=config.HELP_WIKI, restore=backups.restore_hint()))
+        help_wiki=config.HELP_WIKI, restore=backups.restore_hint(),
+        # Only what needs a person: a clean move says nothing.
+        migration=(config.DATA_MIGRATION if config.DATA_MIGRATION and
+                   config.DATA_MIGRATION["outcome"] != "moved" else None)))
 
 
 @app.post("/switch-wiki")

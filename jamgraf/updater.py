@@ -155,6 +155,49 @@ def _updates_dir() -> Path:
     return d
 
 
+BUNDLE_NAME = "Jamgraf.app"
+LEGACY_BUNDLE_NAME = "Waikiki.app"
+
+
+def finish_bundle_rename(bundle: Path | None = None) -> str | None:
+    """Give an in-place-updated Waikiki.app its new name. Returns the outcome.
+
+    A copy installed before the rename updates itself by swapping the new bundle
+    into the path it is RUNNING from (`bundle_path`), so the update that carries
+    the rename lands as Jamgraf's code inside a folder still called Waikiki.app.
+    This finishes the job on the first launch: rename the folder, then leave
+    Waikiki.app as a symlink to it. The symlink is load-bearing, not a courtesy —
+    a Claude Desktop config or doorman naming .../Waikiki.app/Contents/MacOS/...
+    keeps launching, and this very process, whose files were loaded from the old
+    path, keeps resolving them through it.
+
+    None means nothing to do (already Jamgraf.app, or not running from a bundle).
+    "both" means a Jamgraf.app is already beside it: two installs, and choosing
+    between them is not this function's call. A failure — a read-only volume, a
+    translocated quarantined app — is reported and never stops the app starting;
+    a half-done rename is undone so the bundle is left exactly as it was found.
+    """
+    bundle = bundle if bundle is not None else bundle_path()
+    if bundle is None or bundle.name != LEGACY_BUNDLE_NAME:
+        return None
+    target = bundle.parent / BUNDLE_NAME
+    if target.exists() or target.is_symlink():
+        return "both"
+    try:
+        os.rename(bundle, target)
+    except OSError as exc:
+        return f"failed: {exc}"
+    try:
+        os.symlink(BUNDLE_NAME, bundle)                   # relative, beside it
+    except OSError as exc:
+        try:
+            os.rename(target, bundle)
+        except OSError:
+            return f"failed: renamed, but could not link the old path back ({exc})"
+        return f"failed: {exc}"
+    return "renamed"
+
+
 def bundle_path() -> Path | None:
     """The running .app bundle, or None when not running from one.
 

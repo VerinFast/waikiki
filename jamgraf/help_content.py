@@ -7,7 +7,7 @@ About page is re-stamped with the current version on every start.
 """
 from __future__ import annotations
 
-from . import ai, chat, config, db, render, store, wikis
+from . import ai, appconfig, chat, config, db, render, store, wikis
 
 
 def _home() -> str:
@@ -264,6 +264,54 @@ def _upsert(title: str, body: str, *, overwrite: bool) -> None:
         store.update_page(slug, title, body, author="system")
 
 
+# The prose pages seeded with overwrite=False: created once, then left alone —
+# which also means a page created before the rename would say "Waikiki" forever.
+_PROSE = (("Getting Started", "_home"), ("Editing & Formatting", "_editing"),
+          ("Templates", "_templates"), ("Custom Elements", "_elements"),
+          ("Wikis & Isolation", "_wikis"), ("Sharing", "_sharing"),
+          ("AI & Chat", "_ai"), ("Connect Claude", "_connect"))
+_RENAMED_FLAG = "help_renamed_jamgraf_v1"
+
+
+def _as_seeded_before_the_rename(text: str) -> str:
+    """What this text was when the mechanical rename ran over it, in reverse."""
+    return (text.replace("JAMGRAF", "WAIKIKI").replace("Jamgraf", "Waikiki")
+            .replace("jamgraf", "waikiki"))
+
+
+def _rename_help_prose() -> int:
+    """Carry the seeded Help pages across the rename, once. Returns pages changed.
+
+    Two cases, chosen so the result is never WRONG — an edited page can name a
+    config key or an env var, and a blind replace could break what it describes:
+      * a page still exactly as the pre-rename version seeded it is replaced by
+        the current text wholesale;
+      * a page somebody edited gets only safe substitutions (the product name,
+        the repo, the link scheme). Anything left — a "waikiki" config key, a
+        WAIKIKI_ env var — still works, through the compatibility layer, so it is
+        old-fashioned rather than incorrect.
+    Through store.update_page, so every change is a version that can be undone.
+    The system prompts are not touched: those belong to the user.
+    """
+    changed = 0
+    for title, builder in _PROSE:
+        slug = render.slugify(title)
+        page = store.get_page(slug)
+        if page is None:
+            continue
+        current = globals()[builder]()
+        text = page.get("markdown") or ""
+        if text == _as_seeded_before_the_rename(current):
+            new = current
+        else:
+            new = (text.replace("VerinFast/waikiki", "VerinFast/jamgraf")
+                   .replace("waikiki://", "jamgraf://").replace("Waikiki", "Jamgraf"))
+        if new != text:
+            store.update_page(slug, page["title"], new, author="system")
+            changed += 1
+    return changed
+
+
 def seed() -> None:
     """Register the Help wiki and (idempotently) populate its pages."""
     wikis.ensure_help_wiki()
@@ -283,5 +331,8 @@ def seed() -> None:
         _upsert("Chat System Prompt", chat.DEFAULT_CHAT_SYSTEM, overwrite=False)
         # About is app-owned: keep the version current.
         _upsert("About", _about(config.VERSION), overwrite=True)
+        if not appconfig.get(_RENAMED_FLAG):
+            _rename_help_prose()
+            appconfig.set(_RENAMED_FLAG, True)
     finally:
         db.current_wiki.reset(token)

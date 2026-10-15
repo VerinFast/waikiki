@@ -59,13 +59,86 @@ def env_is_set(name: str) -> bool:
     return any(prefix + name in os.environ for prefix in _ENV_PREFIXES)
 
 
+# Moving the data directory across the rename -----------------------------------
+# What happened to the pre-rename data directory at startup, for Manage wikis to
+# report: None (nothing to do), "moved", "both" or "failed". See below.
+DATA_MIGRATION: dict | None = None
+
+
+def migrate_legacy_data_dir(parent: Path, new_name: str = "Jamgraf",
+                            old_name: str = LEGACY_NAME) -> tuple[Path, str | None]:
+    """Move ``parent/Waikiki`` to ``parent/Jamgraf``. Returns (dir to use, outcome).
+
+    This runs before the data directory is created, because creating it is the
+    hazard: anything still naming the old path — a Claude Desktop config's
+    WAIKIKI_DATA, an MCP server started before the upgrade, doorman — would be
+    handed a fresh, EMPTY install there with nothing to say that its wikis were
+    somewhere else. So the old path is left resolving to the new one:
+
+      * old is a real directory, new absent -> rename, then symlink old -> new.
+        Open files survive a rename (they follow the inode, not the path), and the
+        symlink keeps every path-based caller working. If the symlink cannot be
+        made the rename is undone, so the move is all or nothing.
+      * new exists but is EMPTY -> remove it with rmdir, then as above. rmdir
+        refuses a non-empty directory, so this cannot delete anything by
+        construction.
+      * both hold data -> touch neither. Use the new one and say so; merging two
+        sets of wikis, or choosing one silently, is not a decision to make here.
+
+    Serialised with flock on the parent, because the desktop app and an MCP
+    server spawned by Claude can start in the same instant. Whichever is second
+    finds the old path already a symlink and does nothing.
+    """
+    new, old = parent / new_name, parent / old_name
+    if old.is_symlink() or not old.is_dir():
+        return new, None                                  # nothing to move
+    parent.mkdir(parents=True, exist_ok=True)
+    import fcntl
+    fd = os.open(parent, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        if old.is_symlink() or not old.is_dir():          # moved while we waited
+            return new, None
+        if new.is_symlink():
+            return new, "both"        # somebody pointed it somewhere: theirs, not ours
+        if new.exists():
+            try:
+                new.rmdir()                               # only ever succeeds if empty
+            except OSError:
+                return new, "both"
+        try:
+            os.rename(old, new)
+        except OSError as exc:
+            return old, f"failed: {exc}"
+        try:
+            os.symlink(new_name, old)                     # relative: survives a moved home
+        except OSError as exc:
+            try:
+                os.rename(new, old)                       # put it back exactly as it was
+            except OSError:
+                return new, f"failed: moved, but could not link the old path back ({exc})"
+            return old, f"failed: {exc}"
+        return new, "moved"
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
 # Project root and data location -------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent
 if env("DATA"):
+    # Named explicitly, so used exactly as named. A pre-rename config naming the
+    # old default still works, because after the move that path is a symlink.
     _default_data = Path(env("DATA"))
 elif getattr(sys, "frozen", False):
     # Packaged .app: never write inside the (possibly read-only) bundle.
-    _default_data = Path.home() / "Library" / "Application Support" / "Jamgraf"
+    _support = Path.home() / "Library" / "Application Support"
+    _default_data, _outcome = migrate_legacy_data_dir(_support)
+    if _outcome:
+        DATA_MIGRATION = {"outcome": _outcome, "old": str(_support / LEGACY_NAME),
+                          "new": str(_support / "Jamgraf")}
+        print(f"[jamgraf] data directory from before the rename: {_outcome} "
+              f"({_support / LEGACY_NAME} -> {_default_data})", file=sys.stderr)
 else:
     _default_data = ROOT / "data"
 DATA_DIR = _default_data

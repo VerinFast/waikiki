@@ -133,6 +133,18 @@ def main() -> None:
         ).run()
         return
 
+    # Finish a rename the old updater could only half-do (see the function).
+    # Desktop launches only: in MCP mode Claude may be starting this binary by its
+    # old path at the very moment it would be moving. Never fatal.
+    try:
+        from jamgraf import updater
+        outcome = updater.finish_bundle_rename()
+        if outcome:
+            print(f"[jamgraf] app bundle from before the rename: {outcome}",
+                  file=sys.stderr)
+    except Exception as exc:                      # noqa: BLE001 - startup wins
+        print(f"[jamgraf] bundle rename skipped: {exc}", file=sys.stderr)
+
     # Tell the page it is running in the desktop shell. Sniffing for
     # window.pywebview races its async injection, and a mic that fails to render
     # because the check ran too early is invisible rather than broken.

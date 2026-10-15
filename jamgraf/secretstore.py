@@ -48,8 +48,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 
 SERVICE = "Jamgraf"
+# Where a sign-in made before the rename is stored. Read once, moved under SERVICE,
+# then deleted (`get_secret`); deleted again at sign-out (`delete_secret`), since
+# an old item left behind would be found and resurrected by the next read.
+LEGACY_SERVICE = "Waikiki"
 """Keychain service name. Every item we own carries it, so a user can find and
 delete them all in Keychain Access without guessing."""
 
@@ -97,6 +102,10 @@ def set_secret(account: str, secret: str) -> bool:
     ``-U`` updates an existing item rather than erroring, so re-signing in
     replaces the old token instead of accumulating duplicates.
     """
+    return _set(SERVICE, account, secret)
+
+
+def _set(service: str, account: str, secret: str) -> bool:
     sec = _security()
     if not sec or not account or not secret:
         return False
@@ -104,7 +113,7 @@ def set_secret(account: str, secret: str) -> bool:
         return False
     # Interactive mode: the command (and so the secret) arrives on stdin, never
     # in argv where `ps` would show it to every process running as this user.
-    script = (f'add-generic-password -U -s {_q(SERVICE)} -a {_q(account)} '
+    script = (f'add-generic-password -U -s {_q(service)} -a {_q(account)} '
               f'-w {_q(secret)}\n')
     try:
         done = subprocess.run([sec, "-i"], input=script, text=True,
@@ -115,13 +124,37 @@ def set_secret(account: str, secret: str) -> bool:
 
 
 def get_secret(account: str) -> str | None:
-    """The secret stored under ``account``, or None if there isn't one."""
+    """The secret stored under ``account``, or None if there isn't one.
+
+    A sign-in stored before the rename lives under the old service. It is moved
+    the first time it is asked for: written under the new service, **read back**,
+    and only then deleted from the old one. Any step failing leaves the old item
+    exactly where it was, so the worst a failed move costs is doing it again next
+    time — never the sign-in. This copies the token; it does not rotate it, so
+    the rule that a rotated token must land (rule 11) is not in play.
+    """
+    current = _get(SERVICE, account)
+    if current is not None:
+        return current
+    old = _get(LEGACY_SERVICE, account)
+    if old is None:
+        return None
+    if _set(SERVICE, account, old) and _get(SERVICE, account) == old:
+        _delete(LEGACY_SERVICE, account)
+    else:
+        print("[jamgraf] could not move the Kahala sign-in to the new Keychain "
+              "entry; still using the old one, and will try again next time",
+              file=sys.stderr)
+    return old
+
+
+def _get(service: str, account: str) -> str | None:
     sec = _security()
     if not sec or not account or not _sendable(account):
         return None
     try:
         done = subprocess.run(
-            [sec, "find-generic-password", "-s", SERVICE, "-a", account, "-w"],
+            [sec, "find-generic-password", "-s", service, "-a", account, "-w"],
             text=True, capture_output=True, timeout=_TIMEOUT)
     except Exception:
         return None
@@ -133,13 +166,24 @@ def get_secret(account: str) -> str | None:
 
 
 def delete_secret(account: str) -> bool:
-    """Remove ``account``'s secret. True if something was removed."""
+    """Remove ``account``'s secret. True if something was removed.
+
+    Under both services. Signing out has to mean signed out: an item left under
+    the old service would be found by the next `get_secret` and moved back into
+    place, resurrecting the session the person just ended.
+    """
+    removed_new = _delete(SERVICE, account)
+    removed_old = _delete(LEGACY_SERVICE, account)
+    return removed_new or removed_old
+
+
+def _delete(service: str, account: str) -> bool:
     sec = _security()
     if not sec or not account or not _sendable(account):
         return False
     try:
         done = subprocess.run(
-            [sec, "delete-generic-password", "-s", SERVICE, "-a", account],
+            [sec, "delete-generic-password", "-s", service, "-a", account],
             text=True, capture_output=True, timeout=_TIMEOUT)
     except Exception:
         return False

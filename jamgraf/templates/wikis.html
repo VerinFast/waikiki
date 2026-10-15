@@ -10,6 +10,24 @@
   </div>
   {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
   {% if ok %}<div class="banner">{{ ok }}</div>{% endif %}
+  {% if migration %}
+    {# Waikiki became Jamgraf. Only shown when moving the old data needs a person;
+       see config.migrate_legacy_data_dir for the cases. #}
+    <div class="banner err">
+      {% if migration.outcome == "both" %}
+        Your wikis from before the rename to Jamgraf are still at
+        <code>{{ migration.old }}</code>, and a Jamgraf folder with wikis of its own
+        already exists at <code>{{ migration.new }}</code>. Nothing was moved or
+        merged. To bring the old ones in, use <em>Open wiki file…</em> on the
+        <code>.db</code> files in <code>{{ migration.old }}/wikis</code>.
+      {% else %}
+        Jamgraf could not move your wikis from <code>{{ migration.old }}</code> to
+        <code>{{ migration.new }}</code> ({{ migration.outcome }}). They are
+        untouched, still in use from where they were, and the move will be tried
+        again next time Jamgraf starts.
+      {% endif %}
+    </div>
+  {% endif %}
   <p class="muted">Each wiki is a fully isolated database file — pages, search, and
     <code>[[links]]</code> never cross between them. Save a wiki to a file to back
     it up or move it; open one to bring it in. Open takes any shape Jamgraf

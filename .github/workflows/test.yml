@@ -41,7 +41,7 @@ jobs:
         # check that reaches GitHub, is a bug the fixtures are meant to prevent —
         # let it fail here rather than flake later.
         env:
-          WAIKIKI_DATA: ${{ runner.temp }}/waikiki-ci
+          JAMGRAF_DATA: ${{ runner.temp }}/jamgraf-ci
           HF_HUB_OFFLINE: '1'
         run: python3 -m pytest -q
 

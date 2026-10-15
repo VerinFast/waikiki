@@ -8,8 +8,8 @@ page written before a schema existed is not retroactively broken by one.
 """
 from fastapi.testclient import TestClient
 
-from waikiki import db, mcp_server, metaschema, store
-from waikiki.api import app
+from jamgraf import db, mcp_server, metaschema, store
+from jamgraf.api import app
 
 CHARACTER = ("hp: str\n"          # "20 / 100" stays free text
              "blade*: int\n"      # `*` = required, as in custom elements

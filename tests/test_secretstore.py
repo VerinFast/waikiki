@@ -13,7 +13,7 @@ import subprocess
 
 import pytest
 
-from waikiki import secretstore
+from jamgraf import secretstore
 
 ACCOUNT = "kahala:https://kc.example/realms/good-place"
 
@@ -44,7 +44,7 @@ def test_a_secret_carrying_a_newline_never_reaches_security(security):
     `set_secret` makes this go red with `delete-generic-password` sitting on its
     own line of the script that gets written to `security -i`'s stdin.
     """
-    hostile = "good-looking-token\ndelete-generic-password -s Waikiki"
+    hostile = "good-looking-token\ndelete-generic-password -s Jamgraf"
     assert secretstore.set_secret(ACCOUNT, hostile) is False
     assert security == [], \
         f"a token containing a newline was handed to security anyway: {security}"

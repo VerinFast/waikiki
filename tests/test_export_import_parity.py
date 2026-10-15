@@ -5,7 +5,7 @@ and the person finds out on the day they need it. That is not hypothetical here:
 Kahala's whole-wiki bundle was *produced* by `store.export_wiki_bundle` and
 *consumed* by `store.import_wiki_bundle` for a whole release, and still could not
 be opened, because the only door a person could reach (`wikis.import_from`) knew
-one archive shape and reported a valid bundle as "not a Waikiki wiki file".
+one archive shape and reported a valid bundle as "not a Jamgraf wiki file".
 Both halves existed and passed their own tests. Nothing checked that the pair
 was reachable.
 
@@ -22,7 +22,7 @@ import ast
 import importlib
 from pathlib import Path
 
-_PACKAGE = Path(__file__).resolve().parent.parent / "waikiki"
+_PACKAGE = Path(__file__).resolve().parent.parent / "jamgraf"
 
 # (module, export) -> (module, importer). Both halves are named so a rename
 # cannot quietly break the pair: `test_declared_importers_exist` resolves them.
@@ -90,12 +90,12 @@ def test_every_export_has_an_import():
 def test_declared_importers_exist():
     """Both halves of every pair must still be there, under the names claimed."""
     for (mod, exp), (imod, imp) in sorted(PAIRS.items()):
-        produce = importlib.import_module(f"waikiki.{mod}")
-        consume = importlib.import_module(f"waikiki.{imod}")
+        produce = importlib.import_module(f"jamgraf.{mod}")
+        consume = importlib.import_module(f"jamgraf.{imod}")
         assert callable(getattr(produce, exp, None)), \
-            f"waikiki.{mod}.{exp} is gone — update PAIRS rather than dropping it"
+            f"jamgraf.{mod}.{exp} is gone — update PAIRS rather than dropping it"
         assert callable(getattr(consume, imp, None)), (
-            f"waikiki.{imod}.{imp} is gone, and it is rule 12's reader for "
+            f"jamgraf.{imod}.{imp} is gone, and it is rule 12's reader for "
             f"{mod}.{exp} — that export is now unrestorable")
 
 

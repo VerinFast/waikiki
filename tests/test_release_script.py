@@ -4,7 +4,7 @@ The private key that signs updates lives in Google Secret Manager as `waikikey`.
 These tests run the real script against a stand-in `gcloud` on `PATH` that serves
 a throwaway key.
 
-They run it in a **sandbox**: a copy of the script and the `waikiki` package with
+They run it in a **sandbox**: a copy of the script and the `jamgraf` package with
 the throwaway key's public half genuinely compiled into its `updater.py`, and a
 stub `build_macos.sh` that records whether it was reached and then fails. So the
 success path is a real Ed25519 match against compiled keys — not an environment
@@ -27,7 +27,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 
 REPO = Path(__file__).resolve().parent.parent
 VERSION = re.search(r'__version__ = "([^"]+)"',
-                    (REPO / "waikiki" / "__init__.py").read_text()).group(1)
+                    (REPO / "jamgraf" / "__init__.py").read_text()).group(1)
 
 
 def _keypair() -> tuple[str, str]:
@@ -57,7 +57,7 @@ class Sandbox:
         self.root = tmp / "repo"
         (self.root / "scripts").mkdir(parents=True)
         shutil.copy2(REPO / "scripts" / "release.sh", self.root / "scripts")
-        shutil.copytree(REPO / "waikiki", self.root / "waikiki",
+        shutil.copytree(REPO / "jamgraf", self.root / "jamgraf",
                         ignore=shutil.ignore_patterns("__pycache__"))
         self.built = tmp / "build-was-run"
         _executable(self.root / "scripts" / "build_macos.sh",
@@ -77,7 +77,7 @@ class Sandbox:
 
     def pin(self, *pub_hex: str) -> None:
         """Compile these public keys into the sandbox's updater, as a build would."""
-        updater = self.root / "waikiki" / "updater.py"
+        updater = self.root / "jamgraf" / "updater.py"
         text = updater.read_text()
         pinned = "".join(f'    "{k}",\n' for k in pub_hex)
         text, n = re.subn(r"PUBLIC_KEYS_HEX: tuple\[str, \.\.\.\] = \(\n.*?\)",
@@ -96,10 +96,10 @@ class Sandbox:
     def run(self, *args: str, path: str | None = None, shell: tuple = ("bash",),
             **env) -> subprocess.CompletedProcess:
         base = {k: v for k, v in os.environ.items()
-                if not k.startswith(("WAIKIKI_", "FAKE_GCLOUD"))
+                if not k.startswith(("JAMGRAF_", "FAKE_GCLOUD"))
                 and k not in ("SIGNING_KEY_PEM", "SIGNING_KEY_SOURCE")}
         base.update(PYTHON=sys.executable, TMPDIR=str(self.scratch),
-                    WAIKIKI_DATA=str(self.data),
+                    JAMGRAF_DATA=str(self.data),
                     PATH=f"{self.bin}{os.pathsep}{base['PATH']}",
                     FAKE_GCLOUD_LOG=str(self.log),
                     FAKE_GCLOUD_SECRET=str(self.secret))
@@ -139,8 +139,8 @@ def test_the_key_comes_from_secret_manager_by_default(good):
 
 
 def test_the_secret_name_and_project_can_be_chosen(good):
-    r = good.run("--check-key", WAIKIKI_UPDATE_SECRET="other-key",
-                 WAIKIKI_GCP_PROJECT="verinfast-prod")
+    r = good.run("--check-key", JAMGRAF_UPDATE_SECRET="other-key",
+                 JAMGRAF_GCP_PROJECT="verinfast-prod")
 
     assert r.returncode == 0, r.stderr
     assert good.gcloud_calls == [
@@ -192,7 +192,7 @@ def test_no_gcloud_says_how_to_get_it_and_how_to_do_without(sandbox):
 
     assert r.returncode != 0
     assert "gcloud is not installed" in r.stderr
-    assert "WAIKIKI_UPDATE_KEY" in r.stderr                  # the other way to sign
+    assert "JAMGRAF_UPDATE_KEY" in r.stderr                  # the other way to sign
 
 
 def test_an_empty_secret_is_refused(sandbox):
@@ -213,7 +213,7 @@ def test_an_explicit_key_file_wins_and_secret_manager_is_not_asked(sandbox):
     key.parent.mkdir()
     key.write_text(pem)
 
-    r = sandbox.run("--check-key", WAIKIKI_UPDATE_KEY=str(key))
+    r = sandbox.run("--check-key", JAMGRAF_UPDATE_KEY=str(key))
 
     assert r.returncode == 0, r.stderr
     assert f"the file {key}" in r.stdout
@@ -227,14 +227,14 @@ def test_a_key_file_inside_the_repo_is_still_refused(sandbox):
     inside = sandbox.root / "update-key.pem"
     inside.write_text(pem)
 
-    r = sandbox.run("--check-key", WAIKIKI_UPDATE_KEY=str(inside))
+    r = sandbox.run("--check-key", JAMGRAF_UPDATE_KEY=str(inside))
 
     assert r.returncode != 0
     assert "inside the repo" in r.stderr
 
 
 def test_a_key_file_that_does_not_exist_says_so(sandbox):
-    r = sandbox.run("--check-key", WAIKIKI_UPDATE_KEY=str(sandbox.tmp / "nope.pem"))
+    r = sandbox.run("--check-key", JAMGRAF_UPDATE_KEY=str(sandbox.tmp / "nope.pem"))
 
     assert r.returncode != 0
     assert "does not exist" in r.stderr
@@ -244,7 +244,7 @@ def test_a_key_file_that_does_not_exist_says_so(sandbox):
 
 @pytest.mark.parametrize("override", ["matching", ""])
 def test_a_public_key_override_is_refused_not_trusted(good, override):
-    """WAIKIKI_UPDATE_PUBKEY would let a release verify against anything at all.
+    """JAMGRAF_UPDATE_PUBKEY would let a release verify against anything at all.
 
     It replaces the pinned keys at runtime — fine for tests and private builds of
     the app, a trapdoor here: both checks would measure against the environment
@@ -254,18 +254,18 @@ def test_a_public_key_override_is_refused_not_trusted(good, override):
     """
     value = _keypair()[1] if override == "matching" else ""
 
-    r = good.run("--check-key", WAIKIKI_UPDATE_PUBKEY=value)
+    r = good.run("--check-key", JAMGRAF_UPDATE_PUBKEY=value)
 
     assert r.returncode != 0
-    assert "WAIKIKI_UPDATE_PUBKEY is set" in r.stderr
+    assert "JAMGRAF_UPDATE_PUBKEY is set" in r.stderr
     assert good.gcloud_calls == []                # refused before the key is fetched
 
 
 def test_the_release_path_refuses_the_override_too(good):
-    r = good.run(f"v{VERSION}", "--dry-run", WAIKIKI_UPDATE_PUBKEY="")
+    r = good.run(f"v{VERSION}", "--dry-run", JAMGRAF_UPDATE_PUBKEY="")
 
     assert r.returncode != 0
-    assert "WAIKIKI_UPDATE_PUBKEY is set" in r.stderr
+    assert "JAMGRAF_UPDATE_PUBKEY is set" in r.stderr
     assert not good.built.exists()
 
 
@@ -346,7 +346,7 @@ def test_a_caller_exported_variable_cannot_carry_the_key_onward(good):
 
     r = good.run("--check-key", PYTHON=str(spy),
                  SIGNING_KEY_PEM="exported-by-the-caller",
-                 WAIKIKI_UPDATE_KEY_PEM="also-exported-by-the-caller")
+                 JAMGRAF_UPDATE_KEY_PEM="also-exported-by-the-caller")
 
     assert r.returncode == 0, r.stderr
     envs = [p.read_text() for p in dumps.iterdir()]
@@ -358,7 +358,7 @@ def test_a_caller_exported_variable_cannot_carry_the_key_onward(good):
         # NUL-separated, because the key is a multi-line value and plain `env`
         # output cannot say where one variable ends and the next begins.
         holders = [v.split("=", 1)[0] for v in env.split("\0") if line in v]
-        assert holders == ["WAIKIKI_UPDATE_KEY_PEM"], f"key also carried by {holders}"
+        assert holders == ["JAMGRAF_UPDATE_KEY_PEM"], f"key also carried by {holders}"
     assert not any("exported-by-the-caller" in e for e in envs), \
         "a caller's exported variable reached a child process"
 
@@ -374,7 +374,7 @@ def test_genkey_says_how_to_store_a_first_key_and_how_to_rotate(sandbox):
     """
     key = sandbox.tmp / "fresh" / "update-key.pem"
 
-    r = sandbox.run("--genkey", WAIKIKI_UPDATE_KEY=str(key))
+    r = sandbox.run("--genkey", JAMGRAF_UPDATE_KEY=str(key))
 
     assert r.returncode == 0, r.stderr
     assert key.exists()

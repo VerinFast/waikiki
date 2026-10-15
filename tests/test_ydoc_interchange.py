@@ -15,9 +15,9 @@ import json
 
 import pytest
 
-from waikiki import db, store, ydoc
-from waikiki.vendor import wiki_interchange as wi
-from waikiki.vendor.wiki_interchange import (
+from jamgraf import db, store, ydoc
+from jamgraf.vendor import wiki_interchange as wi
+from jamgraf.vendor.wiki_interchange import (
     ROOT_TAGS,
     IncompatibleVersionError,
     SPEC_VERSION,
@@ -215,8 +215,8 @@ def test_image_sidecar_blob_must_match_its_hash(wiki):
 
     import pytest
 
-    from waikiki import ydoc
-    from waikiki.vendor import wiki_interchange as wi
+    from jamgraf import ydoc
+    from jamgraf.vendor import wiki_interchange as wi
 
     good = b"\x89PNG\r\n\x1a\n-real-bytes"
     honest = wi.ImageRef(image_id="1", media_type="image/png",
@@ -238,7 +238,7 @@ def test_image_sidecar_blob_must_match_its_hash(wiki):
 
 
 def test_image_ref_pattern_does_not_match_partial_ids():
-    from waikiki import ydoc
+    from jamgraf import ydoc
 
     assert ydoc._IMG_REF.findall("![a](/image/12/pic.png)") == ["12"]
     assert ydoc._IMG_REF.findall("![a](/image/12)") == ["12"]
@@ -254,7 +254,7 @@ def test_remote_rename_reaches_the_projection(wiki):
     """import_changelog re-projected with the LOCAL title, so a remote rename
     landed in the canonical doc but never in pages.title — the doc and the UI
     disagreed permanently."""
-    from waikiki import db, store, ydoc
+    from jamgraf import db, store, ydoc
 
     store.create_page("Gear Golem", "# Gear Golem\n\nbody")
     page = store.get_page("gear-golem")
@@ -263,7 +263,7 @@ def test_remote_rename_reaches_the_projection(wiki):
     # A peer renames the page in its copy of the doc, then sends a changelog.
     doc = ydoc.canonical_doc(page)
     ydoc._apply_meta(doc, "Gearwyrm", "gear-golem")
-    from waikiki.vendor import wiki_interchange as wi
+    from jamgraf.vendor import wiki_interchange as wi
     raw = wi.produce_changelog(doc, sv).serialize()
 
     store.import_changelog("gear-golem", raw)
@@ -273,8 +273,8 @@ def test_remote_rename_reaches_the_projection(wiki):
 def test_remote_tags_reach_the_tag_index(wiki):
     """Tags that live only in the doc's `tags` root were dropped by _index_meta,
     so the tag index diverged from the canonical doc."""
-    from waikiki import store, ydoc
-    from waikiki.vendor import wiki_interchange as wi
+    from jamgraf import store, ydoc
+    from jamgraf.vendor import wiki_interchange as wi
 
     store.create_page("Meru", "# Meru\n\nbody")          # no frontmatter at all
     page = store.get_page("meru")
@@ -292,8 +292,8 @@ def test_remote_tags_reach_the_tag_index(wiki):
 def test_frontmatter_change_wins_when_it_is_the_one_that_moved(wiki):
     """Last-in wins on either side: if the incoming update moved the frontmatter
     and not the tags root, the frontmatter is canonical."""
-    from waikiki import store, ydoc
-    from waikiki.vendor import wiki_interchange as wi
+    from jamgraf import store, ydoc
+    from jamgraf.vendor import wiki_interchange as wi
 
     store.create_page("Bram", "---\ntags: guard\n---\n# Bram\n\nbody")
     page = store.get_page("bram")
@@ -313,8 +313,8 @@ def test_snapshot_tags_root_wins_over_disagreeing_frontmatter(wiki):
     """A snapshot is the sender's whole state, so its canonical `tags` root wins.
     Comparing the decoded root against itself made root_moved always false, so a
     disagreeing frontmatter silently overwrote the peer's tags."""
-    from waikiki import store, ydoc
-    from waikiki.vendor import wiki_interchange as wi
+    from jamgraf import store, ydoc
+    from jamgraf.vendor import wiki_interchange as wi
 
     # A peer's page whose canonical root and frontmatter disagree.
     doc = wi.build_page_doc(
@@ -329,8 +329,8 @@ def test_snapshot_tags_root_wins_over_disagreeing_frontmatter(wiki):
 
 def test_snapshot_frontmatter_used_when_it_is_the_only_source(wiki):
     """With an empty tags root, the frontmatter is the sole source and is kept."""
-    from waikiki import store, ydoc
-    from waikiki.vendor import wiki_interchange as wi
+    from jamgraf import store, ydoc
+    from jamgraf.vendor import wiki_interchange as wi
 
     doc = wi.build_page_doc(
         content="---\ntags: solo\n---\n# Bram\n\nbody",

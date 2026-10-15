@@ -6,7 +6,7 @@ two decisions that these tests pin, because both are the kind that quietly
 regress:
 
 * **the exported file carries a header.** The body alone does not name the
-  page. The slug is in the filename, but the title is a column and Waikiki
+  page. The slug is in the filename, but the title is a column and Jamgraf
   resolves `[[links]]` by title, so a wiki restored from filenames alone comes
   back with its links pointing at pages that answer to nothing. `title:` fixes
   that and `parent:` carries the hierarchy markdown used to drop.
@@ -25,7 +25,7 @@ import zipfile
 
 import pytest
 
-from waikiki import db, rag, store, structure, wikis
+from jamgraf import db, rag, store, structure, wikis
 
 
 def _export(tmp_path, slug="main", name="docs"):
@@ -194,7 +194,7 @@ def test_a_merge_never_deletes_and_never_flattens(wiki, tmp_path):
 # --- Slugs, titles and collisions --------------------------------------------
 
 def test_the_filename_is_the_slug_and_the_title_falls_back(wiki, tmp_path):
-    """A hand-written folder Waikiki never exported still imports."""
+    """A hand-written folder Jamgraf never exported still imports."""
     docs = tmp_path / "hand-written"
     docs.mkdir()
     (docs / "Getting Started.md").write_text("# Getting started\nRun it.\n")
@@ -208,7 +208,7 @@ def test_the_filename_is_the_slug_and_the_title_falls_back(wiki, tmp_path):
     assert store.get_page("release-notes")["title"] == "Release notes"
     # A `#` comment inside a fence is not the page's title.
     assert store.get_page("shell")["title"] == "Shell"
-    # Text Waikiki did not write comes back unreformatted.
+    # Text Jamgraf did not write comes back unreformatted.
     assert store.get_page("shell")["markdown"] == "```sh\n# not a title\n```\n"
 
 
@@ -280,7 +280,7 @@ def test_the_upload_route_opens_a_markdown_zip_too(wiki, tmp_path):
     """The browser fallback for Open is the other door to the same reader."""
     from fastapi.testclient import TestClient
 
-    from waikiki.api import app
+    from jamgraf.api import app
 
     _populate()
     with TestClient(app, client=("127.0.0.1", 1)) as c:
@@ -292,7 +292,7 @@ def test_the_upload_route_opens_a_markdown_zip_too(wiki, tmp_path):
                    follow_redirects=False)
 
     assert r.status_code == 303, r.status_code
-    landed = r.cookies.get("waikiki_wiki")
+    landed = r.cookies.get("jamgraf_wiki")
     assert landed and wikis.exists(landed), r.headers.get("set-cookie")
     db.current_wiki.set(landed)
     assert store.get_page("navigation")["title"] == "Navigation"
@@ -339,7 +339,7 @@ def test_a_wiki_file_still_wins_over_the_markdown_sniff(wiki, tmp_path):
 
 def test_mcp_export_and_import_are_a_pair(wiki, tmp_path, monkeypatch):
     """The agent-facing half of the same round-trip (rule 5: one code path)."""
-    from waikiki import mcp_server
+    from jamgraf import mcp_server
 
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
     _populate()

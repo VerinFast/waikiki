@@ -11,9 +11,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from waikiki import db, store
+from jamgraf import db, store
 
-API_SRC = (Path(__file__).resolve().parent.parent / "waikiki" / "api.py").read_text()
+API_SRC = (Path(__file__).resolve().parent.parent / "jamgraf" / "api.py").read_text()
 
 # SQL verbs and the cursor accessor that must never appear in the route module.
 _SQL = re.compile(r"\b(SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\b")

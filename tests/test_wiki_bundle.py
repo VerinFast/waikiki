@@ -21,8 +21,8 @@ import zipfile
 
 import pytest
 
-from waikiki import db, elements, store, wikis, ydoc
-from waikiki.vendor import wiki_interchange as wi
+from jamgraf import db, elements, store, wikis, ydoc
+from jamgraf.vendor import wiki_interchange as wi
 
 
 # --- Fixtures / helpers -------------------------------------------------------
@@ -243,7 +243,7 @@ def _keys(obj) -> set:
 def test_the_payload_carries_no_server_only_field(two_wikis):
     """Content only: the bundle must not name a tenant, a wiki, or a permission.
 
-    Waikiki is the single-owner local side — it has no tenancy to leak — but the
+    Jamgraf is the single-owner local side — it has no tenancy to leak — but the
     payload it produces is what Kahala imports *up*, so a server-only field here
     is exactly the field an import could try to escalate with. The server
     re-attaches identity from its own context; the format never carries it.
@@ -396,7 +396,7 @@ def _retag(raw: bytes, **fields) -> bytes:
 # Everything above proves the bundle round-trips between two wikis in-process.
 # None of it proved a person could open one, and for a whole release they could
 # not: `wikis.import_from` knew only the wiki-file shape and reported a valid
-# bundle as "not a Waikiki wiki file". Both halves of the round-trip existed and
+# bundle as "not a Jamgraf wiki file". Both halves of the round-trip existed and
 # passed. These tests are the pair being *reachable* — see
 # `tests/test_export_import_parity.py` for the rule that keeps it that way.
 
@@ -439,7 +439,7 @@ def test_a_refused_bundle_says_why_and_leaves_no_wiki_behind(two_wikis, tmp_path
     """A bundle the version gate rejects must not strand an empty wiki.
 
     It must also refuse in the bundle's own words: the wiki-file branch reporting
-    "not a Waikiki wiki file" about a valid-but-incompatible bundle is the
+    "not a Jamgraf wiki file" about a valid-but-incompatible bundle is the
     original bug, dressed as a different error.
     """
     src, _dst = two_wikis
@@ -453,7 +453,7 @@ def test_a_refused_bundle_says_why_and_leaves_no_wiki_behind(two_wikis, tmp_path
         wikis.import_from(str(path))
     assert "spec v99" in str(exc.value), \
         f"the refusal must name the real reason, got: {exc.value}"
-    assert "not a Waikiki wiki file" not in str(exc.value)
+    assert "not a Jamgraf wiki file" not in str(exc.value)
     assert {w["slug"] for w in wikis.list_wikis()} == before, \
         "a refused bundle left an empty wiki in the registry"
 

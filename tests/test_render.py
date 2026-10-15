@@ -1,4 +1,4 @@
-from waikiki import render
+from jamgraf import render
 
 
 def test_gfm_table_renders():

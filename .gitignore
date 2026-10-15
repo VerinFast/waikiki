@@ -8,7 +8,7 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
-# Waikiki data (the live SQLite DB + WAL)
+# Jamgraf data (the live SQLite DB + WAL)
 data/
 *.db
 *.db-wal
@@ -31,8 +31,8 @@ models/
 .idea/
 .vscode/
 
-# icon build intermediates (keep Waikiki.icns)
-assets/Waikiki.iconset/
+# icon build intermediates (keep Jamgraf.icns)
+assets/Jamgraf.iconset/
 assets/icon-1024.png
 .venv-build/
 dist-pypi/

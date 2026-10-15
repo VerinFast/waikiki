@@ -1,4 +1,4 @@
-from waikiki import debuglog
+from jamgraf import debuglog
 
 
 def test_record_tail_clear(wiki):

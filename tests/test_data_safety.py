@@ -20,8 +20,8 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
-from waikiki import appconfig, backups, config, db, store, wikis, ydoc
-from waikiki.api import app
+from jamgraf import appconfig, backups, config, db, store, wikis, ydoc
+from jamgraf.api import app
 
 
 # --- Q1: crash / power loss mid-write ----------------------------------------
@@ -225,13 +225,13 @@ def test_a_real_kill_between_the_writes_lands_nothing(wiki):
 
     script = textwrap.dedent("""
         import os
-        from waikiki import db, store
+        from jamgraf import db, store
         db.current_wiki.set("main")
         store._sync_ydoc = lambda *a, **k: os._exit(9)   # die mid-save
         store.update_page("ledger", "Ledger", "version two")
         os._exit(0)                                      # never reached
     """)
-    env = dict(os.environ, WAIKIKI_DATA=str(config.DATA_DIR))
+    env = dict(os.environ, JAMGRAF_DATA=str(config.DATA_DIR))
     proc = subprocess.run([sys.executable, "-c", script], cwd=str(config.ROOT),
                           env=env, capture_output=True, timeout=120)
     assert proc.returncode == 9, (proc.returncode, proc.stderr.decode()[-2000:])
@@ -478,7 +478,7 @@ def test_other_wikis_stay_usable_when_the_default_is_corrupt(wiki):
         assert "Home" in found.text
         made = client.post("/api/pages", json={"title": "Still Writable",
                                                "markdown": "yes"},
-                           headers={"X-Waikiki-Wiki": "beaconlight"})
+                           headers={"X-Jamgraf-Wiki": "beaconlight"})
         assert made.status_code == 200, made.text
 
 
@@ -503,7 +503,7 @@ def test_manage_wikis_lists_what_it_can_when_a_wiki_is_corrupt(wiki):
 def test_a_corrupt_wiki_file_is_left_exactly_as_it_was(wiki):
     """A corrupt database is the user's data in a damaged state.
 
-    It may still be recoverable — by a later Waikiki, by `sqlite3 .recover`, by
+    It may still be recoverable — by a later Jamgraf, by `sqlite3 .recover`, by
     a specialist. Nothing here may delete it, truncate it, overwrite it or
     "repair" it in place.
     """
@@ -605,7 +605,7 @@ def test_an_agent_is_told_a_wiki_is_unreadable_rather_than_switched_into_it(
     fail obscurely, one at a time. Say it once, at the point of the decision, and
     name the other wikis that do work.
     """
-    from waikiki import mcp_server
+    from jamgraf import mcp_server
 
     monkeypatch.setattr(mcp_server, "_ACTIVE", None)
     _seed("main", "main text")
@@ -858,7 +858,7 @@ def test_yesterdays_text_is_reachable_from_the_article_page(wiki):
     store.update_page("packing-list", "Packing List", "oops, I deleted everything")
 
     with TestClient(app, client=("127.0.0.1", 12345)) as client:
-        client.cookies.set("waikiki_wiki", "main")
+        client.cookies.set("jamgraf_wiki", "main")
 
         article = client.get("/wiki/packing-list")
         assert article.status_code == 200

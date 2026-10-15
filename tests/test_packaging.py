@@ -1,7 +1,7 @@
 """The two places this app declares its dependencies must agree.
 
 `requirements.txt` is what the build and the dev venv install; the `dependencies`
-list in `pyproject.toml` is what `pip install waikiki` resolves. Packaging for
+list in `pyproject.toml` is what `pip install jamgraf` resolves. Packaging for
 PyPI created that duplication, and a Dependabot PR moves one file at a time — so
 without this the wheel on PyPI could pin something different from the app we
 test and ship, and nothing would say so.
@@ -40,10 +40,10 @@ def test_pyproject_dependencies_match_requirements():
 
 def test_the_packaged_version_matches_the_app_version():
     """A wheel that says 1.0.2 while the app says 1.0.3 is a support nightmare."""
-    import waikiki
+    import jamgraf
 
     data = tomllib.loads((_ROOT / "pyproject.toml").read_text())
-    assert data["project"]["version"] == waikiki.__version__
+    assert data["project"]["version"] == jamgraf.__version__
 
 
 # --- The desktop shell's file-dialog filters ----------------------------------
@@ -54,7 +54,7 @@ def test_the_packaged_version_matches_the_app_version():
 # So one comma in a description is an Open button that does nothing — no dialog,
 # no error, because the exception escapes the JS-API method and merely rejects
 # the promise the page is awaiting. That shipped once, from a label that read
-# "Waikiki wiki, bundle or markdown zip".
+# "Jamgraf wiki, bundle or markdown zip".
 #
 # The pattern is restated here rather than imported: pywebview is a packaging
 # dependency, absent from the test venv, and this has to fail in CI too. If
@@ -67,10 +67,10 @@ _PYWEBVIEW_FILTER = re.compile(r'^([\w ]+)\((\*(?:\.(?:\w+|\*))*(?:;\*(?:\.(?:\w
 def _dialog_filters() -> list[str]:
     """Every file-dialog filter the desktop shell declares.
 
-    Parsed, not imported: `waikiki_app.py` imports `webview` at call time but
+    Parsed, not imported: `jamgraf_app.py` imports `webview` at call time but
     starts a server at module scope, and the suite must not run either.
     """
-    tree = ast.parse((_ROOT / "waikiki_app.py").read_text())
+    tree = ast.parse((_ROOT / "jamgraf_app.py").read_text())
     found: list[str] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
@@ -88,7 +88,7 @@ def test_every_file_dialog_filter_is_one_pywebview_accepts():
     """A filter pywebview rejects is a button that silently does nothing."""
     filters = _dialog_filters()
     assert filters, (
-        "no *FILE_TYPES tuple found in waikiki_app.py — if the dialog filters "
+        "no *FILE_TYPES tuple found in jamgraf_app.py — if the dialog filters "
         "moved or were inlined again, point this test at them rather than "
         "deleting it; an unchecked filter is a dead Open button")
     for f in filters:

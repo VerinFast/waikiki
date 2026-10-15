@@ -1,4 +1,4 @@
-from waikiki import db, embeddings
+from jamgraf import db, embeddings
 from tests.conftest import FakeEmbedder
 
 

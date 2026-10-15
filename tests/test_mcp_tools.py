@@ -5,7 +5,7 @@ import time
 import anyio
 import pytest
 
-from waikiki import help_content, mcp_server, store
+from jamgraf import help_content, mcp_server, store
 
 
 def test_mcp_custom_order_tools(wiki, monkeypatch):

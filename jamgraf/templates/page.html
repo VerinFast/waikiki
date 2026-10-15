@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} — Jamgraf{% endblock %}
+{% block topbar_actions %}{% if not trashed %}{% include "_page_options.html" %}{% endif %}{% endblock %}
+{% block content %}
+  {# Chat can propose an edit but never apply one. The offer lands in the
+     suggestion queue, which lives on Details — so without this the page you
+     asked to change looks untouched and the proposal is invisible. Say it here,
+     where you are; review still happens where the diff and the buttons are. #}
+  {% if pending_count and not trashed %}
+    <p class="proposal-note">
+      <a href="/wiki/{{ page.slug }}/details#suggestions">
+        {{ pending_count }} proposed change{{ '' if pending_count == 1 else 's' }}
+        waiting for your review</a> — nothing changes until you apply it.
+    </p>
+  {% endif %}
+
+  <script>window.JAMGRAF_PAGE = {slug: {{ page.slug | tojson }}, wiki: {{ current_wiki | tojson }}};</script>
+  <article class="article">
+    {% if trashed %}
+      <div class="banner err">
+        This page is in the Trash (deleted {{ page.deleted_at }}).
+        <form method="post" action="/wiki/{{ page.slug }}/restore" style="display:inline">
+          <button class="btn" type="submit">Restore</button>
+        </form>
+        <form method="post" action="/wiki/{{ page.slug }}/purge" style="display:inline"
+              onsubmit="return confirm('Permanently delete this page? This cannot be undone.')">
+          <button class="btn danger" type="submit">Delete forever</button>
+        </form>
+      </div>
+    {% endif %}
+
+    {% if crumbs %}
+      <nav class="crumbs" aria-label="Breadcrumb">
+        {% for c in crumbs %}
+          <a href="/wiki/{{ c.slug }}">{{ c.title }}</a>
+          <span class="crumb-sep" aria-hidden="true">›</span>
+        {% endfor %}
+        <span class="crumb-here">{{ page.title }}</span>
+      </nav>
+    {% endif %}
+
+    <div class="article-head">
+      <h1>{{ page.title }}</h1>
+    </div>
+
+    {% if not trashed %}
+      <nav class="pagetabs">
+        <a class="tab on" href="/wiki/{{ page.slug }}">Article</a>
+        <a class="tab" href="/wiki/{{ page.slug }}/metadata">Metadata</a>
+        <a class="tab" href="/wiki/{{ page.slug }}/details">Details{% if comment_count %} <span class="tabcount">{{ comment_count }}</span>{% endif %}</a>
+      </nav>
+
+      {# The article's one link to its own past (issue #73). Version history is
+         this app's undo, and nothing here used to name it — the safety net was
+         real and unreachable, which for the person who needs it is the same as
+         not having one. Same convention as the MCP `hint`: say what is not in
+         front of you, then the single move that fetches it, and only when it is
+         true. So a page that has been edited says when and opens the history
+         itself; a page that never has says so plainly rather than offering a
+         door to an empty room. #}
+      <p class="pagehist">
+        {% if version_count and version_count > 1 %}{% set earlier = version_count - 1 %}
+          <a class="lastedit" href="/wiki/{{ page.slug }}/details?show=history#history"
+             title="Page history — see what changed and put an earlier version back">Edited {{ last_changed | ago }}<span class="lastedit-note"> — {{ earlier }} earlier version{{ 's' if earlier != 1 }} you can go back to</span></a>
+        {% else %}
+          <span class="lastedit-none">Written {{ last_changed | ago }} — no earlier versions yet</span>
+        {% endif %}
+      </p>
+    {% endif %}
+
+    {% if parent %}
+      <p class="muted">↳ child of <a href="/wiki/{{ parent.slug }}">{{ parent.title }}</a></p>
+    {% endif %}
+    {% if tags %}
+      <div class="tagcloud">
+        {% for t in tags %}<a class="tagchip" href="/tag/{{ t }}">{{ t }}</a>{% endfor %}
+      </div>
+    {% endif %}
+
+    {% if toc and toc | length >= 2 %}
+      <details class="toc" open>
+        <summary>Contents</summary>
+        <ul>
+          {% for h in toc %}
+            <li class="lvl{{ h.level }}"><a href="#{{ h.slug }}">{{ h.text }}</a></li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+
+    <div class="rendered">{{ page.html | safe }}</div>
+
+    {% if children %}
+      <details class="history" open>
+        <summary>Sub-pages ({{ children | length }})</summary>
+        <ul>
+          {% for c in children %}<li><a href="/wiki/{{ c.slug }}">{{ c.title }}</a></li>{% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+  </article>
+{% endblock %}

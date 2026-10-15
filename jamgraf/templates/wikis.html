@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Wikis — Jamgraf{% endblock %}
+{% block content %}
+  <div class="article-head">
+    <h1>Wikis</h1>
+    <div class="tools">
+      <button class="btn" type="button" id="open-file">Open wiki file…</button>
+      <button class="btn" type="button" id="open-md" hidden>Open markdown folder…</button>
+    </div>
+  </div>
+  {% if error %}<div class="banner err">{{ error }}</div>{% endif %}
+  {% if ok %}<div class="banner">{{ ok }}</div>{% endif %}
+  <p class="muted">Each wiki is a fully isolated database file — pages, search, and
+    <code>[[links]]</code> never cross between them. Save a wiki to a file to back
+    it up or move it; open one to bring it in. Open takes any shape Jamgraf
+    writes — a <code>.wiki</code> save, a wiki bundle, or a folder (or zip) of
+    exported <code>.md</code> pages — and reads the file's shape, not its
+    name.</p>
+
+  {# Browser fallback for Open (the desktop app uses a native dialog instead). #}
+  <form id="import-form" method="post" action="/wikis/import"
+        enctype="multipart/form-data" class="addmodel" style="display:none">
+    <input type="file" name="file" accept=".wiki,.db,.zip" required>
+    <button class="btn primary" type="submit">Open</button>
+  </form>
+
+  <table class="modeltable">
+    <tbody>
+    {% for w in wikis %}
+      <tr>
+        <td><strong>{{ w.name }}</strong> <span class="muted">/{{ w.slug }}</span>
+          {% if w.slug == current_wiki %}<span class="badge human">active</span>{% endif %}
+          {% set s = stats[w.slug] %}
+          {% if s.unreadable %}
+            {# A file SQLite can't open. Say so here rather than 500 the page:
+               this is where someone comes to open a backup or move to a wiki
+               that works, so it has to render. See issue #71. #}
+            <span class="badge ai">can’t be read</span>
+            <div class="muted wikistats">
+              {{ s.reason }} · {{ (s.bytes / 1048576) | round(1) }} MB on disk,
+              left untouched
+            </div>
+            {# The restore route, spelled out where the damage is reported.
+               Settings explains it too, but Settings reads the active wiki —
+               which may be this one. #}
+            <details class="muted wikistats">
+              <summary>How to get this wiki back</summary>
+              <ol>
+                {% if restore.latest %}
+                  <li>Open <code>{{ restore.dir }}</code> and take the newest
+                    folder — <strong>{{ restore.latest.when }}</strong>.</li>
+                {% else %}
+                  <li>Open <code>{{ restore.dir }}</code>: one folder per date,
+                    each holding a <code>{{ w.slug }}.db</code>.
+                    {% if not restore.enabled %}Automatic backups are currently
+                    switched off, so there may be none — any <code>.wiki</code>
+                    file you exported works here too.{% endif %}</li>
+                {% endif %}
+                <li>Use <em>Open wiki file…</em> above on its
+                  <code>{{ w.slug }}.db</code>.</li>
+                <li>It opens as a separate wiki, so you can compare before
+                  deciding anything. The damaged file is left as it is.</li>
+              </ol>
+            </details>
+          {% else %}
+          <div class="muted wikistats">
+            {{ s.articles }} article{{ '' if s.articles == 1 else 's' }} ·
+            {{ s.links }} link{{ '' if s.links == 1 else 's' }}
+            {% if s.links_broken %}(<a class="broken" href="/broken-links">{{ s.links_broken }} broken</a>){% endif %} ·
+            {{ (s.bytes / 1048576) | round(1) }} MB
+            {% if s.trashed %} · {{ s.trashed }} in trash{% endif %}
+          </div>
+          {% endif %}
+        </td>
+        <td>
+          <details class="muted wikistats">
+            <summary>Rename…</summary>
+            <form method="post" action="/wikis/{{ w.slug }}/rename" class="addmodel">
+              <label>Name <input type="text" name="name" value="{{ w.name }}"
+                                 required></label>
+              <button class="btn" type="submit">Rename</button>
+            </form>
+            <p class="muted">The name is just the label. The <em>address</em> is
+              in every link to this wiki and is the name of its file, so
+              changing it renames the file and any tab with this wiki open
+              needs a reload.</p>
+            <form method="post" action="/wikis/{{ w.slug }}/address"
+                  class="addmodel"
+                  onsubmit="return confirm('Change the address of {{ w.name }} from /{{ w.slug }}? Links using the old address will stop working.')">
+              <label>Address <input type="text" name="new_slug"
+                                    value="{{ w.slug }}" required
+                                    {{ 'disabled' if w.slug == help_wiki }}></label>
+              <button class="btn" type="submit"
+                      {{ 'disabled' if w.slug == help_wiki }}>Change address</button>
+            </form>
+            {% if w.slug == help_wiki %}
+              <p class="muted">The Help wiki's address is built in — the app
+                re-creates it whenever it is missing, so a renamed one would
+                come back as a second copy.</p>
+            {% endif %}
+          </details>
+        </td>
+        <td>
+          <form method="post" action="/switch-wiki">
+            <input type="hidden" name="wiki" value="{{ w.slug }}">
+            <button class="btn" type="submit">Switch to</button>
+          </form>
+        </td>
+        <td>
+          <button class="btn" type="button" data-save="{{ w.slug }}"
+                  {{ 'disabled' if s.unreadable }}>Save to file…</button>
+          {% if s.unreadable %}
+            <span class="btn" aria-disabled="true">Export .md</span>
+          {% else %}
+            <a class="btn" href="/wikis/{{ w.slug }}/export-md">Export .md</a>
+          {% endif %}
+        </td>
+        <td>
+          <form method="post" action="/wikis/{{ w.slug }}/delete"
+                onsubmit="return confirm('Delete the {{ w.name }} wiki and all its pages? This cannot be undone.')">
+            <button class="btn danger" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <h4>Create a wiki</h4>
+  <form method="post" action="/wikis/create" class="addmodel">
+    <input type="text" name="name" placeholder="e.g. Beaconlight" required>
+    <button class="btn primary" type="submit">Create wiki</button>
+  </form>
+
+  <script>
+    function native() { return window.pywebview && window.pywebview.api; }
+
+    document.querySelectorAll('[data-save]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var slug = btn.getAttribute('data-save');
+        if (native()) {
+          window.pywebview.api.save_wiki(slug).then(function (r) {
+            if (r.ok) alert('Saved to ' + r.path);
+            else if (!r.cancelled) alert('Save failed: ' + r.error);
+          });
+        } else {
+          window.location = '/wikis/' + slug + '/export';   // browser: download
+        }
+      });
+    });
+
+    // A folder can only be picked by the native dialog; in a browser the same
+    // pages arrive as the zip that "Export .md" downloads, through Open.
+    if (native()) document.getElementById('open-md').hidden = false;
+
+    document.getElementById('open-md').addEventListener('click', function () {
+      window.pywebview.api.open_markdown_folder().then(function (r) {
+        if (r.ok) {
+          document.cookie = 'jamgraf_wiki=' + r.slug + ';path=/;max-age=31536000';
+          window.location = '/';
+        } else if (!r.cancelled) {
+          alert('Open failed: ' + r.error);
+        }
+      });
+    });
+
+    document.getElementById('open-file').addEventListener('click', function () {
+      if (native()) {
+        window.pywebview.api.open_wiki().then(function (r) {
+          if (r.ok) {
+            document.cookie = 'jamgraf_wiki=' + r.slug + ';path=/;max-age=31536000';
+            window.location = '/';
+          } else if (!r.cancelled) {
+            alert('Open failed: ' + r.error);
+          }
+        });
+      } else {
+        document.getElementById('import-form').style.display = 'flex';  // browser: upload
+      }
+    });
+  </script>
+{% endblock %}

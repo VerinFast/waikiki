@@ -2,7 +2,7 @@
 
 Two halves of issue #63:
 
-1. When Waikiki is displayed *inside* Doorman, "use Doorman when it is running"
+1. When Jamgraf is displayed *inside* Doorman, "use Doorman when it is running"
    is not a question worth asking — Doorman is the host. The integration is
    forced on and the control is rendered locked, with the reason.
 2. Generation, chat and images go to a Doorman agent when Doorman offers one,
@@ -19,8 +19,8 @@ import anyio
 import httpx
 from fastapi.testclient import TestClient
 
-from waikiki import ai, chat, clirun, doorman, imagegen, shellenv, store
-from waikiki.api import app
+from jamgraf import ai, chat, clirun, doorman, imagegen, shellenv, store
+from jamgraf.api import app
 
 HEALTH = {"ok": True, "version": "0.20.0",
           "capabilities": {"ask": True, "image": True, "tts": False}}
@@ -162,7 +162,7 @@ def test_a_doorman_iframe_is_embedded(wiki, monkeypatch):
 
 def test_an_iframe_without_doorman_is_not_embedded(wiki, monkeypatch):
     """'Embedded' has to mean embedded *in Doorman*, not in any iframe — or any
-    page on the internet could frame Waikiki and switch the integration on."""
+    page on the internet could frame Jamgraf and switch the integration on."""
     _doorman(monkeypatch, health=None)
     doorman.note_request({"sec-fetch-dest": "iframe"})
     assert doorman.embedded() is False
@@ -178,7 +178,7 @@ def test_an_ordinary_request_is_not_embedded(wiki, monkeypatch):
 
 
 def test_a_framing_check_costs_nothing_when_nothing_frames_us(wiki, monkeypatch):
-    """Standalone Waikiki must not probe Doorman on every request."""
+    """Standalone Jamgraf must not probe Doorman on every request."""
     calls = []
     _doorman(monkeypatch, calls=calls)
     doorman.note_request({"user-agent": "x"})
@@ -209,7 +209,7 @@ def test_settings_locks_the_control_when_embedded(wiki, monkeypatch):
     with _client() as c:
         body = c.get("/settings", headers={"sec-fetch-dest": "iframe"}).text
     assert "disabled" in body
-    assert "Waikiki is running inside Doorman" in body
+    assert "Jamgraf is running inside Doorman" in body
     assert "Use Doorman when it is running" in body, "hidden, not locked"
 
 
@@ -217,7 +217,7 @@ def test_settings_stays_a_free_choice_in_a_plain_window(wiki, monkeypatch):
     _doorman(monkeypatch)
     with _client() as c:
         body = c.get("/settings").text
-    assert "Waikiki is running inside Doorman" not in body
+    assert "Jamgraf is running inside Doorman" not in body
     assert "Use Doorman when it is running" in body
 
 
@@ -524,7 +524,7 @@ def test_a_real_doorman_image_failure_is_shown_not_swallowed(wiki, monkeypatch):
 
 
 # =============================================================================
-# Standalone Waikiki is untouched
+# Standalone Jamgraf is untouched
 # =============================================================================
 
 def test_no_doorman_means_todays_behaviour_everywhere(wiki, monkeypatch):

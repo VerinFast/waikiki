@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Templates — Jamgraf{% endblock %}
+{% block content %}
+  <div class="article-head">
+    <h1>Templates <span class="muted">— {{ current_wiki_name }}</span></h1>
+    <a class="btn primary" href="/templates/new">+ New template</a>
+  </div>
+  <p class="muted">Reusable page skeletons. Start a page from one;
+    <code>{{ '{{title}}' }}</code> becomes the page title. Templates accept
+    Markdown <strong>and arbitrary HTML</strong>.</p>
+
+  {% if templates_list %}
+    <ul class="tpl-list">
+      {% for t in templates_list %}
+        <li>
+          <a class="tpl-name" href="/templates/{{ t.id }}/edit">{{ t.name }}</a>
+          {% if t.meta_schema and t.meta_schema.strip() %}
+            <span class="muted" title="Declares a metadata schema">· typed metadata</span>
+          {% endif %}
+          <span class="tpl-actions">
+            <a class="btn small" href="/new?template={{ t.id }}">New page →</a>
+            <a class="btn small" href="/templates/{{ t.id }}/edit">Edit</a>
+            <form method="post" action="/templates/{{ t.id }}/delete" style="display:inline"
+                  onsubmit="return confirm('Delete this template?')">
+              <button class="btn small danger" type="submit">Delete</button>
+            </form>
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">No templates yet. <a href="/templates/new">Create one →</a></p>
+  {% endif %}
+{% endblock %}

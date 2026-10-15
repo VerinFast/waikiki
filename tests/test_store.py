@@ -1,4 +1,4 @@
-from waikiki import store
+from jamgraf import store
 
 
 def test_create_and_get(wiki):
@@ -50,7 +50,7 @@ def test_soft_delete_restore_hard_delete(wiki):
 
 
 def test_version_retention_prunes(wiki):
-    from waikiki import db
+    from jamgraf import db
     db.set_setting("retention_versions", "3")
     store.create_page("Churn", "v1")
     for i in range(2, 8):
@@ -69,7 +69,7 @@ def test_restore_version(wiki):
 
 
 def test_sweep_trash_respects_days(wiki):
-    from waikiki import db
+    from jamgraf import db
     db.set_setting("retention_trash_days", "30")
     store.create_page("Old", "x")
     store.soft_delete("old")
@@ -158,7 +158,7 @@ def test_list_pages_children_respects_other_filters(wiki):
 
 
 def test_child_excluded_from_main_search(wiki):
-    from waikiki import rag
+    from jamgraf import rag
     store.create_page("Top", "unique aardvark content")
     store.create_page("Sub", "unique aardvark content in child")
     store.set_parent("sub", "top")

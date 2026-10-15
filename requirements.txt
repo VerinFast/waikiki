@@ -5,7 +5,7 @@ jinja2>=3.1
 python-dateutil>=2.9            # iCalendar RRULE expansion (calendar feeds)
 python-multipart>=0.0.32        # form / file uploads
 # Arrives transitively with FastAPI, but it is also what validates page metadata
-# against a template's declared schema (waikiki/metaschema.py) — a domain rule,
+# against a template's declared schema (jamgraf/metaschema.py) — a domain rule,
 # not a web-framework detail. Named here so that use doesn't rest on FastAPI
 # happening to pull it in. v2 is required: TypeAdapter is a v2 API.
 pydantic>=2.7
@@ -30,7 +30,7 @@ httpx>=0.28.1
 
 # --- Update signature verification ---
 # The updater Ed25519-verifies every downloaded bundle against a pinned public
-# key (waikiki/updater.py). This arrives transitively today, but the updater is
+# key (jamgraf/updater.py). This arrives transitively today, but the updater is
 # the one code path that executes a download — it must not depend on another
 # package happening to pull its verification primitive in.
 cryptography>=50.0
@@ -47,15 +47,15 @@ anthropic>=1.0.0
 fastmcp>=3.4.7
 
 # --- Real-time collaborative editing (CRDT) + canonical Y.Doc persistence ---
-# The Y.Doc is Waikiki's canonical persisted page state (see waikiki/ydoc.py),
+# The Y.Doc is Jamgraf's canonical persisted page state (see jamgraf/ydoc.py),
 # not just a live editing buffer. The upper cap keeps us on the same 0.1x Yjs v1
 # update-format line as the vendored wiki-interchange lib (below), so snapshots
-# and changelogs stay mergeable across the Kahala <-> Waikiki round-trip.
+# and changelogs stay mergeable across the Kahala <-> Jamgraf round-trip.
 pycrdt>=0.14.4,<0.15         # Yjs/Yrs bindings — the shared document engine
 pycrdt-websocket>=0.16.4   # y-websocket-compatible server for browser sync
 
 # --- Interchange format (VENDORED, not on PyPI) ---
-# wiki-interchange is vendored at waikiki/vendor/wiki_interchange/, pinned to
+# wiki-interchange is vendored at jamgraf/vendor/wiki_interchange/, pinned to
 # version 0.2.0 at upstream revision 42c1fa22 (spec v3 — the whole-wiki bundle,
 # and an incremental changelog that carries elements/templates/images).
 # The REVISION is the real pin:

@@ -4,7 +4,7 @@ version: 2
 updates:
   # Python dependencies. Note the app's runtime deps are declared TWICE — in
   # requirements.txt (what the build and the dev venv install) and in
-  # pyproject.toml (what a `pip install waikiki` resolves). A test asserts the
+  # pyproject.toml (what a `pip install jamgraf` resolves). A test asserts the
   # two agree, so a Dependabot PR that moves one and not the other fails CI
   # rather than shipping a wheel whose pins differ from the app's.
   - package-ecosystem: "pip"

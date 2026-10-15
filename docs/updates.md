@@ -1,7 +1,7 @@
 # Updates
 
-How the packaged `Waikiki.app` updates itself, and the trust model that makes
-doing so safe. Implementation: [`waikiki/updater.py`](../waikiki/updater.py);
+How the packaged `Jamgraf.app` updates itself, and the trust model that makes
+doing so safe. Implementation: [`jamgraf/updater.py`](../jamgraf/updater.py);
 release tooling: [`scripts/release.sh`](../scripts/release.sh).
 
 ## Why it isn't just a download link
@@ -35,7 +35,7 @@ new one is in place.
 
 ## User data is never touched
 
-Wikis live in `~/Library/Application Support/Waikiki` (`config.DATA_DIR`),
+Wikis live in `~/Library/Application Support/Jamgraf` (`config.DATA_DIR`),
 outside the bundle. An update replaces code only.
 
 A backup still runs first, via `backups.run_backup()`. Schema migrations are
@@ -45,7 +45,7 @@ backup is insurance against rolling back, not against the swap itself.
 
 ## Trust model — read this before changing anything here
 
-The bundle carries no Apple identity. `waikiki.spec` sets
+The bundle carries no Apple identity. `jamgraf.spec` sets
 `codesign_identity=None`, and `build_macos.sh` applies an **ad-hoc** signature
 (`codesign --sign -`), which proves nothing about origin — it's a signature with
 no signer. macOS therefore gives us **no authenticity guarantee** about a
@@ -56,7 +56,7 @@ the highest-privilege path in the app, and HTTPS is not sufficient: TLS protects
 the transport, not the artifact. A compromised release, a hijacked redirect, or a
 misconfigured mirror all produce a perfectly valid TLS download.
 
-So Waikiki carries its own trust root:
+So Jamgraf carries its own trust root:
 
 - Every release zip is signed with an **Ed25519** key, over the zip's streamed
   **SHA-256 digest** rather than the archive bytes — so a ~100 MB download is
@@ -69,11 +69,11 @@ So Waikiki carries its own trust root:
   disk either. `release.sh` reads it from **Google Secret Manager** — the latest
   version of the secret `waikikey`, through the `gcloud` CLI — holds it in a
   variable, and hands it only to the one process that signs. It lives in the
-  `startupos-328814` project; `WAIKIKI_UPDATE_SECRET` and `WAIKIKI_GCP_PROJECT`
+  `startupos-328814` project; `JAMGRAF_UPDATE_SECRET` and `JAMGRAF_GCP_PROJECT`
   override the name and project. The project is named rather than left to
   gcloud's configured default, which is per machine and often unset.
 - A local PEM file is still possible, but only if you **name it**:
-  `WAIKIKI_UPDATE_KEY=/path/to/key.pem`. It wins over Secret Manager, and is
+  `JAMGRAF_UPDATE_KEY=/path/to/key.pem`. It wins over Secret Manager, and is
   still refused if it sits inside the working tree, where it could be committed
   by accident. There is no silent fallback between the two — a key that turns up
   from somewhere nobody chose is how a release gets signed by the wrong one.
@@ -102,7 +102,7 @@ It **fails closed**, in every direction:
 
 Never populate `PUBLIC_KEYS_HEX` from the network, from `app_config.json`, or from
 anything else a user or attacker can rewrite. A pinned key that can be replaced
-is not a trust root. `WAIKIKI_UPDATE_PUBKEY` exists as an override for tests and
+is not a trust root. `JAMGRAF_UPDATE_PUBKEY` exists as an override for tests and
 private builds — it is deliberately an environment variable, not a setting.
 
 ## Cutting a release
@@ -138,7 +138,7 @@ Before a release, check this machine can actually sign:
 
 It fetches the key exactly as a release would and proves it against the public
 keys **compiled into the checkout**, without building anything. Both this and a
-release refuse to run with `WAIKIKI_UPDATE_PUBKEY` set: it replaces the pinned
+release refuse to run with `JAMGRAF_UPDATE_PUBKEY` set: it replaces the pinned
 keys at runtime, so verifying against it would approve a release that no
 installed copy accepts — even set to the right key, since the script cannot tell
 that from the wrong one. A logged-out `gcloud`, a
@@ -162,7 +162,7 @@ a broken one:
   or one no client would accept, costs seconds; `build_macos.sh` begins by wiping
   `dist/`, so finding out afterwards would throw away the previous build too.
 
-- The tag must match `waikiki.__version__`. A mismatch would make the updater's
+- The tag must match `jamgraf.__version__`. A mismatch would make the updater's
   own staging check reject the build.
 - The signature is verified **against the key pinned in the build being
   shipped**, not just against the private key that signed it. That catches a
@@ -207,7 +207,7 @@ with no `.sig` — one that must fail at verification.
   is one.
 - **Full-bundle only.** Every update ships the whole ~260 MB app. Deltas via a
   git-tracked app-code channel are the planned follow-up; see
-  [issue #8](https://github.com/VerinFast/waikiki/issues/8) for the dependency
+  [issue #8](https://github.com/VerinFast/jamgraf/issues/8) for the dependency
   trimming that shrinks the baseline either way.
 - **No privileged install.** If the bundle isn't writable by the current user
   (root-owned in `/Applications`), the updater refuses and says why instead of

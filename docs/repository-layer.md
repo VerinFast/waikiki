@@ -1,6 +1,6 @@
 # The repository chokepoint (RFC 0001, Phase 0)
 
-Waikiki's data access is layered so that **routes own routing and validation
+Jamgraf's data access is layered so that **routes own routing and validation
 only** and **all SQL lives behind one repository chokepoint**. This is Phase 0 of
 [RFC 0001](rfc/0001-multi-tenant-waikiki.md) — the mechanical restructure that is
 worth doing on its own and is the precondition for the multi-tenant / Postgres

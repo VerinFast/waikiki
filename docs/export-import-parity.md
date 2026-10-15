@@ -5,7 +5,7 @@ current code — if the two ever disagree, the code is wrong.*
 
 ## The rule
 
-**If Waikiki can write wiki state to a file, Waikiki must be able to read that
+**If Jamgraf can write wiki state to a file, Jamgraf must be able to read that
 file back.** An export you cannot restore is not a backup; it is a file that
 looks like one, and the person finds out on the day they need it. Shipping an
 export surface without its reader is incomplete work, not a follow-up ticket.
@@ -28,7 +28,7 @@ archive shape: the zip that wraps a `wiki.db`. Handed a bundle, it looked for a
 Zip bundle has no wiki.db
 ```
 
-So Kahala could export a wiki that Waikiki could read, and did not. The importer
+So Kahala could export a wiki that Jamgraf could read, and did not. The importer
 existed, was tested, and was unreachable — and the error blamed the file. Nothing
 in the codebase was positioned to notice, because every test asked "does the
 round-trip work?" and none asked "can anyone get to it?"
@@ -55,7 +55,7 @@ sniff is asked.
 
 **Sniffing is also what keeps the refusal honest.** A bundle the version gate
 rejects has to say *that*. The alternative is the original bug wearing a
-different hat: the wiki-file branch reporting "not a Waikiki wiki file" about a
+different hat: the wiki-file branch reporting "not a Jamgraf wiki file" about a
 perfectly valid bundle, sending the reader off to check the wrong thing.
 
 **A bundle lands through the repository.** `_import_bundle` registers an empty
@@ -72,7 +72,7 @@ promise that nothing changed, so it is only said when that is true:
   was just registered is removed again rather than stranding a shell in the
   registry.
 - **Partly imported** — a failure *after* writes began keeps the wiki and names
-  it as partial. It is one Waikiki created this call, never a file of the user's,
+  it as partial. It is one Jamgraf created this call, never a file of the user's,
   but a half-imported wiki reported as success is worse than either honest
   answer.
 
@@ -114,7 +114,7 @@ express a deletion, so absent means absent, not deleted.
 
 The exported file carries a frontmatter header, which it did not before. The
 body alone does not name the page: the slug is in the filename, but the title is
-a column, and Waikiki resolves `[[links]]` by *title* — so a wiki restored from
+a column, and Jamgraf resolves `[[links]]` by *title* — so a wiki restored from
 filenames alone comes back with every link pointing at a page that no longer
 answers to that name. `title:` costs one line and fixes it.
 

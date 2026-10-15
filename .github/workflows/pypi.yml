@@ -1,7 +1,7 @@
-# Publishes the *server and MCP* half of Waikiki to PyPI. The macOS .app is not
+# Publishes the *server and MCP* half of Jamgraf to PyPI. The macOS .app is not
 # pip-installable (pywebview + a PyInstaller bundle) and ships via the Homebrew
-# cask instead; what this puts on PyPI is `waikiki` (the web app) and
-# `waikiki-mcp` (the stdio MCP server), which run anywhere Python does.
+# cask instead; what this puts on PyPI is `jamgraf` (the web app) and
+# `jamgraf-mcp` (the stdio MCP server), which run anywhere Python does.
 #
 # Trusted Publishing (OIDC), NOT an API token: nothing long-lived is stored in
 # repo secrets, and the token PyPI mints is scoped to this workflow in this repo
@@ -35,8 +35,8 @@ jobs:
           python3 - <<'PY'
           import glob, sys, zipfile
           names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
-          missing = [p for p in ("waikiki/templates/", "waikiki/static/",
-                                 "waikiki/vendor/wiki_interchange/")
+          missing = [p for p in ("jamgraf/templates/", "jamgraf/static/",
+                                 "jamgraf/vendor/wiki_interchange/")
                      if not any(n.startswith(p) for n in names)]
           sys.exit("wheel is missing: " + ", ".join(missing) if missing else 0)
           PY

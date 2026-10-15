@@ -1,5 +1,5 @@
 """Page metadata over MCP: discovery, batch writes, and staleness signals."""
-from waikiki import mcp_server, store
+from jamgraf import mcp_server, store
 
 
 def _fm(**props):

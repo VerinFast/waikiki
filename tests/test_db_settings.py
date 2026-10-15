@@ -1,4 +1,4 @@
-from waikiki import db
+from jamgraf import db
 
 
 def test_settings_get_set(wiki):

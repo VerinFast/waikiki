@@ -17,8 +17,8 @@ import subprocess
 import pytest
 from fastapi.testclient import TestClient
 
-from waikiki import capabilities, remedies, store
-from waikiki.api import app
+from jamgraf import capabilities, remedies, store
+from jamgraf.api import app
 
 
 def _client():
@@ -83,7 +83,7 @@ def test_drafting_is_not_rescued_by_doorman(wiki, monkeypatch):
     _have(monkeypatch)
     monkeypatch.setattr(capabilities, "_which", lambda name: None)
 
-    from waikiki import doorman
+    from jamgraf import doorman
     monkeypatch.setattr(doorman, "status", lambda: {
         "running": True, "enabled": True, "voices": [],
         "ask": {"label": "Doorman · agent", "agent": "agent"}, "image": None})
@@ -438,7 +438,7 @@ def test_an_unknown_remedy_id_runs_nothing(wiki, monkeypatch):
 
 def test_the_remedy_route_is_owner_only(wiki):
     """Guests can't run installers on somebody else's computer."""
-    from waikiki import auth
+    from jamgraf import auth
     assert auth.guest_may("/settings/capabilities/install-claude-cli/fix") is False
 
 

@@ -8,7 +8,7 @@ border, or panicking on a character boundary.
 import anyio
 from pycrdt import Doc, Text
 
-from waikiki import collab, edits, store
+from jamgraf import collab, edits, store
 
 
 def test_byte_offset_conversion():

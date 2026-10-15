@@ -1,4 +1,4 @@
-from waikiki import render, store, structure
+from jamgraf import render, store, structure
 
 
 def test_parse_frontmatter():

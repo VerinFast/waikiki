@@ -37,7 +37,7 @@ The URL arrives from the page, so this route will fetch a URL its caller chose �
 and that is exactly what makes it dangerous if left unguarded. `auth.py` grants
 **loopback callers owner rights**, and any web page open in the user's browser
 can fire requests at our loopback port. Unguarded, it would let an arbitrary
-website use Waikiki as a proxy into the user's private network —
+website use Jamgraf as a proxy into the user's private network —
 `http://192.168.1.1/`, cloud metadata endpoints, other services bound to
 localhost. CORS would stop that site from *reading* the reply, but the request
 still happens, and for SSRF the request is the damage.

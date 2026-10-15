@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from waikiki import config, db, embeddings, updater, wikis
+from jamgraf import config, db, embeddings, updater, wikis
 
 
 def _drain_worker_threads(timeout: float = 10.0) -> int:
@@ -96,7 +96,7 @@ def _no_update_checks(monkeypatch):
 def _no_doorman(monkeypatch):
     """The suite must never reach a real Doorman on the developer's machine.
 
-    Waikiki now asks Doorman whether it can answer generation, chat and images,
+    Jamgraf now asks Doorman whether it can answer generation, chat and images,
     so a developer who happens to have Doorman open would otherwise get a
     different test run from everyone else — and a live agent call from a unit
     test. Patched at the same boundary as the update check: the default is "not
@@ -105,7 +105,7 @@ def _no_doorman(monkeypatch):
     Every cache is cleared on both sides, so probe results never leak between
     tests either.
     """
-    from waikiki import doorman
+    from jamgraf import doorman
 
     def _absent(*a, **k):
         raise RuntimeError("no Doorman in tests")
@@ -129,7 +129,7 @@ def _bare_machine(monkeypatch):
     It also keeps the suite from spawning a login shell to recover the user's
     PATH, which ``shellenv`` does on the first lookup in a process.
     """
-    from waikiki import capabilities
+    from jamgraf import capabilities
 
     capabilities.refresh()
     monkeypatch.setattr(capabilities, "_which", lambda name: None)
@@ -143,7 +143,7 @@ def wiki(tmp_path, monkeypatch):
     """Isolated temp data dir + fake embedder; active wiki = 'main'."""
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "WIKIS_DIR", tmp_path / "wikis")
-    monkeypatch.setattr(config, "DB_PATH", tmp_path / "waikiki.db")  # legacy, absent
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jamgraf.db")  # legacy, absent
     monkeypatch.setattr(db, "_local", threading.local())
     monkeypatch.setattr(db, "_schema_ready", set())
     monkeypatch.setattr(embeddings, "get_embedder", lambda: FakeEmbedder())
@@ -171,7 +171,7 @@ def fake_live_http(monkeypatch):
     Call the fixture with ``on_get(url) -> response`` for a room with unsaved
     text, or with no argument for "the web app isn't there".
     """
-    from waikiki import mcp_server
+    from jamgraf import mcp_server
 
     def install(on_get=None):
         def offline(url):

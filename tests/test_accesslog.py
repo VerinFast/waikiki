@@ -1,7 +1,7 @@
 import datetime
 import re
 
-from waikiki import accesslog, appconfig
+from jamgraf import accesslog, appconfig
 
 
 def test_http_line_is_clf_shaped(wiki):
@@ -56,7 +56,7 @@ def test_middleware_logs_requests_and_captures_errors(wiki):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from waikiki.api import AccessLogMiddleware
+    from jamgraf.api import AccessLogMiddleware
     accesslog.clear()
     app = FastAPI()
 

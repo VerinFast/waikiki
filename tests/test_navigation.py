@@ -9,8 +9,8 @@ import re
 
 from fastapi.testclient import TestClient
 
-from waikiki import db, elements, render, store
-from waikiki.api import app
+from jamgraf import db, elements, render, store
+from jamgraf.api import app
 
 
 # --- Breadcrumbs --------------------------------------------------------------
@@ -260,7 +260,7 @@ def test_no_proposal_no_notice(wiki):
 # --- Sidebar sub-page nesting --------------------------------------------------
 
 def test_nav_tree_nests_children_under_their_parent():
-    from waikiki.api import _nav_tree
+    from jamgraf.api import _nav_tree
 
     flat = [
         {"slug": "top", "parent_slug": None},
@@ -273,7 +273,7 @@ def test_nav_tree_nests_children_under_their_parent():
 
 def test_nav_tree_preserves_sibling_order():
     """Ordering is the SQL sort's job; the tree must not re-sort."""
-    from waikiki.api import _nav_tree
+    from jamgraf.api import _nav_tree
 
     flat = [
         {"slug": "b", "parent_slug": None},
@@ -289,7 +289,7 @@ def test_nav_tree_preserves_sibling_order():
 def test_nav_tree_promotes_orphans_to_top_level():
     """A child whose parent didn't make it into the list (e.g. cut by the
     [:500] cap) must still be shown, not silently dropped."""
-    from waikiki.api import _nav_tree
+    from jamgraf.api import _nav_tree
 
     flat = [{"slug": "kid", "parent_slug": "nope-not-here"}]
     tree = _nav_tree(flat)
@@ -319,7 +319,7 @@ def test_sidebar_starred_filter_stays_flat(wiki):
     store.set_parent("child-page", "parent-page")
     store.toggle_star("parent-page")
     with TestClient(app, client=("127.0.0.1", 1)) as client:
-        body = client.get("/", cookies={"waikiki_nav_filter": "starred"}).text
+        body = client.get("/", cookies={"jamgraf_nav_filter": "starred"}).text
     nav = body[body.index('class="navlist'):body.index("</aside>")]
     assert 'class="nav-node"' not in nav
     assert '/wiki/parent-page' in nav
@@ -332,7 +332,7 @@ def test_only_top_level_rows_get_a_drag_handle(wiki):
     store.create_page("Child Page", "c")
     store.set_parent("child-page", "parent-page")
     with TestClient(app, client=("127.0.0.1", 1)) as client:
-        body = client.get("/", cookies={"waikiki_nav_sort": "custom"}).text
+        body = client.get("/", cookies={"jamgraf_nav_sort": "custom"}).text
     nav = body[body.index('class="navlist'):body.index("</aside>")]
     assert nav.count('class="draghandle"') == 1        # Parent Page only
 

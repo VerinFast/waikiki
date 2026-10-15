@@ -1,6 +1,6 @@
 import datetime
 
-from waikiki import appconfig, backups, db, store, wikis
+from jamgraf import appconfig, backups, db, store, wikis
 
 
 def test_backup_snapshots_every_wiki(wiki):

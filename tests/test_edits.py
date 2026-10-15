@@ -1,6 +1,6 @@
 import pytest
 
-from waikiki import edits
+from jamgraf import edits
 
 
 def test_plan_edit_unique():

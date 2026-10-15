@@ -17,7 +17,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from waikiki import bugreports, config, store
+from jamgraf import bugreports, config, store
 
 
 # --- #88: reading and editing a template -------------------------------------
@@ -67,7 +67,7 @@ def test_editing_a_template_that_does_not_exist_says_so(wiki):
 
 def test_the_mcp_surface_can_read_before_it_overwrites(wiki):
     """#88 in one line: create_template exists, so a reader must too."""
-    from waikiki import mcp_server
+    from jamgraf import mcp_server
 
     for tool in ("get_template", "edit_template", "create_template",
                  "list_templates"):
@@ -115,7 +115,7 @@ def test_the_report_carries_the_context_the_server_knew(queue):
     bugreports.add("It broke", "steps", wiki="family", tool="edit_page")
     body = bugreports.listing()[0]["full_body"]
     assert "family" in body and "edit_page" in body
-    assert "Waikiki" in body
+    assert "Jamgraf" in body
 
 
 def test_the_github_link_prefills_the_form_and_submits_nothing(queue):
@@ -181,7 +181,7 @@ def test_a_torn_file_reads_as_empty_rather_than_raising(queue):
 
 def test_the_reports_pane_renders_and_shows_the_warning(wiki):
     from fastapi.testclient import TestClient
-    from waikiki.api import app
+    from jamgraf.api import app
 
     bugreports.add("Something failed", "it did", wiki="family", tool="edit_page")
     with TestClient(app, client=("127.0.0.1", 12345)) as client:
@@ -194,7 +194,7 @@ def test_the_reports_pane_renders_and_shows_the_warning(wiki):
 
 def test_the_nav_entry_appears_only_when_something_is_queued(wiki):
     from fastapi.testclient import TestClient
-    from waikiki.api import app
+    from jamgraf.api import app
 
     with TestClient(app, client=("127.0.0.1", 12345)) as client:
         assert 'href="/reports"' not in client.get("/").text
@@ -203,6 +203,6 @@ def test_the_nav_entry_appears_only_when_something_is_queued(wiki):
 
 
 def test_a_guest_cannot_read_other_peoples_bug_reports():
-    from waikiki import auth
+    from jamgraf import auth
     assert not auth.guest_may("/reports")
     assert not auth.guest_may("/reports/abc/discard")

@@ -1,6 +1,6 @@
 """The Doorman integration must be optional in every direction.
 
-Doorman is the user's separate app. Waikiki may use it when it happens to be
+Doorman is the user's separate app. Jamgraf may use it when it happens to be
 running, must never require it, must never start or install it, and must keep
 working identically when it is absent.
 """
@@ -8,8 +8,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from waikiki import doorman, store
-from waikiki.api import app
+from jamgraf import doorman, store
+from jamgraf.api import app
 
 
 @pytest.fixture(autouse=True)
@@ -58,7 +58,7 @@ def test_detection_uses_doormans_health_endpoint(wiki, monkeypatch):
 
 
 def test_the_user_can_decline_even_when_doorman_runs(wiki, monkeypatch):
-    """Running it and wanting Waikiki to reach into it are different things."""
+    """Running it and wanting Jamgraf to reach into it are different things."""
     monkeypatch.setattr(doorman, "_get", lambda path, **k: {"ok": True})
     assert doorman.available() is True
     store.set_setting("doorman_enabled", "0")
@@ -109,7 +109,7 @@ def test_settings_shows_it_as_optional(wiki, monkeypatch):
     assert "Doorman" in body and "Everything works without it" in body
 
 
-def test_waikiki_never_launches_doorman(wiki):
+def test_jamgraf_never_launches_doorman(wiki):
     """It is the user's app to start. Nothing here may spawn or install it."""
     import inspect
 

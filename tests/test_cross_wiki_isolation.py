@@ -1,6 +1,6 @@
 """End-to-end: two agents working in two different wikis must not collide.
 
-Waikiki's central promise is that wikis are *fully* isolated (CLAUDE.md rule 4).
+Jamgraf's central promise is that wikis are *fully* isolated (CLAUDE.md rule 4).
 These tests drive the real MCP tool surface and read the results back through the
 real HTTP app, so they exercise the whole path an agent actually takes.
 
@@ -33,8 +33,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from waikiki import config, db, mcp_server, store, wikis
-from waikiki.api import app
+from jamgraf import config, db, mcp_server, store, wikis
+from jamgraf.api import app
 
 
 @pytest.fixture
@@ -204,7 +204,7 @@ def test_end_to_end_two_agents_over_http(two_agents):
 def test_live_edit_headers_carry_each_agents_own_wiki(two_agents):
     """The HTTP injection path must be scoped per agent too.
 
-    Live edits POST to the web app with X-Waikiki-Wiki; if that header came from
+    Live edits POST to the web app with X-Jamgraf-Wiki; if that header came from
     shared state, two agents editing concurrently would inject into each other's
     wiki even with the pointer fixed.
     """
@@ -216,9 +216,9 @@ def test_live_edit_headers_carry_each_agents_own_wiki(two_agents):
         mcp_server.switch_wiki(beta)
 
     with _Agent("agent-a"):
-        assert mcp_server._headers()["X-Waikiki-Wiki"] == alpha
+        assert mcp_server._headers()["X-Jamgraf-Wiki"] == alpha
     with _Agent("agent-b"):
-        assert mcp_server._headers()["X-Waikiki-Wiki"] == beta
+        assert mcp_server._headers()["X-Jamgraf-Wiki"] == beta
 
 
 def test_the_repository_layer_itself_stays_isolated(two_agents):

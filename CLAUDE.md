@@ -1,5 +1,8 @@
 # Jamgraf — Claude notes
 
+*Formerly **Waikiki** (renamed in v1.1.0). Strings saying `waikiki` that remain in
+this repo are load-bearing, not leftovers — see rule 13.*
+
 Small local wiki for Human ↔ LLM collaboration: FastAPI + one SQLite file per
 wiki, hybrid RAG (FTS5 BM25 + sqlite-vec, fused with RRF), a `pycrdt` room per
 `(wiki, page)` for live co-editing, and an MCP server so Claude edits the same
@@ -93,6 +96,9 @@ two in parity (same substance, different voice) whenever you change either.
   crash, a corrupt wiki file, a failed import; how restore actually works; and
   the risks we accept, named. Every answer there was established by making it
   happen, and `tests/test_data_safety.py` pins the properties.
+- `docs/rename-to-jamgraf.md` — rule 13: every old name still out in the world,
+  what reads it, what deliberately kept its old value, how the first launch moves
+  an existing install, and the order the rename has to ship in.
 - `docs/export-import-parity.md` — rule 12 as a standing decision: why every
   export must have a reachable import, the release where the bundle importer
   existed and was unreachable anyway, why PDF is exempt, and what a folder of
@@ -434,6 +440,35 @@ two in parity (same substance, different voice) whenever you change either.
     What markdown does **not** carry — images, history, comments, templates,
     elements, trash, order, stars — is named in the doc rather than implied
     away: it is the shape for a repo, `.wiki` is the faithful copy.
+
+13. **The old name is still out in the world: read it, never write it.** Jamgraf
+    was Waikiki, and the old names are written into places this repo cannot
+    edit — Claude Desktop configs (`WAIKIKI_MCP`, `WAIKIKI_DATA`, and a command
+    ending `Waikiki.app/Contents/MacOS/Waikiki`), doorman, browsers' cookie jars,
+    `waikiki://` links in people's notes, MCP servers started before an upgrade.
+    A pure rename passes every test while abandoning all of them, which is the
+    trap. So every old name is **read** as a fallback (`config.env`,
+    `config.cookie`, both headers, both schemes, both Keychain services, both
+    Bonjour names) and **never written**, and each stays until whatever still says
+    it has been changed — usually a file on someone else's machine, so removing
+    one is its own decision, never a tidy-up. The table is
+    `docs/rename-to-jamgraf.md`. Four things are load-bearing beyond courtesy.
+    **The old data folder is a symlink to the new one**, because `config.py`
+    creates its data folder at import: without it a stale `WAIKIKI_DATA` is handed
+    a fresh, *empty* install where the wikis were, silently
+    (`config.migrate_legacy_data_dir` — all or nothing, `rmdir` never `rmtree`,
+    hands off when both hold data). **`release.sh` refuses `WAIKIKI_UPDATE_PUBKEY`
+    exactly like the new name**, because the app reads it as a fallback; refusing
+    one spelling reopens the trapdoor #103 closed. **Sign-out deletes under both
+    Keychain services**, or the next read moves the old token back and resurrects
+    the session. **Never create a repo called `VerinFast/waikiki`**: every
+    pre-rename install finds updates by following GitHub's redirect from that
+    name, and a new repo there ends it permanently. Some identifiers kept their
+    old value on purpose (`PUBLIC_KEYS_HEX`, `waikikey`, `good-place-waikiki`,
+    `waikiki-zip-1`, `waikiki.db`) — they are not names. `tests/test_rename_compat.py`
+    and `tests/test_rename_migration.py` guard all of it; each guard fails when
+    removed, and the build's second smoke test boots the bundle through the old
+    executable name with the old env vars on every build.
 
 ## Before committing
 

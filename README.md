@@ -4,6 +4,15 @@ A small, local, SQLite-backed wiki built for **Human ↔ LLM collaboration** —
 Claude (via Claude Desktop over MCP) and you edit the **same document at the same
 time**, seeing each other's changes live.
 
+> **Jamgraf used to be called Waikiki.** If you're upgrading, there is nothing to
+> do: the first launch moves your wikis, your Kahala sign-in and the app itself to
+> the new name, and everything that still says the old one keeps working — your
+> Claude Desktop config, doorman, `waikiki://` links, all of it. If you had both an
+> old Waikiki folder and a new Jamgraf one full of wikis, nothing is merged or
+> moved; **Manage wikis** tells you where each is. The details, and what to never
+> do (create a repo named `VerinFast/waikiki`), are in
+> **[docs/rename-to-jamgraf.md](docs/rename-to-jamgraf.md)**.
+
 ## Requirements → how
 
 | Requirement | How |

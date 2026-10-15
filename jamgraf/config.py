@@ -12,10 +12,57 @@ from pathlib import Path
 
 from . import __version__ as VERSION  # single source of truth for the release
 
+# The old name ---------------------------------------------------------------------
+# Jamgraf was called Waikiki, and installs, Claude Desktop configs and doorman out in
+# the world still say so. Every name below is read under Jamgraf first and Waikiki
+# second, and the old names are never written. They stay indefinitely: removing
+# one is its own decision, because the thing still saying it is usually a config
+# file on somebody else's machine. See docs/rename-to-jamgraf.md.
+LEGACY_NAME = "Waikiki"
+_ENV_PREFIXES = ("JAMGRAF_", "WAIKIKI_")
+
+
+def env(name: str, default: str | None = None) -> str | None:
+    """`JAMGRAF_<name>`, else the old `WAIKIKI_<name>`, else `default`.
+
+    An empty value counts as set. `JAMGRAF_UPDATE_PUBKEY=""` means "trust no
+    keys", and falling through to a stale `WAIKIKI_UPDATE_PUBKEY` would quietly
+    overrule the person who typed the new one.
+    """
+    for prefix in _ENV_PREFIXES:
+        value = os.environ.get(prefix + name)
+        if value is not None:
+            return value
+    return default
+
+
+_COOKIE_PREFIXES = ("jamgraf_", "waikiki_")
+
+
+def cookie(cookies, name: str, default: str | None = None) -> str | None:
+    """The `jamgraf_<name>` cookie, else the old `waikiki_<name>`.
+
+    Read-only on purpose: nothing sets a `waikiki_` cookie any more, so a browser
+    converges on the new name the next time that value is written. A browser
+    visiting the app over HTTP — LAN sharing, or a tab on 127.0.0.1 — keeps its
+    cookies across the rename, and a guest's share cookie is one of them.
+    """
+    for prefix in _COOKIE_PREFIXES:
+        value = cookies.get(prefix + name)
+        if value is not None:
+            return value
+    return default
+
+
+def env_is_set(name: str) -> bool:
+    """Whether either spelling of `name` is in the environment, even if empty."""
+    return any(prefix + name in os.environ for prefix in _ENV_PREFIXES)
+
+
 # Project root and data location -------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent
-if os.environ.get("JAMGRAF_DATA"):
-    _default_data = Path(os.environ["JAMGRAF_DATA"])
+if env("DATA"):
+    _default_data = Path(env("DATA"))
 elif getattr(sys, "frozen", False):
     # Packaged .app: never write inside the (possibly read-only) bundle.
     _default_data = Path.home() / "Library" / "Application Support" / "Jamgraf"
@@ -24,7 +71,9 @@ else:
 DATA_DIR = _default_data
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 # Legacy single-DB path (pre multi-wiki). Migrated into wikis/main.db on first run.
-DB_PATH = Path(os.environ.get("JAMGRAF_DB", DATA_DIR / "jamgraf.db"))
+# The FILE keeps its historical name: it is whatever a pre-multi-wiki install left
+# on disk, which was written long before the rename and is still called this.
+DB_PATH = Path(env("DB") or DATA_DIR / "waikiki.db")
 # Each wiki is an isolated SQLite file under here — no cross-wiki links possible.
 WIKIS_DIR = DATA_DIR / "wikis"
 # Wikis created automatically on first run (besides migrated "main").
@@ -36,19 +85,19 @@ HELP_WIKI = "help"
 # the server starts). The page uses it to choose the native dictation route,
 # because WKWebView has no SpeechRecognition.
 def is_desktop() -> bool:
-    return os.environ.get("JAMGRAF_DESKTOP") == "1"
+    return env("DESKTOP") == "1"
 
 
 # Server -------------------------------------------------------------------------
-HOST = os.environ.get("JAMGRAF_HOST", "127.0.0.1")
-PORT = int(os.environ.get("JAMGRAF_PORT", "8787"))
+HOST = env("HOST", "127.0.0.1")
+PORT = int(env("PORT", "8787"))
 
 # Where the MCP server reaches the running web app to inject live edits.
-WEB_URL = os.environ.get("JAMGRAF_WEB_URL", f"http://{HOST}:{PORT}")
+WEB_URL = env("WEB_URL", f"http://{HOST}:{PORT}")
 
 # AI (Claude) --------------------------------------------------------------------
 # Resolves ANTHROPIC_API_KEY / ant-login profile via the SDK automatically.
-ANTHROPIC_MODEL = os.environ.get("JAMGRAF_MODEL", "claude-opus-4-8")
+ANTHROPIC_MODEL = env("MODEL", "claude-opus-4-8")
 
 # Voyage (Anthropic-recommended cloud embeddings). Key read at call time.
 VOYAGE_API_KEY_ENV = "VOYAGE_API_KEY"

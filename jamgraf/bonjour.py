@@ -57,7 +57,12 @@ def start(port: int, name: str = "Jamgraf") -> bool:
             return True
         if not available():
             return False
-        _reap_orphans(name)
+        # The old name too: a run from before the rename that was force-killed
+        # left its advertiser registered as "Waikiki", and matching on the new
+        # name alone would never find it — it would go on announcing a wiki that
+        # is no longer listening.
+        for n in dict.fromkeys((name, "Waikiki")):
+            _reap_orphans(n)
         try:
             # -R = register a service:  <name> <type> <domain> <port> [TXT...]
             # No start_new_session: keeping the child in our process group means a

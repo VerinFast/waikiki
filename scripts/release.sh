@@ -26,13 +26,16 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-KEY_FILE="${JAMGRAF_UPDATE_KEY:-}"                     # explicit file, or empty
-KEY_PATH="${JAMGRAF_UPDATE_KEY:-$HOME/.jamgraf/update-key.pem}"   # --genkey's output
-SECRET_NAME="${JAMGRAF_UPDATE_SECRET:-waikikey}"
+# Each input takes the JAMGRAF_ name, then the old WAIKIKI_ one (the rename).
+KEY_FILE="${JAMGRAF_UPDATE_KEY:-${WAIKIKI_UPDATE_KEY:-}}"   # explicit file, or empty
+KEY_PATH="${KEY_FILE:-$HOME/.jamgraf/update-key.pem}"   # --genkey's output
+# The secret keeps its name across the rename: it is an identifier in Secret
+# Manager, and renaming means creating a new secret and moving the key into it.
+SECRET_NAME="${JAMGRAF_UPDATE_SECRET:-${WAIKIKI_UPDATE_SECRET:-waikikey}}"
 # Named here rather than left to gcloud's configured default, which is per
 # machine and often unset: a release should not depend on how somebody's laptop
 # happens to be set up.
-GCP_PROJECT="${JAMGRAF_GCP_PROJECT:-startupos-328814}"
+GCP_PROJECT="${JAMGRAF_GCP_PROJECT:-${WAIKIKI_GCP_PROJECT:-startupos-328814}}"
 PY="${PYTHON:-$REPO_ROOT/.venv/bin/python}"
 [ -x "$PY" ] || PY="$(command -v python3)"
 
@@ -44,7 +47,7 @@ say() { echo "==> $*"; }
 # a SIGNING_KEY_PEM the caller happened to export would — once this script put
 # the real key in it — carry that key into build_macos.sh and every process the
 # build starts. Unset first, and every assignment below is local to this shell.
-unset SIGNING_KEY_PEM SIGNING_KEY_SOURCE JAMGRAF_UPDATE_KEY_PEM
+unset SIGNING_KEY_PEM SIGNING_KEY_SOURCE JAMGRAF_UPDATE_KEY_PEM WAIKIKI_UPDATE_KEY_PEM
 
 # xtrace prints assignments WITH their values, so `bash -x release.sh` — the
 # first thing anyone reaches for when a release misbehaves — would put the PEM
@@ -192,8 +195,10 @@ fi
 # will accept. Refused rather than ignored, because whoever set it meant
 # something by it and should hear that it cannot apply here. Set-but-empty
 # counts: to the updater, an empty value is a deliberate override too.
-if [ -n "${JAMGRAF_UPDATE_PUBKEY+set}" ]; then
-    die "JAMGRAF_UPDATE_PUBKEY is set. It overrides the public keys compiled into
+# BOTH spellings. The app reads the old WAIKIKI_ name as a fallback (config.env),
+# so refusing only the new one would leave the old one as a working trapdoor.
+if [ -n "${JAMGRAF_UPDATE_PUBKEY+set}" ] || [ -n "${WAIKIKI_UPDATE_PUBKEY+set}" ]; then
+    die "JAMGRAF_UPDATE_PUBKEY (or the old WAIKIKI_UPDATE_PUBKEY) is set. It overrides the public keys compiled into
        jamgraf/updater.py, so verifying against it proves nothing about what
        installed copies will accept. Unset it to release or to --check-key."
 fi
@@ -313,7 +318,7 @@ gh release upload "$TAG" "$ZIP" "$SIG" --clobber
 # worse than no tap: `brew install` succeeds and silently hands over an old
 # build. Best-effort — a missing tap checkout must not fail a release that has
 # already been uploaded.
-CASK_TAP="${JAMGRAF_TAP:-$HOME/localdev/homebrew-jamgraf}"
+CASK_TAP="${JAMGRAF_TAP:-${WAIKIKI_TAP:-$HOME/localdev/homebrew-jamgraf}}"
 CASK="$CASK_TAP/Casks/jamgraf.rb"
 if [ -f "$CASK" ]; then
     say "bumping the Homebrew cask to $VERSION"

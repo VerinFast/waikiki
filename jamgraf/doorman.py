@@ -40,10 +40,10 @@ import os
 import time
 from typing import AsyncIterator, Iterator
 
-from . import store
+from . import config, store
 
 # Doorman's default; DOORMAN_PORT overrides it there, so honour the same name.
-BASE = os.environ.get("JAMGRAF_DOORMAN_URL") or \
+BASE = config.env("DOORMAN_URL") or \
     f"http://127.0.0.1:{os.environ.get('DOORMAN_PORT', '8900')}"
 
 # Long enough that a page load never pays for a second probe, short enough that

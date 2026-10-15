@@ -11,7 +11,7 @@
     // Apply the saved text size before paint (all fonts are rem/em, so scaling
     // the root font-size enlarges every text and reflows — no clipping like zoom).
     (function () {
-      var m = document.cookie.match(/(?:^|; )jamgraf_text_scale=([\d.]+)/);
+      var m = document.cookie.match(/(?:^|; )(?:jamgraf|waikiki)_text_scale=([\d.]+)/);
       if (m) document.documentElement.style.fontSize = (parseFloat(m[1]) * 100) + '%';
     })();
   </script>
@@ -844,7 +844,9 @@
         document.documentElement.style.setProperty('--rail-w', px + 'px');
       }
       try {
-        var saved = parseInt(localStorage.getItem(KEY), 10);
+        // The pre-rename key, read once if the new one has never been written.
+        var saved = parseInt(localStorage.getItem(KEY) ||
+                             localStorage.getItem('waikiki_rail_w'), 10);
         if (saved >= MIN && saved <= MAX) apply(saved);
       } catch (e) {}
       function init() {
@@ -1202,7 +1204,7 @@
     window.wkTextScale = (function () {
       var STEPS = [0.85, 1, 1.15, 1.3, 1.5, 1.75, 2, 2.5];
       function get() {
-        var m = document.cookie.match(/(?:^|; )jamgraf_text_scale=([\d.]+)/);
+        var m = document.cookie.match(/(?:^|; )(?:jamgraf|waikiki)_text_scale=([\d.]+)/);
         return m ? parseFloat(m[1]) : 1;
       }
       function apply(s) {

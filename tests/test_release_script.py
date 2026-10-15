@@ -96,7 +96,7 @@ class Sandbox:
     def run(self, *args: str, path: str | None = None, shell: tuple = ("bash",),
             **env) -> subprocess.CompletedProcess:
         base = {k: v for k, v in os.environ.items()
-                if not k.startswith(("JAMGRAF_", "FAKE_GCLOUD"))
+                if not k.startswith(("JAMGRAF_", "WAIKIKI_", "FAKE_GCLOUD"))
                 and k not in ("SIGNING_KEY_PEM", "SIGNING_KEY_SOURCE")}
         base.update(PYTHON=sys.executable, TMPDIR=str(self.scratch),
                     JAMGRAF_DATA=str(self.data),
@@ -257,7 +257,7 @@ def test_a_public_key_override_is_refused_not_trusted(good, override):
     r = good.run("--check-key", JAMGRAF_UPDATE_PUBKEY=value)
 
     assert r.returncode != 0
-    assert "JAMGRAF_UPDATE_PUBKEY is set" in r.stderr
+    assert "UPDATE_PUBKEY" in r.stderr and "overrides the public keys" in r.stderr
     assert good.gcloud_calls == []                # refused before the key is fetched
 
 
@@ -265,7 +265,7 @@ def test_the_release_path_refuses_the_override_too(good):
     r = good.run(f"v{VERSION}", "--dry-run", JAMGRAF_UPDATE_PUBKEY="")
 
     assert r.returncode != 0
-    assert "JAMGRAF_UPDATE_PUBKEY is set" in r.stderr
+    assert "UPDATE_PUBKEY" in r.stderr and "overrides the public keys" in r.stderr
     assert not good.built.exists()
 
 
@@ -381,3 +381,51 @@ def test_genkey_says_how_to_store_a_first_key_and_how_to_rotate(sandbox):
     assert "secrets create waikikey --replication-policy=automatic" in r.stdout
     assert "secrets versions add waikikey" in r.stdout
     assert "--project=startupos-328814" in r.stdout
+
+
+# --- The old names, after the rename -----------------------------------------
+
+@pytest.mark.parametrize("override", ["matching", ""])
+def test_the_old_spelling_of_the_override_is_refused_too(good, override):
+    """The app reads WAIKIKI_UPDATE_PUBKEY as a fallback (config.env).
+
+    So refusing only JAMGRAF_UPDATE_PUBKEY would leave the old spelling as a
+    working trapdoor: both verification steps would measure against it and
+    approve a release no installed copy accepts.
+    """
+    value = _keypair()[1] if override == "matching" else ""
+
+    r = good.run("--check-key", WAIKIKI_UPDATE_PUBKEY=value)
+
+    assert r.returncode != 0
+    assert "WAIKIKI_UPDATE_PUBKEY" in r.stderr
+    assert good.gcloud_calls == []
+
+
+def test_the_old_spelling_of_the_key_file_still_names_one(sandbox):
+    pem, pub = _keypair()
+    sandbox.pin(pub)
+    key = sandbox.tmp / "keys" / "update-key.pem"
+    key.parent.mkdir()
+    key.write_text(pem)
+
+    r = sandbox.run("--check-key", WAIKIKI_UPDATE_KEY=str(key))
+
+    assert r.returncode == 0, r.stderr
+    assert sandbox.gcloud_calls == []
+
+
+def test_a_caller_exported_old_key_variable_is_scrubbed_too(good):
+    """WAIKIKI_UPDATE_KEY_PEM was the channel's old name; a caller may export it."""
+    dumps = good.tmp / "env-dumps-legacy"
+    dumps.mkdir()
+    spy = _executable(good.tmp / "python-spy-legacy",
+                      f'#!/bin/sh\nenv -0 > "{dumps}/$$.env"\nexec "{sys.executable}" "$@"\n')
+
+    r = good.run("--check-key", PYTHON=str(spy),
+                 WAIKIKI_UPDATE_KEY_PEM="old-name-exported-by-the-caller")
+
+    assert r.returncode == 0, r.stderr
+    envs = [p.read_text() for p in dumps.iterdir()]
+    assert envs
+    assert not any("old-name-exported-by-the-caller" in e for e in envs)

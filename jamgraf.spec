@@ -121,7 +121,7 @@ app = BUNDLE(
         "CFBundleURLTypes": [{
             "CFBundleURLName": "com.verinfast.jamgraf.deeplink",
             "CFBundleTypeRole": "Viewer",
-            "CFBundleURLSchemes": ["jamgraf"],
+            "CFBundleURLSchemes": ["jamgraf", "waikiki"],   # waikiki: links made before the rename
         }],
     },
 )

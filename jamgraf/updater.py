@@ -41,7 +41,7 @@ from pathlib import Path
 
 from . import appconfig, config
 
-REPO = os.environ.get("JAMGRAF_UPDATE_REPO", "VerinFast/jamgraf")
+REPO = config.env("UPDATE_REPO", "VerinFast/jamgraf")
 LATEST_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 
 # Ed25519 public keys (64 hex chars each) that release zips must verify against.
@@ -131,7 +131,7 @@ def _pinned_keys() -> list[bytes]:
     Malformed entries are dropped rather than raising: a typo in one key must not
     take out the others, and it must never end up meaning "trust everything".
     """
-    env = os.environ.get("JAMGRAF_UPDATE_PUBKEY")
+    env = config.env("UPDATE_PUBKEY")
     raw = list(PUBLIC_KEYS_HEX) if env is None else env.replace(",", " ").split()
     out: list[bytes] = []
     for item in raw:

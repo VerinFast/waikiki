@@ -143,7 +143,7 @@ def wiki(tmp_path, monkeypatch):
     """Isolated temp data dir + fake embedder; active wiki = 'main'."""
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "WIKIS_DIR", tmp_path / "wikis")
-    monkeypatch.setattr(config, "DB_PATH", tmp_path / "jamgraf.db")  # legacy, absent
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "waikiki.db")  # legacy, absent
     monkeypatch.setattr(db, "_local", threading.local())
     monkeypatch.setattr(db, "_schema_ready", set())
     monkeypatch.setattr(embeddings, "get_embedder", lambda: FakeEmbedder())

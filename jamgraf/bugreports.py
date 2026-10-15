@@ -44,7 +44,7 @@ from . import config
 
 _lock = threading.Lock()
 
-REPO = os.environ.get("JAMGRAF_ISSUES_REPO", "VerinFast/jamgraf")
+REPO = config.env("ISSUES_REPO", "VerinFast/jamgraf")
 
 MAX_REPORTS = 50
 """Kept per install. An agent in a retry loop must not fill the disk; past this

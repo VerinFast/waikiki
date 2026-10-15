@@ -42,6 +42,12 @@ import re
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 SCHEME = "jamgraf"
+# Accepted on the way in, never produced: the app handed out `waikiki://` links
+# ("Copy link", and every MCP get_page) before the rename, and they are sitting in
+# notes and messages now. The allow-list below applies to both exactly the same;
+# a second scheme is a second spelling of the same door, not a second door.
+LEGACY_SCHEMES = ("waikiki",)
+ACCEPTED_SCHEMES = (SCHEME, *LEGACY_SCHEMES)
 
 # Slugs as `wikis.slugify` / `store` produce them. Deliberately strict: no dots,
 # no slashes, no percent escapes -- so nothing here can walk a path or smuggle a
@@ -73,7 +79,7 @@ def resolve(url: str) -> str | None:
         parts = urlparse(text)
     except Exception:
         return None
-    if (parts.scheme or "").lower() != SCHEME:
+    if (parts.scheme or "").lower() not in ACCEPTED_SCHEMES:
         return None
     # Require the authority form. The wiki lives in the authority, so "jamgraf:"
     # with no "//" is malformed rather than a shorthand -- keep the shape exact.

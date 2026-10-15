@@ -1202,7 +1202,9 @@ def search_subpages(parent_slug: str, query: str, k: int = 6) -> dict:
 @mcp.tool
 def version() -> dict:
     """Return the running Jamgraf release version. No wiki selection required."""
-    return {"jamgraf_version": config.VERSION}
+    # `waikiki_version` too: the key an agent or script written before the rename
+    # reads. Same value; dropping it is a later decision, not a side effect.
+    return {"jamgraf_version": config.VERSION, "waikiki_version": config.VERSION}
 
 
 @mcp.tool

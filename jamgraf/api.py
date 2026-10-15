@@ -177,15 +177,26 @@ def _resolve_wiki(scope) -> str:
     if q.get("wiki") and wikis.exists(q["wiki"][0]):
         return q["wiki"][0]
     headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers", [])}
-    cand = headers.get("x-jamgraf-wiki")
+    # Both spellings of the header. An MCP server started before the rename keeps
+    # sending X-Waikiki-Wiki until it restarts, and ignoring it would send that
+    # agent's edits to whatever wiki the cookie or the default happens to name.
+    cand = headers.get("x-jamgraf-wiki") or headers.get("x-waikiki-wiki")
     if cand and wikis.exists(cand):
         return cand
-    for part in headers.get("cookie", "").split(";"):
+    cand = config.cookie(_parse_cookies(headers.get("cookie", "")), "wiki")
+    if cand and wikis.exists(cand):
+        return cand
+    return wikis.default_slug() or "main"
+
+
+def _parse_cookies(header: str) -> dict[str, str]:
+    """A Cookie header as a dict (first occurrence of a name wins, as browsers send)."""
+    out: dict[str, str] = {}
+    for part in header.split(";"):
         if "=" in part:
             k, v = part.strip().split("=", 1)
-            if k == "jamgraf_wiki" and wikis.exists(v):
-                return v
-    return wikis.default_slug() or "main"
+            out.setdefault(k, v)
+    return out
 
 
 def _explicit_query_wiki(scope) -> str | None:
@@ -351,12 +362,8 @@ class ShareAuthMiddleware:
         if not auth.enabled():
             return await self._deny(scope, receive, send, 403,
                                     "Sharing is off on this Jamgraf.")
-        token = ""
-        for part in headers.get("cookie", "").split(";"):
-            if "=" in part:
-                k, v = part.strip().split("=", 1)
-                if k == auth.COOKIE:
-                    token = v
+        cookies = _parse_cookies(headers.get("cookie", ""))
+        token = cookies.get(auth.COOKIE) or cookies.get(auth.LEGACY_COOKIE) or ""
         if not auth.check_token(token):
             if scope["type"] == "websocket":
                 return await self._close_ws(send)
@@ -510,8 +517,8 @@ def _ctx(request: Request, **extra) -> dict:
     saying so, rather than taking down pages that don't need that wiki's
     contents — *Manage wikis* above all, which is where recovery starts."""
     wiki = db.active_wiki()
-    nav_filter = request.cookies.get("jamgraf_nav_filter", "all")
-    nav_sort = request.cookies.get("jamgraf_nav_sort", "updated")
+    nav_filter = config.cookie(request.cookies, "nav_filter", "all")
+    nav_sort = config.cookie(request.cookies, "nav_sort", "updated")
     unreadable = wikis.health(wiki)
     if unreadable["ok"]:
         theme = store.get_setting("theme", "default")
@@ -600,6 +607,7 @@ def login_submit(request: Request, password: str = Form(""), next: str = Form("/
 def logout_view():
     resp = RedirectResponse("/login", status_code=303)
     resp.delete_cookie(auth.COOKIE)
+    resp.delete_cookie(auth.LEGACY_COOKIE)   # or a pre-rename cookie keeps them in
     return resp
 
 
@@ -740,7 +748,7 @@ async def wikis_change_slug(request: Request, slug: str,
     # The cookie is the browser's pointer at the active wiki, and it still names
     # the old address — which no longer resolves, so the next bare POST would
     # land in the default wiki rather than this one.
-    if request.cookies.get("jamgraf_wiki") == slug:
+    if config.cookie(request.cookies, "wiki") == slug:
         resp.set_cookie("jamgraf_wiki", target, max_age=60 * 60 * 24 * 365,
                         samesite="lax")
     return resp

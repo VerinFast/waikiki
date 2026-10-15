@@ -103,7 +103,10 @@ def main() -> None:
     # MCP mode: run the stdio MCP server instead of the window. Lets Claude
     # Desktop launch the packaged .app directly as an MCP server (no source
     # checkout needed) — see the in-app Help page for the copy-paste config.
-    if os.environ.get("JAMGRAF_MCP") or "--mcp" in sys.argv:
+    # config.env, not os.environ: Claude Desktop configs written before the rename
+    # pass WAIKIKI_MCP=1, and missing it would open a window where an MCP server
+    # was asked for.
+    if config.env("MCP") or "--mcp" in sys.argv:
         from jamgraf import mcp_server
         mcp_server.main()
         return
@@ -123,7 +126,7 @@ def main() -> None:
 
     # Headless mode (used to smoke-test the packaged binary without a display):
     # run the server in the foreground, no window.
-    if os.environ.get("JAMGRAF_HEADLESS"):
+    if config.env("HEADLESS"):          # doorman still sets WAIKIKI_HEADLESS
         print(f"Jamgraf (headless) on http://{host}:{port}")
         uvicorn.Server(
             uvicorn.Config(fastapi_app, host=bind_host, port=port, log_level="info")

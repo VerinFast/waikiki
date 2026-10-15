@@ -28,6 +28,10 @@ import time
 from . import appconfig
 
 COOKIE = "jamgraf_share"
+# What the share cookie was called before the rename. Still ACCEPTED (the token
+# inside is what check_token verifies, not the name it arrives under) and still
+# DELETED at logout — otherwise a guest who logs out keeps a valid old cookie.
+LEGACY_COOKIE = "waikiki_share"
 _ITERATIONS = 200_000
 SESSION_DAYS = 14
 

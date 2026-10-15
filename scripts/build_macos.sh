@@ -74,26 +74,31 @@ pip install -q pywebview pyinstaller
 # activates the zombie instead of launching the new build, which looks exactly
 # like the app refusing to open. Quit it gracefully (never SIGKILL): the shutdown
 # path flushes live CRDT edits, so an in-progress edit is saved rather than lost.
-if pgrep -f "$PWD/dist/Jamgraf.app/Contents/MacOS/Jamgraf" >/dev/null 2>&1; then
-    echo "==> Jamgraf is running from dist/ — quitting it before the rebuild"
+# Both names: during the rename the app running from dist/ is the OLD build,
+# dist/Waikiki.app, and matching only the new name would wipe it out from under
+# itself — exactly the zombie described above.
+for APP in Jamgraf Waikiki; do
+    EXE="$PWD/dist/$APP.app/Contents/MacOS/$APP"
+    pgrep -f "$EXE" >/dev/null 2>&1 || continue
+    echo "==> $APP is running from dist/ — quitting it before the rebuild"
     echo "    (This disconnects you. It happens because the app you are USING is"
     echo "     the build output. Install a copy and it stops happening for good:"
     echo "       brew install --cask jamgraf --no-quarantine"
     echo "     Your wikis live in ~/Library/Application Support/Jamgraf and are"
     echo "     shared, so an installed copy opens everything you already have,"
     echo "     keeps running through every release, and self-updates.)"
-    osascript -e 'quit app "Jamgraf"' >/dev/null 2>&1 || true
+    osascript -e "quit app \"$APP\"" >/dev/null 2>&1 || true
     for _ in $(seq 1 40); do
-        pgrep -f "$PWD/dist/Jamgraf.app/Contents/MacOS/Jamgraf" >/dev/null 2>&1 || break
+        pgrep -f "$EXE" >/dev/null 2>&1 || break
         sleep 0.25
     done
-    if pgrep -f "$PWD/dist/Jamgraf.app/Contents/MacOS/Jamgraf" >/dev/null 2>&1; then
-        echo "ERROR: Jamgraf is still running and would be rebuilt out from under" >&2
+    if pgrep -f "$EXE" >/dev/null 2>&1; then
+        echo "ERROR: $APP is still running and would be rebuilt out from under" >&2
         echo "       itself. Quit it and re-run. (Not killing it — that would drop" >&2
         echo "       unsaved edits.)" >&2
         exit 1
     fi
-fi
+done
 
 rm -rf build dist
 pyinstaller --noconfirm --clean jamgraf.spec
@@ -101,53 +106,69 @@ pyinstaller --noconfirm --clean jamgraf.spec
 # Ad-hoc sign (no Apple Developer cert available for real notarization). This
 # quiets some macOS security checks but does NOT bypass Gatekeeper for a
 # downloaded app — first launch still needs right-click -> Open.
+# The old executable name, as a symlink beside the real one. Every Claude Desktop
+# config and doorman setup written before the rename launches
+# .../Contents/MacOS/Waikiki; after an in-place update the bundle folder may be
+# a symlink too (updater.finish_bundle_rename), so that full old path resolves
+# here. Inside the bundle, so it is sealed by the signature like everything else.
+ln -sf Jamgraf dist/Jamgraf.app/Contents/MacOS/Waikiki
+
 codesign --force --deep --sign - dist/Jamgraf.app 2>/dev/null || true
+codesign --verify --deep --strict dist/Jamgraf.app 2>/dev/null \
+    || echo "WARNING: dist/Jamgraf.app does not pass a strict signature check" >&2
+
+# Smoke test: boot it headless (server only, no window) on a scratch data dir and
+# a port nothing else uses, then check it serves its own version.
+SOURCE_VER="$(python3 -c \
+    "import re,pathlib;print(re.search(r'__version__ = \"([^\"]+)\"',pathlib.Path('jamgraf/__init__.py').read_text()).group(1))")"
+
+# smoke_boot <label> <executable> <env prefix> <port>
+smoke_boot() {
+    local label="$1" exe="$2" pfx="$3" port="$4" data pid ok="" ver
+    data="$(mktemp -d)"
+    echo "==> smoke test ($label): booting headless on :$port"
+    env "${pfx}HEADLESS=1" "${pfx}DATA=$data" "${pfx}PORT=$port" \
+        "$exe" > "$data/smoke.log" 2>&1 &
+    pid=$!
+    # Generous: a cold first run may fetch the local embedding model.
+    for _ in $(seq 1 120); do
+        kill -0 "$pid" 2>/dev/null || break          # died: stop waiting
+        if curl -sf -m 2 -o /dev/null "http://127.0.0.1:$port/"; then ok=1; break; fi
+        sleep 1
+    done
+    if [ -n "$ok" ]; then
+        # There is no /api/version route; the shell renders the version beside the
+        # logo, which is the same string a user reads, so assert on that.
+        ver="$(curl -sf -m 5 "http://127.0.0.1:$port/" 2>/dev/null \
+            | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d v)"
+    else
+        echo "ERROR: the built app did not serve on :$port ($label) — refusing to ship it." >&2
+        echo "--- last 30 lines of its output ---" >&2
+        tail -30 "$data/smoke.log" >&2 || true
+    fi
+    # Wait for it to actually exit before removing the dir: kill is asynchronous,
+    # and a still-writing process makes rm fail — which, under `set -e`, would
+    # abort the build over nothing but cleanup.
+    kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+    rm -rf "$data" 2>/dev/null || true
+    [ -n "$ok" ] || exit 1
+    if [ "$ver" != "$SOURCE_VER" ]; then
+        echo "ERROR: the built app serves version $ver, not $SOURCE_VER ($label)." >&2
+        echo "       dist/ is stale or half-replaced. Refusing to ship it." >&2
+        exit 1
+    fi
+    echo "==> smoke test passed ($label, serving $ver)"
+}
 
 # Prove the thing we just built actually RUNS before it can become a release
 # asset. v0.21.0 shipped a signed, verified bundle that could not be opened: the
-# signature proved the bytes were ours, nothing proved they started. Boot it
-# headless (server only, no window) on a scratch data dir and a port nothing else
-# uses, then check it serves its own version.
-SMOKE_PORT=8899
-SMOKE_DATA="$(mktemp -d)"
-echo "==> smoke test: booting the built app headless on :$SMOKE_PORT"
-JAMGRAF_HEADLESS=1 JAMGRAF_DATA="$SMOKE_DATA" JAMGRAF_PORT="$SMOKE_PORT" \
-    dist/Jamgraf.app/Contents/MacOS/Jamgraf > "$SMOKE_DATA/smoke.log" 2>&1 &
-SMOKE_PID=$!
-# Wait for it to actually exit before removing the dir: kill is asynchronous,
-# and a still-writing process makes rm fail — which, under `set -e`, would
-# abort the build over nothing but cleanup.
-smoke_cleanup() {
-    kill "$SMOKE_PID" 2>/dev/null || true
-    for _ in $(seq 1 40); do kill -0 "$SMOKE_PID" 2>/dev/null || break; sleep 0.25; done
-    rm -rf "$SMOKE_DATA" 2>/dev/null || true
-}
-SMOKE_OK=""
-# Generous: a cold first run may fetch the local embedding model.
-for _ in $(seq 1 120); do
-    kill -0 "$SMOKE_PID" 2>/dev/null || break          # died: stop waiting
-    if curl -sf -m 2 -o /dev/null "http://127.0.0.1:$SMOKE_PORT/"; then SMOKE_OK=1; break; fi
-    sleep 1
-done
-if [ -z "$SMOKE_OK" ]; then
-    echo "ERROR: the built app did not serve on :$SMOKE_PORT — refusing to ship it." >&2
-    echo "--- last 30 lines of its output ---" >&2
-    tail -30 "$SMOKE_DATA/smoke.log" >&2 || true
-    smoke_cleanup
-    exit 1
-fi
-# There is no /api/version route; the shell renders the version beside the logo,
-# which is the same string a user reads, so assert on that.
-SMOKE_VER="$(curl -sf -m 5 "http://127.0.0.1:$SMOKE_PORT/" 2>/dev/null \
-    | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1 | tr -d v)"
-smoke_cleanup
-if [ "$SMOKE_VER" != "$(python3 -c \
-        "import re,pathlib;print(re.search(r'__version__ = \"([^\"]+)\"',pathlib.Path('jamgraf/__init__.py').read_text()).group(1))")" ]; then
-    echo "ERROR: the built app serves version $SMOKE_VER, not the source version." >&2
-    echo "       dist/ is stale or half-replaced. Refusing to ship it." >&2
-    exit 1
-fi
-echo "==> smoke test passed${SMOKE_VER:+ (serving $SMOKE_VER)}"
+# signature proved the bytes were ours, nothing proved they started.
+smoke_boot "Jamgraf" dist/Jamgraf.app/Contents/MacOS/Jamgraf JAMGRAF_ 8899
+# And exactly as a pre-rename config or doorman starts it: the OLD executable
+# name and the OLD env var names. If either compatibility path is broken, every
+# existing Claude Desktop config breaks with it — so it fails the build here.
+smoke_boot "as Waikiki" dist/Jamgraf.app/Contents/MacOS/Waikiki WAIKIKI_ 8898
 
 # Zip the .app for a GitHub release asset (preserves the bundle structure).
 cd dist

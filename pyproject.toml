@@ -3,8 +3,8 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "waikiki"
-version = "1.0.4"
+name = "jamgraf"
+version = "1.1.0"
 description = "A small local wiki for Human/LLM collaboration (SQLite, hybrid RAG, MCP, CRDT co-editing)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -48,24 +48,24 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/VerinFast/waikiki"
-Source = "https://github.com/VerinFast/waikiki"
-Issues = "https://github.com/VerinFast/waikiki/issues"
+Homepage = "https://github.com/VerinFast/jamgraf"
+Source = "https://github.com/VerinFast/jamgraf"
+Issues = "https://github.com/VerinFast/jamgraf/issues"
 
 # The .app is not what pip ships: this is the server and the MCP stdio endpoint,
 # which is the half that runs anywhere. The desktop window lives in the cask.
 [project.scripts]
-waikiki = "waikiki.__main__:serve"
-waikiki-mcp = "waikiki.__main__:mcp"
+jamgraf = "jamgraf.__main__:serve"
+jamgraf-mcp = "jamgraf.__main__:mcp"
 
 # Templates, static assets and the vendored interchange library are runtime
 # data, not incidental files — the server 500s without the first two, and the
 # Kahala round-trip needs the third. Hatchling ships only .py by default.
 [tool.hatch.build.targets.wheel]
-packages = ["waikiki"]
+packages = ["jamgraf"]
 
 [tool.hatch.build.targets.sdist]
-include = ["waikiki", "README.md", "LICENSE", "docs", "tests", "pyproject.toml"]
+include = ["jamgraf", "README.md", "LICENSE", "docs", "tests", "pyproject.toml"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

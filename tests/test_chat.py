@@ -1,9 +1,9 @@
-import waikiki
-from waikiki import chat, config
+import jamgraf
+from jamgraf import chat, config
 
 
 def test_version_single_source():
-    assert config.VERSION == waikiki.__version__
+    assert config.VERSION == jamgraf.__version__
 
 
 def test_build_prompt_includes_everything():
@@ -49,7 +49,7 @@ def test_find_cli_missing_returns_none():
 def test_answer_reports_missing_cli(wiki):
     import pytest
 
-    from waikiki import store
+    from jamgraf import store
     if chat.find_cli("gemini"):
         pytest.skip("gemini CLI is installed here")
     store.create_page("Reef", "# Reef\nbody")
@@ -65,9 +65,9 @@ def test_claude_gets_an_mcp_config_and_read_only_tools():
     args = chat._cli_args("claude", "claude", "", "PROMPT")
     assert "--mcp-config" in args
     assert "--strict-mcp-config" in args, "the user's own MCP setup is not ours to use"
-    tools = [a for a in args if a.startswith("mcp__waikiki__")]
+    tools = [a for a in args if a.startswith("mcp__jamgraf__")]
     assert tools, "no tools granted — the agent would be blind again"
-    assert "mcp__waikiki__switch_wiki" in tools, (
+    assert "mcp__jamgraf__switch_wiki" in tools, (
         "a fresh MCP session has no active wiki, so without switch_wiki every "
         "content tool refuses and chat cannot read anything")
 
@@ -75,8 +75,8 @@ def test_claude_gets_an_mcp_config_and_read_only_tools():
 def test_no_write_tools_are_granted():
     """A chat session looks things up; it does not edit the wiki."""
     args = chat._cli_args("claude", "claude", "", "PROMPT")
-    granted = {a.removeprefix("mcp__waikiki__") for a in args
-               if a.startswith("mcp__waikiki__")}
+    granted = {a.removeprefix("mcp__jamgraf__") for a in args
+               if a.startswith("mcp__jamgraf__")}
     forbidden = {"create_page", "edit_page", "replace_page", "append_to_page",
                  "delete_page", "set_metadata", "set_property", "upload_asset",
                  "create_wiki", "generate_image", "set_setting"}
@@ -97,7 +97,7 @@ def test_the_prompt_tells_the_agent_which_wiki_to_switch_to():
 
 def test_the_prompt_no_longer_carries_pre_retrieved_excerpts(wiki, monkeypatch):
     """Retrieval was a stand-in for the agent being unable to search. It can now."""
-    from waikiki import store
+    from jamgraf import store
 
     store.create_page("Meru", "body")
     captured = {}
@@ -114,7 +114,7 @@ def test_the_prompt_no_longer_carries_pre_retrieved_excerpts(wiki, monkeypatch):
             returncode, stdout, stderr = 0, "answer", ""
         return R()
 
-    import waikiki.clirun as clirun
+    import jamgraf.clirun as clirun
     real, clirun.run = clirun.run, fake_run
     try:
         chat.answer("meru", "anything", provider="claude")
@@ -128,8 +128,8 @@ def test_the_prompt_no_longer_carries_pre_retrieved_excerpts(wiki, monkeypatch):
 def test_propose_edit_is_the_one_write_tool_chat_gets():
     """Chat must be able to offer a change; it must not be able to make one."""
     args = chat._cli_args("claude", "claude", "", "PROMPT")
-    granted = {a.removeprefix("mcp__waikiki__") for a in args
-               if a.startswith("mcp__waikiki__")}
+    granted = {a.removeprefix("mcp__jamgraf__") for a in args
+               if a.startswith("mcp__jamgraf__")}
     assert "propose_edit" in granted
     # The property that makes that safe: a proposal is inert until a human
     # applies it, so none of these may come with it.

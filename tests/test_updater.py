@@ -20,7 +20,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization as ser
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from waikiki import appconfig, updater
+from jamgraf import appconfig, updater
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def signing_key(monkeypatch):
     """A throwaway keypair, pinned as the build's update key."""
     priv = ed25519.Ed25519PrivateKey.generate()
     pub = priv.public_key().public_bytes(ser.Encoding.Raw, ser.PublicFormat.Raw)
-    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", pub.hex())
+    monkeypatch.setenv("JAMGRAF_UPDATE_PUBKEY", pub.hex())
     return priv
 
 
@@ -86,7 +86,7 @@ def test_malformed_signatures_are_refused(signing_key, sig):
 @pytest.mark.parametrize("key", ["", "nothex", "aa" * 31, "aa" * 33])
 def test_missing_or_malformed_pinned_key_disables_verification(monkeypatch, key):
     """Fail closed: no usable key means nothing verifies, not everything does."""
-    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", key)
+    monkeypatch.setenv("JAMGRAF_UPDATE_PUBKEY", key)
     priv = ed25519.Ed25519PrivateKey.generate()
     assert updater.verify_signature(b"payload", priv.sign(b"payload")) is False
 
@@ -102,7 +102,7 @@ def test_signature_file_accepts_raw_or_hex(signing_key):
 # --- Refusal paths ------------------------------------------------------------
 
 def test_unpinned_build_cannot_update(monkeypatch):
-    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", "")
+    monkeypatch.setenv("JAMGRAF_UPDATE_PUBKEY", "")
     ok, why = updater.can_update()
     assert ok is False and "signing key" in why
 
@@ -115,7 +115,7 @@ def test_source_checkout_cannot_update(signing_key):
 
 def test_download_and_apply_refuses_without_a_key(monkeypatch, wiki):
     """The orchestrator must bail before any network call when unpinned."""
-    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", "")
+    monkeypatch.setenv("JAMGRAF_UPDATE_PUBKEY", "")
 
     def explode(*a, **k):
         raise AssertionError("must not reach the network")
@@ -130,21 +130,21 @@ def test_apply_update_refuses_a_missing_staged_bundle(signing_key, wiki, monkeyp
     fake = updater._updates_dir() / "Nope.app"
     monkeypatch.setattr(updater, "can_update", lambda: (True, ""))
     monkeypatch.setattr(updater, "bundle_path",
-                        lambda: updater._updates_dir() / "Waikiki.app")
+                        lambda: updater._updates_dir() / "Jamgraf.app")
     res = updater.apply_update(fake)
     assert res["ok"] is False and "staged bundle missing" in res["error"]
 
 
 # --- Staging ------------------------------------------------------------------
 
-def _make_bundle(root, name="Waikiki.app", version="0.13.0"):
+def _make_bundle(root, name="Jamgraf.app", version="0.13.0"):
     """A minimal but structurally real .app."""
     app = root / name
     (app / "Contents" / "MacOS").mkdir(parents=True, exist_ok=True)
-    (app / "Contents" / "MacOS" / "Waikiki").write_text("#!/bin/bash\ntrue\n")
+    (app / "Contents" / "MacOS" / "Jamgraf").write_text("#!/bin/bash\ntrue\n")
     import plistlib
     (app / "Contents" / "Info.plist").write_bytes(plistlib.dumps({
-        "CFBundleName": "Waikiki",
+        "CFBundleName": "Jamgraf",
         "CFBundleShortVersionString": version,
     }))
     return app
@@ -158,15 +158,15 @@ def _zip(app, dest):
 
 def test_stage_expands_and_accepts_a_matching_bundle(wiki, tmp_path):
     src = _make_bundle(tmp_path / "src", version="0.14.0")
-    z = _zip(src, tmp_path / "Waikiki-0.14.0.zip")
+    z = _zip(src, tmp_path / "Jamgraf-0.14.0.zip")
     staged = updater.stage(z, expect_version="v0.14.0")
-    assert staged.is_dir() and (staged / "Contents" / "MacOS" / "Waikiki").exists()
+    assert staged.is_dir() and (staged / "Contents" / "MacOS" / "Jamgraf").exists()
 
 
 def test_stage_rejects_a_version_mismatch(wiki, tmp_path):
     """A zip whose Info.plist disagrees with the release tag is not installed."""
     src = _make_bundle(tmp_path / "src", version="0.9.0")
-    z = _zip(src, tmp_path / "Waikiki-0.14.0.zip")
+    z = _zip(src, tmp_path / "Jamgraf-0.14.0.zip")
     with pytest.raises(RuntimeError, match="does not match release"):
         updater.stage(z, expect_version="0.14.0")
 
@@ -207,7 +207,7 @@ def test_maybe_check_is_a_noop_when_not_due(wiki, monkeypatch):
 
 
 def test_status_reports_an_unpinned_build(wiki, monkeypatch):
-    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", "")
+    monkeypatch.setenv("JAMGRAF_UPDATE_PUBKEY", "")
     st = updater.status()
     assert st["signing_key_pinned"] is False and st["updatable"] is False
     assert st["current"]
@@ -216,14 +216,14 @@ def test_status_reports_an_unpinned_build(wiki, monkeypatch):
 # --- Streamed verification (signature covers the digest, not the bytes) --------
 
 def test_verify_file_accepts_a_correctly_signed_file(signing_key, tmp_path):
-    blob = tmp_path / "Waikiki-macos.zip"
+    blob = tmp_path / "Jamgraf-macos.zip"
     blob.write_bytes(b"x" * (3 << 20))          # spans multiple read chunks
     sig = signing_key.sign(updater.file_digest(blob))
     assert updater.verify_file(blob, sig) is True
 
 
 def test_verify_file_refuses_a_modified_file(signing_key, tmp_path):
-    blob = tmp_path / "Waikiki-macos.zip"
+    blob = tmp_path / "Jamgraf-macos.zip"
     blob.write_bytes(b"x" * 1024)
     sig = signing_key.sign(updater.file_digest(blob))
     blob.write_bytes(b"x" * 1023 + b"y")        # same length, one byte changed
@@ -236,7 +236,7 @@ def test_verify_file_refuses_a_signature_over_the_raw_bytes(signing_key, tmp_pat
     If the signer ever goes back to signing archive bytes while the client
     verifies the digest, every release would be refused. Pin the mismatch.
     """
-    blob = tmp_path / "Waikiki-macos.zip"
+    blob = tmp_path / "Jamgraf-macos.zip"
     blob.write_bytes(b"payload bytes")
     assert updater.verify_file(blob, signing_key.sign(blob.read_bytes())) is False
 
@@ -268,14 +268,14 @@ def _run_check(monkeypatch, tag, assets):
 
 def test_a_newer_signed_release_is_offered(wiki, monkeypatch):
     res = _run_check(monkeypatch, "v99.0.0",
-                     ["Waikiki-macos.zip", "Waikiki-macos.zip.sig"])
+                     ["Jamgraf-macos.zip", "Jamgraf-macos.zip.sig"])
     assert res["available"] and res["installable"]
     assert updater.status()["last_available"] == "v99.0.0"
 
 
 def test_a_newer_release_without_a_signature_is_not_offered(wiki, monkeypatch):
     """Seen, but not installable — Settings must not offer a doomed install."""
-    res = _run_check(monkeypatch, "v99.0.0", ["Waikiki-macos.zip"])
+    res = _run_check(monkeypatch, "v99.0.0", ["Jamgraf-macos.zip"])
     assert res["available"] is True and res["installable"] is False
     assert "no signed .zip asset" in res["error"]
     st = updater.status()
@@ -286,7 +286,7 @@ def test_a_newer_release_without_a_signature_is_not_offered(wiki, monkeypatch):
 def test_an_older_release_is_not_offered(wiki, monkeypatch):
     """A local build newer than the latest release must not offer a downgrade."""
     res = _run_check(monkeypatch, "v0.0.1",
-                     ["Waikiki-macos.zip", "Waikiki-macos.zip.sig"])
+                     ["Jamgraf-macos.zip", "Jamgraf-macos.zip.sig"])
     assert res["available"] is False and res["installable"] is False
     st = updater.status()
     assert st["last_seen"] == "v0.0.1"          # we did see it...
@@ -296,10 +296,10 @@ def test_an_older_release_is_not_offered(wiki, monkeypatch):
 def test_last_available_is_cleared_when_a_release_is_pulled(wiki, monkeypatch):
     """A stale offer must not survive a later check that finds nothing."""
     _run_check(monkeypatch, "v99.0.0",
-               ["Waikiki-macos.zip", "Waikiki-macos.zip.sig"])
+               ["Jamgraf-macos.zip", "Jamgraf-macos.zip.sig"])
     assert updater.status()["last_available"] == "v99.0.0"
     _run_check(monkeypatch, "v0.0.1",
-               ["Waikiki-macos.zip", "Waikiki-macos.zip.sig"])
+               ["Jamgraf-macos.zip", "Jamgraf-macos.zip.sig"])
     assert updater.status()["last_available"] is None
 
 
@@ -312,9 +312,9 @@ def test_the_backup_stays_on_the_bundles_own_volume(signing_key, wiki, tmp_path,
     The backup must be a sibling of the bundle, not under DATA_DIR (which can be
     on a different volume when the app lives on an external drive).
     """
-    target = tmp_path / "Applications" / "Waikiki.app"
+    target = tmp_path / "Applications" / "Jamgraf.app"
     (target / "Contents" / "MacOS").mkdir(parents=True)
-    staged = updater._updates_dir() / "Waikiki.app"
+    staged = updater._updates_dir() / "Jamgraf.app"
     (staged / "Contents" / "MacOS").mkdir(parents=True)
 
     monkeypatch.setattr(updater, "can_update", lambda: (True, ""))
@@ -333,21 +333,21 @@ def test_the_backup_stays_on_the_bundles_own_volume(signing_key, wiki, tmp_path,
 
 
 def test_an_empty_env_override_disables_a_pinned_build(monkeypatch):
-    """Setting WAIKIKI_UPDATE_PUBKEY="" must disable updating, not fall back.
+    """Setting JAMGRAF_UPDATE_PUBKEY="" must disable updating, not fall back.
 
     Once a real key is pinned in the source, an override that resolved to the
     constant when empty would make it impossible to run a build with updates
     off — and would silently re-enable trust the operator meant to remove.
     """
     assert updater.PUBLIC_KEYS_HEX, "this test is meaningless without a pinned key"
-    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", "")
+    monkeypatch.setenv("JAMGRAF_UPDATE_PUBKEY", "")
     assert updater._pinned_keys() == []
     ok, why = updater.can_update()
     assert ok is False and "signing key" in why
 
 
 def test_the_pinned_keys_are_used_when_no_override_is_set(monkeypatch):
-    monkeypatch.delenv("WAIKIKI_UPDATE_PUBKEY", raising=False)
+    monkeypatch.delenv("JAMGRAF_UPDATE_PUBKEY", raising=False)
     assert updater._pinned_keys() == [bytes.fromhex(h)
                                       for h in updater.PUBLIC_KEYS_HEX]
 
@@ -361,7 +361,7 @@ def test_the_pinned_keys_are_used_when_no_override_is_set(monkeypatch):
 def test_a_successor_key_verifies_alongside_the_current_one(monkeypatch):
     """The overlap window: sign with either, both are accepted."""
     current, successor = (ed25519.Ed25519PrivateKey.generate() for _ in range(2))
-    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", " ".join(
+    monkeypatch.setenv("JAMGRAF_UPDATE_PUBKEY", " ".join(
         _pub_hex(k) for k in (current, successor)))
     for key in (current, successor):
         assert updater.verify_signature(b"payload", key.sign(b"payload")) is True
@@ -370,14 +370,14 @@ def test_a_successor_key_verifies_alongside_the_current_one(monkeypatch):
 def test_a_key_outside_the_set_is_still_refused(monkeypatch):
     """Trusting several keys must not drift into trusting any key."""
     trusted, attacker = (ed25519.Ed25519PrivateKey.generate() for _ in range(2))
-    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", _pub_hex(trusted))
+    monkeypatch.setenv("JAMGRAF_UPDATE_PUBKEY", _pub_hex(trusted))
     assert updater.verify_signature(b"payload", attacker.sign(b"payload")) is False
 
 
 def test_verifying_key_names_which_key_signed(monkeypatch):
     """The release script reports the signer, so a rotation is visible."""
     current, successor = (ed25519.Ed25519PrivateKey.generate() for _ in range(2))
-    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", " ".join(
+    monkeypatch.setenv("JAMGRAF_UPDATE_PUBKEY", " ".join(
         _pub_hex(k) for k in (current, successor)))
     signed = updater.verifying_key(b"payload", successor.sign(b"payload"))
     assert signed == successor.public_key().public_bytes(
@@ -388,7 +388,7 @@ def test_verifying_key_names_which_key_signed(monkeypatch):
 def test_one_malformed_entry_does_not_disarm_the_rest(monkeypatch):
     """A typo in one key must not take out the others, nor mean 'trust all'."""
     good = ed25519.Ed25519PrivateKey.generate()
-    monkeypatch.setenv("WAIKIKI_UPDATE_PUBKEY", f"nothex, {_pub_hex(good)}, aa")
+    monkeypatch.setenv("JAMGRAF_UPDATE_PUBKEY", f"nothex, {_pub_hex(good)}, aa")
     assert updater.verify_signature(b"payload", good.sign(b"payload")) is True
     other = ed25519.Ed25519PrivateKey.generate()
     assert updater.verify_signature(b"payload", other.sign(b"payload")) is False

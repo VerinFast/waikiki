@@ -1,4 +1,4 @@
-# Waikiki roadmap
+# Jamgraf roadmap
 
 Backlog from the human (author) and Claude (the MCP co-editor), grouped into
 sprints. Shipped items move to CHANGELOG via git history.
@@ -49,7 +49,7 @@ find/replace (`edit_page`); broken-link counts in wiki stats.
 
 ## Sprint E — Polish & structure  ✅ shipped (v0.0.4)
 - [x] Clone an article (UI + MCP `clone_page`)
-- [x] App icon — 🌺 hibiscus over 💾 floppy (assets/Waikiki.icns)
+- [x] App icon — 🌺 hibiscus over 💾 floppy (assets/Jamgraf.icns)
 - [x] Connect Claude help page refreshed with the current toolset
 - [x] Parent pages — mark a page a child of another; children are hidden from
       the rail and excluded from the main RAG index; their vectors live in a

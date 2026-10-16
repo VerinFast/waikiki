@@ -1,4 +1,4 @@
-from waikiki import ai, config, db, help_content, store, wikis
+from jamgraf import ai, config, db, help_content, store, wikis
 
 
 def _in_help(fn):

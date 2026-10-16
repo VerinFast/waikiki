@@ -5,8 +5,8 @@ from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
 
-from waikiki import appconfig, auth
-from waikiki.api import ShareAuthMiddleware
+from jamgraf import appconfig, auth
+from jamgraf.api import ShareAuthMiddleware
 
 
 def test_password_hash_and_verify(wiki):
@@ -134,7 +134,7 @@ def test_tunnel_visitor_is_a_guest_not_the_owner(wiki):
 
 def test_tunnel_alone_enables_remote_access(wiki, monkeypatch):
     """With LAN sharing off but a tunnel up, remote callers are still gated."""
-    from waikiki import tunnel
+    from jamgraf import tunnel
     auth.set_password("pw")
     appconfig.set("share_enabled", False)
     assert auth.enabled() is False

@@ -25,9 +25,9 @@ import zipfile
 import httpx
 import pytest
 
-from waikiki import (config, db, kahala, kahalaauth, secretstore, store,
+from jamgraf import (config, db, kahala, kahalaauth, secretstore, store,
                      wikis)
-from waikiki.vendor import wiki_interchange as wi
+from jamgraf.vendor import wiki_interchange as wi
 
 
 # --- fakes -------------------------------------------------------------------
@@ -682,7 +682,7 @@ def test_a_guest_cannot_reach_the_kahala_routes(path):
     is exfiltration, not a misconfiguration, so it sits with the other
     owner-only paths in ``auth``.
     """
-    from waikiki import auth
+    from jamgraf import auth
     assert not auth.guest_may(path), \
         f"a LAN guest can reach {path}, which is enough to send a wiki off-box"
 
@@ -698,7 +698,7 @@ def test_the_kahala_pane_renders_in_every_state(wiki, monkeypatch):
     branch is the one nothing else in this file touches.
     """
     from fastapi.testclient import TestClient
-    from waikiki.api import app
+    from jamgraf.api import app
 
     monkeypatch.setattr(kahalaauth, "signed_in", lambda: True)
     with TestClient(app, client=("127.0.0.1", 12345)) as client:
@@ -724,7 +724,7 @@ def test_signing_in_does_not_bring_the_old_error_banner_back(wiki, monkeypatch):
     of a pane that now correctly says they are signed in.
     """
     from fastapi.testclient import TestClient
-    from waikiki.api import app
+    from jamgraf.api import app
 
     monkeypatch.setattr(kahalaauth, "signed_in", lambda: False)
     with TestClient(app, client=("127.0.0.1", 12345)) as client:
@@ -743,7 +743,7 @@ def test_signing_in_does_not_bring_the_old_error_banner_back(wiki, monkeypatch):
 
 def test_the_pane_says_why_when_there_is_no_secure_store(wiki, monkeypatch):
     from fastapi.testclient import TestClient
-    from waikiki.api import app
+    from jamgraf.api import app
 
     monkeypatch.setattr(secretstore, "available", lambda: False)
     monkeypatch.setattr(secretstore, "unavailable_reason",
@@ -764,7 +764,7 @@ def _kahala_post_routes() -> list[str]:
 
     Hand-listing is how a route added next year quietly ships unguarded.
     """
-    from waikiki.api import app
+    from jamgraf.api import app
     return sorted({r.path for r in app.routes
                    if getattr(r, "path", "").startswith("/kahala")
                    and "POST" in getattr(r, "methods", set())})
@@ -783,7 +783,7 @@ def test_a_cross_site_post_is_refused(wiki, path):
     would send the whole wiki to a host the attacker chose, so it is refused.
     """
     from fastapi.testclient import TestClient
-    from waikiki.api import app
+    from jamgraf.api import app
 
     with TestClient(app, client=("127.0.0.1", 12345)) as client:
         out = client.post(path, data={"wiki": "main", "base_url":
@@ -792,13 +792,13 @@ def test_a_cross_site_post_is_refused(wiki, path):
         assert out.status_code == 403, \
             f"a cross-site POST to {path} was accepted"
 
-        # And the same request from Waikiki's own page is not blocked by this.
+        # And the same request from Jamgraf's own page is not blocked by this.
         ours = client.post(path, data={"wiki": "main", "base_url":
                                        "https://kahala.example", "remote": "x"},
                            headers={"sec-fetch-site": "same-origin"},
                            follow_redirects=False)
         assert ours.status_code != 403, \
-            f"{path} refuses Waikiki's own form, so the feature is unusable"
+            f"{path} refuses Jamgraf's own form, so the feature is unusable"
 
 
 # --- incremental sync ---------------------------------------------------------
@@ -812,7 +812,7 @@ def test_a_cross_site_post_is_refused(wiki, path):
 
 def _remote_wiki_with(pages=(("Alpha", "first body"),), element=True):
     """A second local wiki standing in for Kahala's copy."""
-    from waikiki import elements
+    from jamgraf import elements
 
     other = wikis.create_wiki("Remote Source")
     token = db.current_wiki.set(other)
@@ -839,7 +839,7 @@ def _as(slug, fn):
 
 def test_the_state_vector_and_changelog_move_definitions_not_just_pages(wiki):
     """The whole point of spec v3, exercised through the repository."""
-    from waikiki import elements
+    from jamgraf import elements
 
     remote = _remote_wiki_with()
     peer_sv = _as("main", store.wiki_state_vector)
@@ -1007,7 +1007,7 @@ def _client(app):
 
 def test_the_desktop_shell_gets_a_url_instead_of_a_redirect(wiki, http,
                                                             monkeypatch):
-    from waikiki.api import app
+    from jamgraf.api import app
 
     monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
     http(lambda r: httpx.Response(200, json={
@@ -1026,7 +1026,7 @@ def test_the_desktop_shell_gets_a_url_instead_of_a_redirect(wiki, http,
 
 
 def test_a_browser_still_gets_the_ordinary_redirect(wiki, http, monkeypatch):
-    from waikiki.api import app
+    from jamgraf.api import app
 
     monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
     http(lambda r: httpx.Response(200, json={
@@ -1043,10 +1043,10 @@ def test_an_external_callback_lands_on_a_page_not_in_the_app_ui(wiki, http,
                                                                 monkeypatch):
     """The desktop flow finishes in a different application's window.
 
-    Redirecting into /kahala there would leave the person looking at Waikiki in
+    Redirecting into /kahala there would leave the person looking at Jamgraf in
     a stray browser tab while the window they actually use sits unchanged.
     """
-    from waikiki.api import app
+    from jamgraf.api import app
 
     monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
     http(lambda r: httpx.Response(200, json={
@@ -1064,7 +1064,7 @@ def test_an_external_callback_lands_on_a_page_not_in_the_app_ui(wiki, http,
 
 def test_an_in_window_callback_still_redirects_into_the_pane(wiki, http,
                                                              monkeypatch):
-    from waikiki.api import app
+    from jamgraf.api import app
 
     monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
     http(lambda r: httpx.Response(200, json={
@@ -1086,7 +1086,7 @@ def test_an_unknown_state_is_treated_as_external(wiki):
 
 def test_the_pane_polls_rather_than_leaving_a_stale_answer(wiki, monkeypatch):
     """The desktop sign-in ends elsewhere, so this window gets no event."""
-    from waikiki.api import app
+    from jamgraf.api import app
 
     monkeypatch.setattr(kahalaauth, "signed_in", lambda: False)
     with _client(app) as client:
@@ -1098,7 +1098,7 @@ def test_the_pane_polls_rather_than_leaving_a_stale_answer(wiki, monkeypatch):
 # --- a push cannot create the wiki on Kahala ---------------------------------
 #
 # Creating one there is `POST /wikis/create`, a session-authenticated browser
-# form, and Kahala only accepts our bearer token on `/api/*` — so Waikiki
+# form, and Kahala only accepts our bearer token on `/api/*` — so Jamgraf
 # genuinely cannot do it, and the interface has to say so rather than let
 # someone link to a name that was never going to work.
 
@@ -1135,7 +1135,7 @@ def test_a_missing_remote_wiki_says_a_push_cannot_create_it(wiki, http,
 def test_the_pane_says_a_push_cannot_create_and_offers_the_way_there(wiki,
                                                                      monkeypatch):
     from fastapi.testclient import TestClient
-    from waikiki.api import app
+    from jamgraf.api import app
 
     monkeypatch.setattr(kahalaauth, "signed_in", lambda: True)
     wikis.set_link("main", "https://kahala.example", "remote-wiki")
@@ -1171,7 +1171,7 @@ def test_the_address_defaults_to_one_already_in_use(wiki):
 
 def test_the_pane_prefills_both(wiki):
     from fastapi.testclient import TestClient
-    from waikiki.api import app
+    from jamgraf.api import app
 
     wikis.set_link("beaconlight", "https://kahala.example", "beaconlight")
     with TestClient(app, client=("127.0.0.1", 12345)) as client:
@@ -1232,7 +1232,7 @@ def test_the_pane_names_the_sign_in_server(wiki, monkeypatch):
     """"Signed in." alone is a claim the reader cannot check, and there is more
     than one Kahala."""
     from fastapi.testclient import TestClient
-    from waikiki.api import app
+    from jamgraf.api import app
 
     monkeypatch.setattr(kahalaauth, "issuer", lambda: "https://kc.example/realms/gp")
     monkeypatch.setattr(kahalaauth, "signed_in", lambda: True)
@@ -1297,14 +1297,14 @@ def test_the_servers_own_words_survive_into_every_404(wiki, http, monkeypatch):
 # over-broad error handling turned that into "there is no wiki called startupos".
 
 
-def _two_wikis_sharing_a_page(slug="waikiki-repo"):
+def _two_wikis_sharing_a_page(slug="jamgraf-repo"):
     """Sender and receiver both hold the page, with independent Y.Doc lineages."""
     sender, receiver = wikis.create_wiki("Sender"), wikis.create_wiki("Receiver")
     for w, body in ((sender, "written locally"), (receiver, "written on the server")):
         token = db.current_wiki.set(w)
         try:
             db.init_db()
-            store.create_page("Waikiki Repo", body)
+            store.create_page("Jamgraf Repo", body)
         finally:
             db.current_wiki.reset(token)
     return sender, receiver
@@ -1315,7 +1315,7 @@ def test_a_page_both_sides_have_travels_as_a_usable_changelog(wiki):
     peer = _as(receiver, store.wiki_state_vector)
     log = _as(sender, lambda: store.wiki_changelog_for(peer))
 
-    entry = next(p for p in log.pages if p.slug == "waikiki-repo")
+    entry = next(p for p in log.pages if p.slug == "jamgraf-repo")
     assert entry.changelog is not None and entry.snapshot is None, \
         "the peer already had this page, so it should travel as an update"
 
@@ -1326,7 +1326,7 @@ def test_a_page_both_sides_have_travels_as_a_usable_changelog(wiki):
         "ydoc_update contains a serialized envelope, not Yjs bytes — double-wrapped"
 
     summary = _as(receiver, lambda: store.apply_wiki_changelog(log))
-    assert summary["updated"] == ["waikiki-repo"], summary
+    assert summary["updated"] == ["jamgraf-repo"], summary
     assert "double_wrapped" not in summary
 
 
@@ -1344,8 +1344,8 @@ def test_a_double_wrapped_changelog_from_a_peer_is_repaired_and_reported(wiki):
         for p in log.pages if p.changelog is not None])
 
     summary = _as(receiver, lambda: store.apply_wiki_changelog(broken))
-    assert summary["updated"] == ["waikiki-repo"]
-    assert summary["double_wrapped"] == ["waikiki-repo"], \
+    assert summary["updated"] == ["jamgraf-repo"]
+    assert summary["double_wrapped"] == ["jamgraf-repo"], \
         "a peer's broken payload was straightened out without saying so"
 
 

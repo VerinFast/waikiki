@@ -18,7 +18,7 @@ import anyio
 import pytest
 from pycrdt import Doc, Text
 
-from waikiki import collab, config, db, store, wikis
+from jamgraf import collab, config, db, store, wikis
 
 
 class _StandInRoom:
@@ -252,7 +252,7 @@ def test_an_agent_pointed_at_the_old_address_is_refused_not_redirected(wiki,
     know, so an agent still holding the old address would have written its
     pages into whatever wiki happens to be default.
     """
-    from waikiki import mcp_server
+    from jamgraf import mcp_server
 
     slug = wikis.create_wiki("Agent Wiki")
     monkeypatch.setattr(mcp_server, "_ACTIVE", slug)
@@ -265,7 +265,7 @@ def test_an_agent_pointed_at_the_old_address_is_refused_not_redirected(wiki,
 
 
 def test_the_mcp_tool_renames_the_label(wiki, monkeypatch):
-    from waikiki import mcp_server
+    from jamgraf import mcp_server
 
     slug = wikis.create_wiki("Tool Wiki")
     monkeypatch.setattr(mcp_server, "_ACTIVE", slug)
@@ -285,7 +285,7 @@ def test_the_mcp_tool_cannot_change_an_address(wiki, monkeypatch):
     neither process in a position to notice, so this surface only carries the
     label.
     """
-    from waikiki import mcp_server
+    from jamgraf import mcp_server
 
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
     import inspect
@@ -299,7 +299,7 @@ def test_the_mcp_tool_cannot_change_an_address(wiki, monkeypatch):
 
 
 def test_the_mcp_tool_asks_for_something_to_change(wiki, monkeypatch):
-    from waikiki import mcp_server
+    from jamgraf import mcp_server
 
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
     assert "error" in mcp_server.rename_wiki(name="  ")
@@ -374,13 +374,13 @@ def test_releasing_a_wiki_saves_what_was_typed_first(wiki, stand_in_rooms):
 def test_the_rename_routes_work_end_to_end(wiki):
     from fastapi.testclient import TestClient
 
-    from waikiki.api import app
+    from jamgraf.api import app
 
     slug = wikis.create_wiki("startupos")
     _seed(slug, "Plan", "route test content")
 
     with TestClient(app, client=("127.0.0.1", 1)) as c:
-        c.cookies.set("waikiki_wiki", slug)
+        c.cookies.set("jamgraf_wiki", slug)
         r = c.post(f"/wikis/{slug}/rename", data={"name": "StartupOS"},
                    follow_redirects=False)
         assert r.status_code == 303
@@ -393,7 +393,7 @@ def test_the_rename_routes_work_end_to_end(wiki):
     assert wikis.exists("startup-os") and not wikis.exists(slug)
     # The cookie pointed at the old address, which no longer resolves — a bare
     # POST from that tab would otherwise have landed in the default wiki.
-    assert "waikiki_wiki=startup-os" in r.headers.get("set-cookie", "")
+    assert "jamgraf_wiki=startup-os" in r.headers.get("set-cookie", "")
     tok = db.current_wiki.set("startup-os")
     try:
         assert store.get_page("plan")["markdown"] == "route test content"
@@ -404,7 +404,7 @@ def test_the_rename_routes_work_end_to_end(wiki):
 def test_a_refused_address_comes_back_as_a_message_not_a_500(wiki):
     from fastapi.testclient import TestClient
 
-    from waikiki.api import app
+    from jamgraf.api import app
 
     with TestClient(app, client=("127.0.0.1", 1)) as c:
         r = c.post("/wikis/main/address", data={"new_slug": "beaconlight"},
@@ -434,7 +434,7 @@ def test_a_refused_address_leaves_the_live_editors_alone(wiki, stand_in_rooms):
         key = collab.room_key(slug, "open")
         from fastapi.testclient import TestClient
 
-        from waikiki.api import app
+        from jamgraf.api import app
         with TestClient(app, client=("127.0.0.1", 1)) as c:
             r = await anyio.to_thread.run_sync(
                 lambda: c.post(f"/wikis/{slug}/address",

@@ -26,9 +26,9 @@ from zoneinfo import ZoneInfo
 import pytest
 from fastapi.testclient import TestClient
 
-from waikiki import calendarfeed as cf
-from waikiki import db, store
-from waikiki.api import app
+from jamgraf import calendarfeed as cf
+from jamgraf import db, store
+from jamgraf.api import app
 
 NY = ZoneInfo("America/New_York")
 

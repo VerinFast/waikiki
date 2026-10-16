@@ -1,6 +1,6 @@
 import zipfile
 
-from waikiki import store, wikis, db
+from jamgraf import store, wikis, db
 
 
 def test_comments(wiki):

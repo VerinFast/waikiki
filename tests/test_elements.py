@@ -1,6 +1,6 @@
 import json
 
-from waikiki import elements, store
+from jamgraf import elements, store
 
 
 def test_infobox_seeded(wiki):
@@ -42,7 +42,7 @@ def test_unregistered_fence_stays_code(wiki):
 
 
 def test_mcp_element_tools(wiki, monkeypatch):
-    from waikiki import mcp_server
+    from jamgraf import mcp_server
     monkeypatch.setattr(mcp_server, "_ACTIVE", "main")
     res = mcp_server.create_element(name="Card", fields=["heading*", "body"],
                                     html="<div>{{heading}}</div>", css=".c{}", js="")

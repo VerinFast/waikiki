@@ -19,13 +19,13 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from waikiki import store
-from waikiki.api import app
+from jamgraf import store
+from jamgraf.api import app
 
 
 def _client() -> TestClient:
     c = TestClient(app, client=("127.0.0.1", 12345))
-    c.cookies.set("waikiki_wiki", "main")
+    c.cookies.set("jamgraf_wiki", "main")
     return c
 
 

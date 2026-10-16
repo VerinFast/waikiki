@@ -1,4 +1,4 @@
-from waikiki import db, mcp_server
+from jamgraf import db, mcp_server
 
 
 def test_get_and_set_setting_allowlist(wiki, monkeypatch):

@@ -1,17 +1,17 @@
 # Syncing with Kahala
 
 Kahala is the multi-tenant, server-side half of the same wiki (good-place
-`services/kahala`). Waikiki can **link** a local wiki to one there, **push** it
+`services/kahala`). Jamgraf can **link** a local wiki to one there, **push** it
 up, **pull** it back down, or **clone** a remote wiki into a new local one.
 
 Both ends speak the shared, version-gated `wiki-interchange` format — Kahala
-through `packages/wiki-interchange`, Waikiki through its
+through `packages/wiki-interchange`, Jamgraf through its
 [vendored copy](vendoring.md) — so nothing here invents a protocol. This is only
 the wire and the credential.
 
-* `waikiki/kahala.py` — the link record and the transfers.
-* `waikiki/kahalaauth.py` — OpenID Connect, authorization code + PKCE.
-* `waikiki/secretstore.py` — the Keychain, and the refusal to use anything else.
+* `jamgraf/kahala.py` — the link record and the transfers.
+* `jamgraf/kahalaauth.py` — OpenID Connect, authorization code + PKCE.
+* `jamgraf/secretstore.py` — the Keychain, and the refusal to use anything else.
 
 ## What travels
 
@@ -42,7 +42,7 @@ on both sides is a deliberate act on both sides.
 
 ## Incremental by default
 
-A push or a pull sends **only what changed**. Waikiki publishes a state vector —
+A push or a pull sends **only what changed**. Jamgraf publishes a state vector —
 a per-page Yjs summary, plus digests of the elements, templates and images it
 holds — and the far end replies with just the missing bytes. Re-syncing a
 215-page wiki that differs by a paragraph is a few kilobytes rather than ~57MB.
@@ -54,7 +54,7 @@ current while its definitions silently went stale — and nothing reported it.
 
 ### When a sync goes full
 
-Two situations make Waikiki transfer the whole wiki instead. Both are automatic,
+Two situations make Jamgraf transfer the whole wiki instead. Both are automatic,
 and both **say so in the result** — a fallback nobody can see is one nobody can
 question.
 
@@ -80,22 +80,22 @@ hand, and the MCP tools take `full=True` for the same reason.
 ## Signing in
 
 Kahala authenticates against Keycloak natively (good-place decision D5), so
-Waikiki is an OIDC **public client**: `good-place-waikiki`, standard flow with
+Jamgraf is an OIDC **public client**: `good-place-waikiki`, standard flow with
 PKCE S256 and **no client secret**. A desktop binary cannot keep a secret —
 anyone holding the `.app` holds it — so PKCE, not a secret, is what binds an
 authorization code to the app that asked for it.
 
 The redirect comes back to **`http://127.0.0.1:<port>/kahala/callback`**, a
-route on Waikiki's own server. Two reasons:
+route on Jamgraf's own server. Two reasons:
 
 * There is no second listener to start, no port race, and no window in which an
   unrelated socket is open.
 * RFC 8252 §7.2 warns that any other app on the machine can claim a custom URL
-  scheme and intercept the code. Waikiki's `waikiki://` scheme is an
+  scheme and intercept the code. Jamgraf's `jamgraf://` scheme is an
   [allow-list of page destinations](deep-links.md) precisely because it is an
   unauthenticated external input; an auth callback has no business going through
   it, and an early draft of the Kahala-side chart registered a
-  `goodplace-waikiki://` scheme that no build of this app has ever claimed.
+  `goodplace-jamgraf://` scheme that no build of this app has ever claimed.
 
 The redirect URI always uses `127.0.0.1`, never `config.HOST`, which becomes
 `0.0.0.0` when LAN sharing is on — not an address a browser can return to.
@@ -103,7 +103,7 @@ The redirect URI always uses `127.0.0.1`, never `config.HOST`, which becomes
 ### Signing in from the packaged app
 
 In the desktop shell the sign-in opens in the **system browser**, not in
-Waikiki's own window. RFC 8252 §8.12 says a native app must not run OAuth in an
+Jamgraf's own window. RFC 8252 §8.12 says a native app must not run OAuth in an
 embedded user-agent, and WKWebView is one — the app could read what is typed
 into it, which is the trust problem the rule exists for. The practical cost has
 the same shape as the principle: inside our window there is no Keycloak session
@@ -116,7 +116,7 @@ browser made the request does not matter.
 
 Because that flow finishes in another application, two things follow. The
 callback renders a short "you can close this tab" page rather than redirecting
-into the app UI, which would otherwise leave the person looking at Waikiki in a
+into the app UI, which would otherwise leave the person looking at Jamgraf in a
 stray browser tab. And the pane **polls** `/kahala/state`, because a window whose
 sign-in completed elsewhere gets no event and would otherwise sit showing "not
 signed in" until someone thought to reload. A flow whose `state` we did not mint
@@ -125,7 +125,7 @@ app's own window on.
 
 ## Where the refresh token lives, and why not anywhere else
 
-In the **macOS Keychain**, under service `Waikiki`, keyed by the realm's issuer.
+In the **macOS Keychain**, under service `Jamgraf`, keyed by the realm's issuer.
 
 The two obvious alternatives are both wrong:
 
@@ -194,7 +194,7 @@ missing is carrying the issuer on the link and threading it through
 The wiki has to exist there first. This is not a gap we chose: creating one is
 `POST /wikis/create`, a **session-authenticated browser form**, and Kahala only
 accepts a bearer token on `/api/*` (`oidc.py`, the middleware's
-`path.startswith("/api/")` gate). The credential Waikiki holds cannot reach that
+`path.startswith("/api/")` gate). The credential Jamgraf holds cannot reach that
 route, so there is nothing to automate against.
 
 So the pane says so plainly, and *Open Kahala…* sends you to that server's own
@@ -212,7 +212,7 @@ Every one of these is a normal state that reports itself and changes nothing
 locally. They are deliberately *different messages*, because they need different
 actions from the reader.
 
-| What happened | What Waikiki says |
+| What happened | What Jamgraf says |
 |---|---|
 | Not linked / not signed in | Which of the two it is, before any request is made |
 | **3xx redirect** | Reported, **never followed** — see below |
@@ -265,14 +265,14 @@ redirect target — flip that argument to `True` and the test goes red.
   their browser regardless. An agent may move content along a route the owner
   set up; it may not create one.
 
-* **A web page you happen to be visiting** may not either. Waikiki has no CSRF
+* **A web page you happen to be visiting** may not either. Jamgraf has no CSRF
   tokens — loopback callers are owner, so any site can POST to `127.0.0.1` and be
   obeyed. Across the rest of the app the worst that does is local damage, which
   is a known accepted risk. Here it is not the same risk: a forged
   `/kahala/link` followed by a forged `/kahala/push` would send the whole wiki to
   a server the attacker names. So every mutating `/kahala` POST is checked for
   `Sec-Fetch-Site` (falling back to `Origin` vs `Host`) and refused when it did
-  not come from Waikiki's own pages. The check lives in the ASGI middleware, not
+  not come from Jamgraf's own pages. The check lives in the ASGI middleware, not
   in each route, so a route added later cannot forget it — and
   `tests/test_kahala_sync.py` enumerates the routes off the app rather than by
   hand for the same reason.

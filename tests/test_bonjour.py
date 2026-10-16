@@ -1,5 +1,5 @@
 """Bonjour advertising. Kept hermetic — no real dns-sd process is spawned."""
-from waikiki import bonjour
+from jamgraf import bonjour
 
 
 def test_available_is_boolean():

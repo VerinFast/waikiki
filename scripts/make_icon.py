@@ -19,12 +19,12 @@ canvas.save("assets/icon-1024.png")
 
 # Build .iconset with the sizes macOS wants.
 import os, subprocess
-os.makedirs("assets/Waikiki.iconset", exist_ok=True)
+os.makedirs("assets/Jamgraf.iconset", exist_ok=True)
 for size in (16, 32, 128, 256, 512):
     for scale, suffix in ((1, ""), (2, "@2x")):
         px = size * scale
         canvas.resize((px, px), Image.LANCZOS).save(
-            f"assets/Waikiki.iconset/icon_{size}x{size}{suffix}.png")
-subprocess.run(["iconutil", "-c", "icns", "assets/Waikiki.iconset",
-                "-o", "assets/Waikiki.icns"], check=True)
-print("wrote assets/Waikiki.icns")
+            f"assets/Jamgraf.iconset/icon_{size}x{size}{suffix}.png")
+subprocess.run(["iconutil", "-c", "icns", "assets/Jamgraf.iconset",
+                "-o", "assets/Jamgraf.icns"], check=True)
+print("wrote assets/Jamgraf.icns")

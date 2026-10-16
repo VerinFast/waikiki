@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Metadata: {{ page.title }} — Jamgraf{% endblock %}
+{% block topbar_actions %}{% if not trashed %}{% include "_page_options.html" %}{% endif %}{% endblock %}
+{% block content %}
+  <article class="article">
+    {% if crumbs %}
+      <nav class="crumbs" aria-label="Breadcrumb">
+        {% for c in crumbs %}
+          <a href="/wiki/{{ c.slug }}">{{ c.title }}</a>
+          <span class="crumb-sep" aria-hidden="true">›</span>
+        {% endfor %}
+        <a href="/wiki/{{ page.slug }}">{{ page.title }}</a>
+        <span class="crumb-sep" aria-hidden="true">›</span>
+        <span class="crumb-here">Metadata</span>
+      </nav>
+    {% endif %}
+
+    <div class="article-head">
+      <h1>{{ page.title }} <span class="muted">— Metadata</span></h1>
+    </div>
+
+    <nav class="pagetabs">
+      <a class="tab" href="/wiki/{{ page.slug }}">Article</a>
+      <a class="tab on" href="/wiki/{{ page.slug }}/metadata">Metadata</a>
+      <a class="tab" href="/wiki/{{ page.slug }}/details">Details{% if comment_count %} <span class="tabcount">{{ comment_count }}</span>{% endif %}</a>
+    </nav>
+
+    {% if msg %}<p class="flash ok">{{ msg }}</p>{% endif %}
+    {% if error %}<p class="flash err">{{ error }}</p>{% endif %}
+
+    {# The template's schema is a warning, never a blocker: the page saved, and
+       this says what does not match. #}
+    {% set errkeys = schema.errors | map(attribute='key') | list %}
+    {% if schema.fields %}
+      <section class="metaschema {{ 'bad' if schema.errors else 'good' }}">
+        <p>
+          {% if schema.errors %}⚠{% else %}✓{% endif %}
+          Checked against the <strong>{{ schema.template }}</strong> template.
+          {% if not schema.errors %}Everything matches.{% endif %}
+        </p>
+        {% if schema.errors %}
+          <ul class="schema-problems">
+            {% for e in schema.errors %}
+              <li><code>{{ e.key }}</code> — {{ e.message }}
+                <span class="muted">(expects {{ e.expected }})</span></li>
+            {% endfor %}
+          </ul>
+          <p class="muted note">Your values were saved exactly as typed. Fix them
+            when you are ready — or edit the schema on the
+            <a href="/templates">{{ schema.template }} template</a>.</p>
+        {% endif %}
+        <p class="muted">Expects
+          {% for f in schema.fields %}<code>{{ f.name }}</code>
+            ({{ f.choices | join(' | ') if f.choices else f.type }}{% if f.required %}, required{% endif %}){% if not loop.last %}, {% endif %}
+          {% endfor %}.</p>
+      </section>
+    {% elif schema.template and not schema.template_found %}
+      <p class="flash warn">This page says it came from a
+        <strong>{{ schema.template }}</strong> template, which no longer exists.</p>
+    {% endif %}
+
+    <form method="post" action="/wiki/{{ page.slug }}/metadata" class="metaform" id="metaform">
+      <table class="metatable">
+        <thead><tr><th>Property</th><th>Value</th><th aria-label="Remove"></th></tr></thead>
+        <tbody id="metarows">
+          {% for k, v in properties.items() %}
+            <tr{% if k in errkeys %} class="metarow-bad"{% endif %}>
+              <td><input type="text" name="key" value="{{ k }}" autocomplete="off"></td>
+              <td><input type="text" name="value" value="{{ v }}" autocomplete="off"></td>
+              <td><button type="button" class="metadel" title="Remove this property"
+                          onclick="wkMetaRemove(this)">✕</button></td>
+            </tr>
+          {% else %}
+            <tr class="metaempty"><td colspan="3" class="muted">
+              No properties yet. Add one below.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="metaactions">
+        <button type="button" class="btn" onclick="wkMetaAdd()">+ Add property</button>
+        <button type="submit" class="btn primary">Save metadata</button>
+      </div>
+      <p class="muted note">Values are free text and are stored exactly as typed —
+        <code>20 / 100</code> stays <code>20 / 100</code>. Clearing a property's
+        name removes it.</p>
+    </form>
+
+    <section class="metatags">
+      <h2>Tags</h2>
+      <form method="post" action="/wiki/{{ page.slug }}/tags" id="tagform">
+        <div class="tagedit" id="tagedit">
+          {% for t in tags %}
+            <span class="tagchip editable" data-tag="{{ t }}">{{ t }}
+              <input type="hidden" name="tag" value="{{ t }}">
+              <button type="button" class="tagx" title="Remove {{ t }}"
+                      onclick="wkTagRemove(this)" aria-label="Remove {{ t }}">✕</button>
+            </span>
+          {% endfor %}
+          <input type="text" id="tagnew" list="alltags" placeholder="Add a tag…"
+                 autocomplete="off" aria-label="Add a tag">
+          <datalist id="alltags">
+            {% for t in all_tags %}<option value="{{ t }}"></option>{% endfor %}
+          </datalist>
+        </div>
+        <div class="metaactions">
+          <button type="submit" class="btn primary">Save tags</button>
+        </div>
+      </form>
+      <p class="muted note">Tags drive the index pages and search. Typing offers
+        tags already used in this wiki, so related pages stay together rather
+        than drifting into near-duplicates.</p>
+    </section>
+
+  <script>
+    // Tags are hidden inputs so the form submits exactly what is on screen.
+    function wkTagRemove(btn) {
+      var chip = btn.closest('.tagchip');
+      if (chip) chip.remove();
+    }
+    (function () {
+      var input = document.getElementById('tagnew');
+      var box = document.getElementById('tagedit');
+      if (!input || !box) return;
+      function add() {
+        var raw = (input.value || '').trim().toLowerCase();
+        input.value = '';
+        if (!raw) return;
+        // Split on the separators the frontmatter uses, so pasting "a, b" works.
+        raw.split(/[,;]/).forEach(function (t) {
+          var tag = t.trim().replace(/\s+/g, ' ');
+          if (!tag) return;
+          var existing = [].slice.call(box.querySelectorAll('.tagchip'))
+            .some(function (c) { return c.getAttribute('data-tag') === tag; });
+          if (existing) return;
+          var chip = document.createElement('span');
+          chip.className = 'tagchip editable';
+          chip.setAttribute('data-tag', tag);
+          chip.textContent = tag;
+          var hidden = document.createElement('input');
+          hidden.type = 'hidden'; hidden.name = 'tag'; hidden.value = tag;
+          var x = document.createElement('button');
+          x.type = 'button'; x.className = 'tagx'; x.textContent = '\u2715';
+          x.title = 'Remove ' + tag;
+          x.addEventListener('click', function () { chip.remove(); });
+          chip.appendChild(hidden); chip.appendChild(x);
+          box.insertBefore(chip, input);
+        });
+      }
+      input.addEventListener('keydown', function (e) {
+        // Enter adds a tag rather than submitting a half-typed one.
+        if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); add(); }
+        else if (e.key === 'Backspace' && !input.value) {
+          var chips = box.querySelectorAll('.tagchip');
+          if (chips.length) chips[chips.length - 1].remove();
+        }
+      });
+      input.addEventListener('blur', add);   // don't lose a typed-but-unadded tag
+    })();
+  </script>
+
+  </article>
+
+  <script>
+    // Rows are plain paired inputs, so a rename is just an edited key and the
+    // submitted order is the stored order.
+    function wkMetaAdd() {
+      var body = document.getElementById('metarows');
+      var blank = body.querySelector('.metaempty');
+      if (blank) blank.remove();
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td><input type="text" name="key" autocomplete="off"></td>' +
+                     '<td><input type="text" name="value" autocomplete="off"></td>' +
+                     '<td><button type="button" class="metadel" title="Remove this property"' +
+                     ' onclick="wkMetaRemove(this)">✕</button></td>';
+      body.appendChild(tr);
+      tr.querySelector('input').focus();
+    }
+    function wkMetaRemove(btn) {
+      var tr = btn.closest('tr');
+      if (tr) tr.remove();     // gone from the form means gone on save
+    }
+  </script>
+{% endblock %}

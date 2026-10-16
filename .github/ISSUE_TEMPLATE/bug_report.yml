@@ -1,11 +1,11 @@
 name: Bug report
-description: Something in Waikiki isn't working right
+description: Something in Jamgraf isn't working right
 labels: ["bug"]
 body:
   - type: input
     id: version
     attributes:
-      label: Waikiki version
+      label: Jamgraf version
       description: Shown in the top bar (e.g. v0.6.2) or on the About page.
       placeholder: v0.6.2
     validations:

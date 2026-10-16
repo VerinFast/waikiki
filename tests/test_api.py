@@ -4,7 +4,7 @@ Kept in one test so the app lifespan (which starts the CRDT server) runs once.
 """
 from fastapi.testclient import TestClient
 
-from waikiki.api import app
+from jamgraf.api import app
 
 
 def test_rest_and_collab_flow(wiki):
@@ -77,7 +77,7 @@ def test_rest_and_collab_flow(wiki):
 
         # --- Connect page carries a valid, copy-paste Claude config ---
         connect_html = c.get("/connect").text
-        assert "mcpServers" in connect_html and "WAIKIKI_DATA" in connect_html
+        assert "mcpServers" in connect_html and "JAMGRAF_DATA" in connect_html
         # --- /help redirects into the Help wiki ---
         assert c.get("/help", follow_redirects=False).status_code in (303, 307)
 
@@ -86,7 +86,7 @@ def test_autosave_creates_then_updates(wiki):
     """New pages had no CRDT room, so unsaved text died with the tab."""
     from fastapi.testclient import TestClient
 
-    from waikiki.api import app
+    from jamgraf.api import app
     with TestClient(app, client=("127.0.0.1", 1)) as c:
         r = c.post("/api/autosave", json={"slug": "", "title": "Draft",
                                           "markdown": "first words"})

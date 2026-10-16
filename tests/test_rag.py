@@ -1,4 +1,4 @@
-from waikiki import config, rag, store
+from jamgraf import config, rag, store
 
 
 def test_chunk_text_splits_long_input():
@@ -83,7 +83,7 @@ def test_stale_index_reason_ignores_an_empty_wiki(wiki):
 
 
 def test_stale_index_reason_flags_missing_chunks(wiki):
-    from waikiki import db
+    from jamgraf import db
 
     store.create_page("Espresso", "a concentrated coffee brewed under pressure")
     db.get_conn().execute("DELETE FROM chunks")
@@ -103,7 +103,7 @@ def test_stale_index_reason_flags_a_dimension_mismatch(wiki, monkeypatch):
     sqlite-vec isn't installed; only the judgement is under test here, not the
     vec0 storage.
     """
-    from waikiki import db
+    from jamgraf import db
 
     store.create_page("Espresso", "a concentrated coffee brewed under pressure")
     monkeypatch.setattr(db, "VEC_AVAILABLE", True)
@@ -115,7 +115,7 @@ def test_stale_index_reason_flags_a_dimension_mismatch(wiki, monkeypatch):
 def test_stale_index_reason_accepts_bm25_only_when_nothing_can_embed(wiki, monkeypatch):
     """No usable embedder: re-chunking would drop vectors to replace them with
     nothing, so BM25 alone is the honest state, not a stale index."""
-    from waikiki import db, embeddings
+    from jamgraf import db, embeddings
 
     store.create_page("Espresso", "a concentrated coffee brewed under pressure")
     monkeypatch.setattr(db, "VEC_AVAILABLE", True)

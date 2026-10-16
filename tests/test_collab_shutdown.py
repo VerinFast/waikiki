@@ -8,7 +8,7 @@ cancelling the task simply stops the loop. See issue #19.
 """
 import anyio
 
-from waikiki import collab, store
+from jamgraf import collab, store
 
 
 def _room_with_unsaved_text(slug: str, text: str) -> str:

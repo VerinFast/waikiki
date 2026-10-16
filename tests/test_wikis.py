@@ -2,8 +2,8 @@
 see or link to each other."""
 import pytest
 
-from waikiki import db, rag, store, wikis
-from waikiki import mcp_server
+from jamgraf import db, rag, store, wikis
+from jamgraf import mcp_server
 
 
 def test_registry_seeded(wiki):
@@ -121,17 +121,17 @@ def test_viewing_with_explicit_wiki_repoints_the_cookie(wiki):
     restore — would silently hit Y. Viewing must re-point the cookie."""
     from fastapi.testclient import TestClient
 
-    from waikiki.api import app
+    from jamgraf.api import app
     with TestClient(app, client=("127.0.0.1", 1)) as c:
-        r = c.get("/?wiki=crosslake", headers={"Cookie": "waikiki_wiki=main"})
+        r = c.get("/?wiki=crosslake", headers={"Cookie": "jamgraf_wiki=main"})
         assert r.status_code == 200
-        assert "waikiki_wiki=crosslake" in r.headers.get("set-cookie", "")
+        assert "jamgraf_wiki=crosslake" in r.headers.get("set-cookie", "")
 
         # ...so a subsequent bare POST lands in the wiki that was on screen,
         # not in the one the stale cookie named.
         c.post("/wiki/save", data={"slug": "", "title": "Landed",
                                    "markdown": "in crosslake"},
-               headers={"Cookie": "waikiki_wiki=crosslake"})
+               headers={"Cookie": "jamgraf_wiki=crosslake"})
         assert c.get("/api/pages/landed?wiki=crosslake").status_code == 200
         assert c.get("/api/pages/landed?wiki=main").status_code == 404
 
@@ -140,11 +140,11 @@ def test_cookie_untouched_without_an_explicit_wiki(wiki):
     """A plain view must not disturb the active wiki."""
     from fastapi.testclient import TestClient
 
-    from waikiki.api import app
+    from jamgraf.api import app
     with TestClient(app, client=("127.0.0.1", 1)) as c:
-        c.cookies.set("waikiki_wiki", "crosslake")
+        c.cookies.set("jamgraf_wiki", "crosslake")
         c.get("/")
-        assert c.cookies.get("waikiki_wiki") == "crosslake"
+        assert c.cookies.get("jamgraf_wiki") == "crosslake"
 
 
 def test_the_upload_route_opens_a_bundle_too(wiki, tmp_path):
@@ -156,7 +156,7 @@ def test_the_upload_route_opens_a_bundle_too(wiki, tmp_path):
     """
     from fastapi.testclient import TestClient
 
-    from waikiki.api import app
+    from jamgraf.api import app
 
     db.current_wiki.set("main")
     store.create_page("Shipped", "content that travels as a snapshot")
@@ -173,7 +173,7 @@ def test_the_upload_route_opens_a_bundle_too(wiki, tmp_path):
     assert r.status_code == 303, r.status_code
     # The route switches to what it just opened, so the cookie names it — a
     # registry diff would also catch the Help wiki the lifespan seeds.
-    landed = r.cookies.get("waikiki_wiki")
+    landed = r.cookies.get("jamgraf_wiki")
     assert landed and wikis.exists(landed), r.headers.get("set-cookie")
     assert wikis.name_of(landed) == "Main"      # the bundle's label, not the file
     db.current_wiki.set(landed)

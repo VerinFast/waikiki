@@ -1,4 +1,4 @@
-from waikiki import clirun, db, imagegen, shellenv, store
+from jamgraf import clirun, db, imagegen, shellenv, store
 
 
 def test_article_image_dir_created(wiki):

@@ -1,13 +1,13 @@
 # Capabilities and remedies
 
-Waikiki shells out to tools it does not ship: the `claude`/`gemini` CLIs for chat
+Jamgraf shells out to tools it does not ship: the `claude`/`gemini` CLIs for chat
 and drafting, an image CLI for pictures, `cloudflared` for a public link, Ollama
 for local generation. On a machine that hasn't got one, the feature used to fail
 *after* the click, with an error containing a shell command to copy.
 
 **Settings → Capabilities** replaces that. Implementation:
-[`waikiki/capabilities.py`](../waikiki/capabilities.py) decides *what is true and
-which step is actionable*; [`waikiki/remedies.py`](../waikiki/remedies.py) owns
+[`jamgraf/capabilities.py`](../jamgraf/capabilities.py) decides *what is true and
+which step is actionable*; [`jamgraf/remedies.py`](../jamgraf/remedies.py) owns
 *what may be executed at all* and is the only place an argv is written.
 
 ## The rule
@@ -48,7 +48,7 @@ Which becomes four properties, each guarded by
 | Doorman | — | **none, deliberately** |
 | Automatic updates | a packaged, writable, signed-key build | manual |
 | Temporary public link | `cloudflared` | `brew install` (chain) |
-| Semantic search | sqlite-vec, which ships inside Waikiki | none possible |
+| Semantic search | sqlite-vec, which ships inside Jamgraf | none possible |
 
 Drafting is deliberately *not* Doorman-aware: `authoring.draft` has no Doorman
 path (it reads the wiki's own elements over MCP), so reporting it as ready
@@ -57,7 +57,7 @@ because Doorman is running would be the original bug in a new place.
 ## Doorman is never a remedy
 
 Doorman's row is informational: present or absent, and what it would improve. No
-button, no offer, no install. It is the user's own app and Waikiki must never
+button, no offer, no install. It is the user's own app and Jamgraf must never
 start or install it — see [doorman.md](doorman.md) and CLAUDE.md. An absent
 Doorman is marked *optional* so it reads as the ordinary case, not a fault.
 
@@ -78,7 +78,7 @@ correct without a restart.
 The default image CLI is Google's Antigravity (`agy`), whose published install
 path pipes a downloaded script into a shell. That is a materially bigger ask than
 an `npm i -g`, which at least resolves through a registry — and it sits oddly
-next to [`updater.py`](../waikiki/updater.py), which refuses to execute a release
+next to [`updater.py`](../jamgraf/updater.py), which refuses to execute a release
 it has not Ed25519-verified against a build-time-pinned key (CLAUDE.md rule 8).
 
 The button stays, because a command to copy is no safer and much less usable.
@@ -88,7 +88,7 @@ The safeguards are:
   built from it. It never comes from a setting, a page, or any user- or
   agent-supplied value.
 - The confirmation **names the host** (`antigravity.google`) and says plainly
-  that Waikiki cannot verify the script the way it verifies its own updates.
+  that Jamgraf cannot verify the script the way it verifies its own updates.
 - It runs only from a deliberate click plus that confirmation — never from a
   probe, a page render, or any other side effect.
 - Failure surfaces as failure: exit status and stderr, never a hang or a silent

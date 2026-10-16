@@ -1,0 +1,821 @@
+"""SQLite layer: schema, FTS5 (BM25), and the sqlite-vec vector table.
+
+Everything lives in one .db file so the whole wiki — pages, images, full-text
+index, and vectors — is portable as a single artifact.
+
+Backend selection: many stock CPython builds ship a `sqlite3` compiled WITHOUT
+loadable-extension support, which sqlite-vec needs. So we prefer **apsw** (its
+wheels bundle a modern SQLite with extensions enabled) and fall back to the
+stdlib module. A tiny shim gives apsw the small slice of the sqlite3 DB-API that
+the rest of the app uses (dict rows, `.fetchone/.fetchall`, `.lastrowid`,
+`.commit`, `.execute*`), so `store.py`/`rag.py` never know the difference.
+"""
+from __future__ import annotations
+
+import contextlib
+import contextvars
+import sys
+import threading
+from pathlib import Path
+from typing import Callable, Optional
+
+from . import config
+
+_local = threading.local()
+VEC_AVAILABLE = False  # set True once sqlite-vec loads in this process
+
+# The wiki whose database the current request/task operates on. Set per-request
+# by the web app's middleware (from the X-Jamgraf-Wiki header or cookie) and set
+# explicitly by the MCP server / background flusher. Isolation depends on this.
+current_wiki: "contextvars.ContextVar[Optional[str]]" = contextvars.ContextVar(
+    "current_wiki", default=None
+)
+# Wikis this process has set up. NOT the gate for schema creation -- that is
+# per-connection (see `get_conn`), because this set is process-wide while the
+# connection cache is per (thread, wiki). Its one job now is telling "a wiki
+# being opened for the first time" apart from "a wiki whose file has gone".
+_schema_ready: set[str] = set()
+
+# Bumped whenever a wiki's file moves (a slug change). Cached handles are
+# per (thread, wiki) and no thread can reach into another's cache, so the
+# only way to retire them all is to make them *look* stale where they are
+# used: `get_conn` compares this against the epoch each handle was opened in.
+# Without it, a thread holding a handle from before the move keeps writing
+# through it -- the fd follows the renamed file, so those writes land in the
+# renamed wiki under the old name, which is the same class of bug as serving
+# a file that has been deleted.
+_cache_epoch = 0
+
+
+def active_wiki() -> str:
+    """Resolve the active wiki slug, falling back to the registry default."""
+    from . import wikis
+
+    w = current_wiki.get()
+    if w and wikis.exists(w):
+        return w
+    d = wikis.default_slug()
+    if d is None:
+        wikis.ensure_initialized()
+        d = wikis.default_slug()
+    return d
+
+# --- Backend detection --------------------------------------------------------
+try:
+    import apsw  # type: ignore
+    _HAS_APSW = True
+except Exception:  # pragma: no cover
+    apsw = None  # type: ignore
+    _HAS_APSW = False
+
+import sqlite3  # stdlib fallback (always importable)
+
+
+# --- "this file cannot be read" ----------------------------------------------
+#
+# A wiki file can be damaged — a dying disk, a bad sync, a truncated copy — and
+# when it is, the app has to stay up and say so. That only works if a damaged
+# *file* is told apart from a bug in *our code*: a `KeyError` in store.py is not
+# corruption and must stay loud. So the test below is deliberately narrow, and
+# everything else is re-raised untouched.
+
+class WikiUnreadable(RuntimeError):
+    """SQLite cannot read this wiki's database file.
+
+    Carries the wiki slug and a plain-language reason, because this is shown to
+    someone whose family wiki has just stopped opening — not to a log.
+    """
+
+    def __init__(self, wiki: str, reason: str, path: Optional[str] = None):
+        super().__init__(f"{wiki}: {reason}")
+        self.wiki = wiki
+        self.reason = reason
+        self.path = path
+
+
+# apsw raises one class per SQLite result code. These are the ones that mean the
+# file itself is unusable; apsw.SQLError ("no such table: pages") is ours to fix.
+_UNREADABLE_APSW = {"CorruptError", "NotADBError", "IOError", "CantOpenError",
+                    "PermissionsError", "ReadOnlyError"}
+
+# The stdlib collapses those onto sqlite3.DatabaseError and its subclasses, so
+# the subclasses are only believed when SQLite says what is actually wrong.
+_UNREADABLE_PHRASES = ("malformed", "not a database", "file is encrypted",
+                       "unable to open database file", "disk i/o error",
+                       "database disk image")
+
+
+def unreadable_reason(exc: BaseException) -> Optional[str]:
+    """A plain reason if `exc` is SQLite refusing a file, else None.
+
+    None means "not corruption" — the caller must re-raise, so a programming
+    error never arrives dressed up as damaged data.
+    """
+    if isinstance(exc, WikiUnreadable):
+        return exc.reason
+    name = type(exc).__name__
+    low = str(exc).lower()
+    if _HAS_APSW and isinstance(exc, apsw.Error):
+        if name not in _UNREADABLE_APSW:
+            return None
+    elif isinstance(exc, sqlite3.DatabaseError):
+        # A bare DatabaseError is what the stdlib raises for a damaged file.
+        if (type(exc) is not sqlite3.DatabaseError
+                and not any(p in low for p in _UNREADABLE_PHRASES)):
+            return None
+    else:
+        return None
+    if name == "NotADBError" or "not a database" in low or "encrypted" in low:
+        return ("the file does not look like a SQLite database — its header is "
+                "damaged, or it was never a wiki")
+    if name == "CorruptError" or "malformed" in low or "database disk image" in low:
+        return "SQLite reports the database file as damaged (disk image is malformed)"
+    if name in ("CantOpenError", "PermissionsError", "ReadOnlyError"):
+        return "the database file could not be opened (permissions, or it moved)"
+    if "disk i/o error" in low:
+        return "the disk reported an I/O error reading the file"
+    return f"SQLite could not read the file ({exc})"
+
+
+def _as_unreadable(exc: BaseException, wiki: str) -> WikiUnreadable:
+    """Translate `exc` into a WikiUnreadable, or re-raise it unchanged."""
+    reason = unreadable_reason(exc)
+    if reason is None:
+        raise exc
+    if isinstance(exc, WikiUnreadable):
+        return exc
+    from . import wikis
+
+    path = str(wikis.db_path(wiki)) if wiki else None
+    return WikiUnreadable(wiki or "this wiki", reason, path)
+
+
+class _Result:
+    """Eagerly-materialized dict rows over an apsw cursor, DB-API-ish."""
+
+    def __init__(self, apsw_conn, sql: str, params):
+        cur = apsw_conn.cursor()
+        cur.execute(sql, tuple(params) if params else ())
+        try:
+            cols = [d[0] for d in cur.getdescription()]
+            self._rows = [dict(zip(cols, row)) for row in cur]
+        except Exception:
+            self._rows = []  # non-SELECT: no result columns
+        self.lastrowid = apsw_conn.last_insert_rowid()
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self):
+        return self._rows
+
+    def __iter__(self):
+        return iter(self._rows)
+
+
+class _ApswConn:
+    """Minimal sqlite3-compatible wrapper around an apsw.Connection.
+
+    It also names the wiki on every statement it runs, so damage found *after*
+    the file opens — a truncated tail whose header is still intact — surfaces as
+    a `WikiUnreadable` for that wiki rather than a bare `apsw.CorruptError`.
+    """
+
+    def __init__(self, path: str, wiki: str = ""):
+        self.wiki = wiki
+        self._c = apsw.Connection(path)
+        # busy_timeout FIRST: setting journal_mode needs a brief exclusive lock,
+        # so with the timeout still at 0 another connection mid-write turned a
+        # normal open into `BusyError: database is locked` — which is contention,
+        # not damage, and must not be mistaken for it.
+        self._c.cursor().execute("PRAGMA busy_timeout=5000")
+        self._c.cursor().execute("PRAGMA journal_mode=WAL")
+        self._c.cursor().execute("PRAGMA foreign_keys=ON")
+
+    def execute(self, sql: str, params=()):
+        try:
+            return _Result(self._c, sql, params)
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
+
+    def executemany(self, sql: str, seq):
+        try:
+            self._c.cursor().executemany(sql, [tuple(p) for p in seq])
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
+        return self
+
+    def executescript(self, script: str):
+        try:
+            self._c.cursor().execute(script)  # apsw runs multi-statement scripts
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
+        return self
+
+    def commit(self):
+        """A no-op: transaction control belongs to `transaction()` (see below).
+
+        apsw autocommits every statement outside an explicit transaction, and
+        inside one this must *not* end it early — the whole point of the seam is
+        that only the outermost `transaction()` commits.
+        """
+
+    # sqlite3-style extension API, so sqlite_vec.load() works unchanged.
+    def enable_load_extension(self, flag: bool):
+        self._c.enableloadextension(flag)
+
+    def load_extension(self, path: str):
+        self._c.loadextension(path)
+
+
+class _Sqlite3Conn(sqlite3.Connection):
+    """The stdlib fallback, saying the same thing as the apsw shim above.
+
+    The packaged app ships apsw, but a stock CPython without loadable-extension
+    support falls back here — and "a corrupt wiki does not stop the app" cannot
+    be a property of one backend only.
+    """
+
+    wiki = ""
+
+    def execute(self, sql, params=()):
+        try:
+            return super().execute(sql, params)
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
+
+    def executemany(self, sql, seq):
+        try:
+            return super().executemany(sql, seq)
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
+
+    def executescript(self, script):
+        try:
+            return super().executescript(script)
+        except Exception as exc:
+            raise _as_unreadable(exc, self.wiki) from exc
+
+    def commit(self):
+        """Match apsw: a no-op inside a managed transaction, harmless outside.
+
+        The connection is opened with ``isolation_level=None``, so the stdlib
+        starts no implicit transaction of its own and every statement autocommits
+        — exactly what apsw does. That leaves `transaction()` as the *only* thing
+        that opens or closes a transaction on either backend, so a stray
+        `conn.commit()` deep inside a save cannot commit half of it.
+        """
+        if _tx(self).depth:
+            return
+        super().commit()
+
+
+def _load_sqlite_vec(conn) -> bool:
+    global VEC_AVAILABLE
+    try:
+        import sqlite_vec
+
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        VEC_AVAILABLE = True
+        return True
+    except Exception as exc:  # pragma: no cover - environment dependent
+        VEC_AVAILABLE = False
+        # stderr, never stdout: when this module runs inside the stdio MCP server,
+        # stdout IS the JSON-RPC channel and any stray write corrupts the protocol
+        # (the client then silently hangs on every later call until restarted).
+        print(f"[jamgraf] sqlite-vec unavailable, vector search disabled: {exc}",
+              file=sys.stderr)
+        return False
+
+
+def get_conn():
+    """Connection for the active wiki, cached per (thread, wiki)."""
+    from . import wikis
+
+    wiki = active_wiki()
+    conns = getattr(_local, "conns", None)
+    if conns is None:
+        conns = {}
+        _local.conns = conns
+    conn = conns.get(wiki)
+    if conn is not None and getattr(conn, "epoch", None) != _cache_epoch:
+        with contextlib.suppress(Exception):
+            conn.close()
+        conns.pop(wiki, None)
+        conn = None
+    vanished = False
+    if conn is None:
+        path = str(wikis.db_path(wiki))
+        # SQLite creates an empty database for a path that does not exist, so
+        # opening is the last moment we can tell "new wiki, first open" from
+        # "the file this process was already using is gone". Worth saying out
+        # loud: the pages are not coming back on their own, and the wiki is
+        # about to start answering as if it were simply empty.
+        vanished = wiki in _schema_ready and not Path(path).exists()
+        try:
+            if _HAS_APSW:
+                conn = _ApswConn(path, wiki)
+            else:
+                # isolation_level=None: no implicit transaction, so every
+                # statement autocommits and an explicit BEGIN is ours to issue —
+                # the same contract apsw has. Without it the stdlib opens a
+                # transaction of its own before the first DML and `BEGIN
+                # IMMEDIATE` fails with "cannot start a transaction within a
+                # transaction", so the two backends could not share one seam.
+                # `sqlite3.connect`'s default timeout=5.0 already sets a 5s busy
+                # timeout before any pragma runs, which is the same ordering the
+                # apsw shim spells out above.
+                conn = sqlite3.connect(path, check_same_thread=False,
+                                       factory=_Sqlite3Conn, isolation_level=None)
+                conn.wiki = wiki
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA foreign_keys=ON")
+        except Exception as exc:
+            # A damaged file is a WikiUnreadable naming this wiki; anything else
+            # is a bug and keeps its own traceback.
+            raise _as_unreadable(exc, wiki) from exc
+        _load_sqlite_vec(conn)
+        conn.epoch = _cache_epoch
+        conns[wiki] = conn
+    # Ensure the schema once per CONNECTION, not once per process. The cache is
+    # per (thread, wiki), so a process-wide memo meant any connection opened
+    # after the first one skipped setup entirely -- fine while the file stays
+    # put, and silently fatal when it does not. A wiki whose database was
+    # replaced or removed underneath a running app came back as an empty file
+    # that nothing ever created tables in, so every request reaching a thread
+    # without a cached handle died on `no such table: pages` for the life of the
+    # process, while threads still holding the old handle served its pages as if
+    # nothing had happened. The DDL is `CREATE TABLE IF NOT EXISTS` plus
+    # idempotent migrations, so paying it per connection is cheap and correct.
+    if not getattr(conn, "schema_ready", False):
+        try:
+            _ensure_schema(conn)
+        except WikiUnreadable:
+            # Don't keep a handle on a file we can't use: if the user restores a
+            # good copy over it, the next call should open the new one.
+            conns.pop(wiki, None)
+            raise
+        conn.schema_ready = True
+        _schema_ready.add(wiki)
+        if vanished:
+            print(f"[jamgraf] the database for wiki '{wiki}' was gone when it "
+                  f"was opened again ({wikis.db_path(wiki)}); it has been "
+                  f"re-created empty. Whatever it held is not in it -- restore "
+                  f"a backup or re-open a .wiki file.", file=sys.stderr)
+    return conn
+
+
+def invalidate_connections() -> None:
+    """Retire every cached handle in every thread, at its next use.
+
+    For a wiki whose file has moved. Closing another thread's connection from
+    here is not possible (the cache is a `threading.local`) and would not be
+    safe if it were, so each thread drops its own the next time it asks.
+    """
+    global _cache_epoch
+    _cache_epoch += 1
+
+
+def release_wiki_handles(wiki: str) -> None:
+    """Checkpoint `wiki`'s WAL and close this thread's handle on it.
+
+    Called before the file is moved. The checkpoint is what makes removing the
+    old `-wal`/`-shm` safe: it is a property of the file rather than of one
+    connection, so after TRUNCATE every committed frame is in the `.db` itself.
+    """
+    conns = getattr(_local, "conns", None) or {}
+    conn = conns.get(wiki)
+    if conn is None:
+        return
+    with contextlib.suppress(Exception):
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    with contextlib.suppress(Exception):
+        conn.close()
+    conns.pop(wiki, None)
+
+
+# --- Transactions -------------------------------------------------------------
+#
+# One page save writes several rows — the `pages` projection, a `page_versions`
+# snapshot, the page's tags, and the canonical Y.Doc in `page_ydoc`. Rule 6 says
+# the Y.Doc is the source of truth and the markdown is a projection of it, which
+# only holds if the two land together. They did not: apsw (the shipped backend)
+# autocommits every statement and its `commit()` is a documented no-op, so a
+# crash between statements left the projection durable and the canonical doc a
+# revision behind — with the projection winning every read (issue #72,
+# `docs/data-safety.md` question 1).
+#
+# `transaction()` is the seam that makes one save one transaction. Four things
+# are load-bearing:
+#
+# * **One code path, both backends.** apsw autocommits unless a `BEGIN` is
+#   issued; the stdlib connection is opened `isolation_level=None` so it behaves
+#   the same way. Transaction control then lives here and nowhere else, on either
+#   backend, and `conn.commit()` is a no-op inside a managed transaction so a
+#   stray call deep in a save cannot commit half of it.
+# * **`BEGIN IMMEDIATE`, never deferred.** A deferred transaction takes a read
+#   lock first and asks for the write lock only at the first write, and that
+#   upgrade can fail outright with SQLITE_BUSY — a busy *timeout* does not help,
+#   because the reader cannot be made to wait without risking deadlock. This app
+#   has a human, an MCP agent and the collab flusher writing the same file at
+#   once, so a save that begins by reading (`get_page`, the slug uniqueness loop)
+#   and then writes is exactly that case. IMMEDIATE takes the write lock up
+#   front, where the 5s busy timeout applies and writers simply queue.
+# * **Re-entrant, through savepoints.** Store functions call each other
+#   (`update_page` → `_set_body` → `_sync_ydoc`; the import paths wrap a whole
+#   page write), so a nested `transaction()` must not commit the outer one. The
+#   outermost owns BEGIN/COMMIT/ROLLBACK; a nested one is a SAVEPOINT, which
+#   rolls back its own work and leaves the enclosing transaction intact.
+# * **Derived work runs after the commit, never inside it.** `rag.reindex_page`
+#   chunks, embeds (possibly loading a model) and writes vectors; holding the
+#   write lock across that would queue every other writer behind an embedding
+#   run. The RAG index is a cache rebuildable from the markdown, so it does not
+#   belong in the atomic unit — `after_commit()` defers it to just past the
+#   outermost COMMIT, whatever depth the caller happens to be at.
+
+
+class _Tx:
+    """Transaction state for one connection (connections are per thread+wiki)."""
+
+    __slots__ = ("depth", "pending")
+
+    def __init__(self) -> None:
+        self.depth = 0
+        self.pending: list = []
+
+
+def _tx(conn) -> _Tx:
+    state = getattr(conn, "_wk_tx", None)
+    if state is None:
+        state = _Tx()
+        conn._wk_tx = state
+    return state
+
+
+def in_transaction() -> bool:
+    """Whether the active wiki's connection is inside a managed transaction."""
+    return _tx(get_conn()).depth > 0
+
+
+def after_commit(fn: Callable, *args, **kwargs) -> None:
+    """Run `fn` once the outermost transaction commits — immediately if there is
+    none, and not at all if the transaction rolls back.
+
+    This is where *derived* state goes: a search index that can be rebuilt from
+    the content is not part of the write's atomic unit, and must not hold the
+    write lock while it embeds. Deferring it here rather than calling it after
+    the `with` block keeps that true even when the caller is nested inside a
+    larger transaction.
+    """
+    conn = get_conn()
+    state = _tx(conn)
+    if state.depth == 0:
+        fn(*args, **kwargs)
+        return
+    state.pending.append((fn, args, kwargs))
+
+
+@contextlib.contextmanager
+def transaction():
+    """All-or-nothing write scope for the active wiki. Re-entrant.
+
+    Yields the connection, so `with db.transaction() as conn:` replaces a
+    `conn = db.get_conn()` line rather than adding one.
+    """
+    conn = get_conn()
+    state = _tx(conn)
+    outer = state.depth == 0
+    name = "" if outer else f"wk_sp_{state.depth}"
+    mark = len(state.pending)
+    conn.execute("BEGIN IMMEDIATE" if outer else f"SAVEPOINT {name}")
+    state.depth += 1
+    try:
+        yield conn
+    except BaseException:
+        state.depth -= 1
+        del state.pending[mark:]        # dropped with the work they belonged to
+        try:
+            if outer:
+                conn.execute("ROLLBACK")
+            else:
+                conn.execute(f"ROLLBACK TO {name}")
+                conn.execute(f"RELEASE {name}")
+        except Exception:
+            pass   # a failing rollback must not mask what actually went wrong
+        raise
+    state.depth -= 1
+    if not outer:
+        conn.execute(f"RELEASE {name}")
+        return
+    try:
+        conn.execute("COMMIT")
+    except BaseException:
+        # A commit that fails (a full disk, a lock lost) has landed nothing, so
+        # the deferred work has nothing to be derived from: drop it rather than
+        # let it fire on somebody else's commit.
+        state.pending.clear()
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+    pending, state.pending = state.pending, []
+    for fn, args, kwargs in pending:
+        fn(*args, **kwargs)
+
+
+# --- Schema -------------------------------------------------------------------
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug       TEXT UNIQUE NOT NULL,
+    title      TEXT NOT NULL,
+    markdown   TEXT NOT NULL DEFAULT '',
+    html       TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    deleted_at TEXT,                      -- NULL = active; timestamp = in trash
+    starred    INTEGER NOT NULL DEFAULT 0, -- 1 = starred (favorite)
+    parent_id  INTEGER REFERENCES pages(id) ON DELETE SET NULL  -- child page if set
+);
+
+-- Canonical CRDT state: the authoritative encoded Y.Doc for a page.
+-- The Y.Doc (not `pages.markdown`) is the source of truth; `pages.markdown`/
+-- `html` are a projection maintained alongside it for FTS, rendering and RAG.
+-- `ydoc_state` is a full `pycrdt` update (Yjs v1 binary); `spec_version` is the
+-- wiki-interchange spec version that produced it. See `jamgraf/ydoc.py`.
+CREATE TABLE IF NOT EXISTS page_ydoc (
+    page_id      INTEGER PRIMARY KEY REFERENCES pages(id) ON DELETE CASCADE,
+    ydoc_state   BLOB NOT NULL,
+    spec_version INTEGER NOT NULL DEFAULT 1,
+    updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Lightweight history: one row per save. Not CRDT, but gives undo/audit.
+CREATE TABLE IF NOT EXISTS page_versions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id    INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    title      TEXT NOT NULL,
+    markdown   TEXT NOT NULL,
+    author     TEXT NOT NULL DEFAULT 'human',   -- 'human' | 'ai' | custom
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS comments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id    INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    author     TEXT NOT NULL DEFAULT 'human',
+    body       TEXT NOT NULL,
+    resolved   INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Proposed edits held for review (propose-vs-apply).
+CREATE TABLE IF NOT EXISTS suggestions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id    INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    author     TEXT NOT NULL DEFAULT 'ai',
+    note       TEXT NOT NULL DEFAULT '',
+    markdown   TEXT NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'pending',   -- pending | applied | rejected
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS page_tags (
+    page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    tag     TEXT NOT NULL,
+    PRIMARY KEY (page_id, tag)
+);
+CREATE INDEX IF NOT EXISTS idx_page_tags_tag ON page_tags(tag);
+
+-- `meta_schema` is the optional declaration of what the frontmatter of pages
+-- made from this template should look like (see `jamgraf/metaschema.py`): a few
+-- lines of `name[*]: type`, authored as text so what a human wrote round-trips
+-- verbatim. Empty (the default) means the template constrains nothing, which is
+-- how every template behaved before it existed.
+CREATE TABLE IF NOT EXISTS templates (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT UNIQUE NOT NULL,
+    markdown    TEXT NOT NULL DEFAULT '',
+    meta_schema TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS activity (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts     TEXT NOT NULL DEFAULT (datetime('now')),
+    actor  TEXT NOT NULL,   -- human | ai
+    action TEXT NOT NULL    -- read | write
+);
+CREATE INDEX IF NOT EXISTS idx_activity_ts ON activity(ts);
+
+CREATE TABLE IF NOT EXISTS custom_elements (
+    slug   TEXT PRIMARY KEY,       -- invoked from ```<slug> fenced blocks
+    name   TEXT NOT NULL,
+    fields TEXT NOT NULL DEFAULT '[]',   -- JSON [{"name","required","label"}]
+    html   TEXT NOT NULL DEFAULT '',     -- shadow-DOM template
+    css    TEXT NOT NULL DEFAULT '',     -- scoped CSS
+    js     TEXT NOT NULL DEFAULT ''      -- encapsulated JS (root, props, host)
+);
+
+CREATE TABLE IF NOT EXISTS images (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename   TEXT NOT NULL,
+    mimetype   TEXT NOT NULL,
+    data       BLOB NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Page-level full-text index for the search box (BM25 via FTS5).
+CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
+    title, markdown,
+    content='pages', content_rowid='id',
+    tokenize='porter unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS pages_ai AFTER INSERT ON pages BEGIN
+    INSERT INTO pages_fts(rowid, title, markdown) VALUES (new.id, new.title, new.markdown);
+END;
+CREATE TRIGGER IF NOT EXISTS pages_ad AFTER DELETE ON pages BEGIN
+    INSERT INTO pages_fts(pages_fts, rowid, title, markdown) VALUES ('delete', old.id, old.title, old.markdown);
+END;
+CREATE TRIGGER IF NOT EXISTS pages_au AFTER UPDATE ON pages BEGIN
+    INSERT INTO pages_fts(pages_fts, rowid, title, markdown) VALUES ('delete', old.id, old.title, old.markdown);
+    INSERT INTO pages_fts(rowid, title, markdown) VALUES (new.id, new.title, new.markdown);
+END;
+
+-- Chunk-level tables power hybrid RAG (BM25 + vector).
+CREATE TABLE IF NOT EXISTS chunks (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id INTEGER NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+    ord     INTEGER NOT NULL,
+    text    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chunks_page ON chunks(page_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    text,
+    content='chunks', content_rowid='id',
+    tokenize='porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunks_fts(rowid, text) VALUES (new.id, new.text);
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.id, old.text);
+END;
+"""
+
+
+def _ensure_schema(conn) -> None:
+    conn.executescript(SCHEMA)
+    # Migrations: add columns to pre-existing wiki DBs (idempotent).
+    for stmt in (
+        "ALTER TABLE pages ADD COLUMN deleted_at TEXT",
+        "ALTER TABLE pages ADD COLUMN starred INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE pages ADD COLUMN parent_id INTEGER REFERENCES pages(id)",
+        "ALTER TABLE pages ADD COLUMN sort_order INTEGER",
+        # Existing wikis get the column empty: no template declares a schema, so
+        # no page's metadata changes meaning. The migration is a no-op by design.
+        "ALTER TABLE templates ADD COLUMN meta_schema TEXT NOT NULL DEFAULT ''",
+    ):
+        try:
+            conn.execute(stmt)
+        except WikiUnreadable:
+            raise          # a damaged file is not "that column already exists"
+        except Exception:
+            pass  # already present
+    for key, value in config.DEFAULT_SETTINGS.items():
+        conn.execute(
+            "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value)
+        )
+    for name, markdown in config.DEFAULT_TEMPLATES:
+        conn.execute(
+            "INSERT OR IGNORE INTO templates(name, markdown) VALUES (?, ?)",
+            (name, markdown),
+        )
+    for slug, name, fields, html, css, js in config.DEFAULT_ELEMENTS:
+        conn.execute(
+            "INSERT OR IGNORE INTO custom_elements(slug, name, fields, html, css, js) "
+            "VALUES (?, ?, ?, ?, ?, ?)", (slug, name, fields, html, css, js),
+        )
+    conn.commit()
+
+
+def init_db() -> None:
+    """Ensure the wiki registry exists and the active/default wiki is schema-ready.
+
+    A wiki whose file cannot be read is **reported, not raised**. This runs
+    inside the FastAPI lifespan, so raising here meant the app did not start at
+    all: one damaged `main.db` took down a UI through which every other wiki —
+    each a separate, perfectly healthy file — would have been reachable, and the
+    restore instructions live inside that UI (issue #71). Isolation has to hold
+    for failure, not only for content.
+
+    Nothing is repaired, moved or deleted: the damaged file is the user's data,
+    and it may still be recoverable.
+    """
+    from . import wikis
+
+    wikis.ensure_initialized()
+    try:
+        get_conn()  # lazily runs _ensure_schema for the active wiki
+    except WikiUnreadable as exc:
+        # stderr, not stdout — see _load_sqlite_vec. The app says this properly
+        # in the browser; a packaged, Finder-launched app has no console.
+        print(f"[jamgraf] wiki '{exc.wiki}' is unreadable: {exc.reason}. "
+              f"Starting anyway — other wikis are unaffected.", file=sys.stderr)
+
+
+def backup_db(src_path: str, dest_path: str) -> None:
+    """Write a consistent single-file copy of a SQLite DB (safe while it's in use).
+    Used for Save/Export and Open/Import of wikis."""
+    if _HAS_APSW:
+        src = apsw.Connection(src_path)
+        dest = apsw.Connection(dest_path)
+        try:
+            with dest.backup("main", src, "main") as b:
+                b.step()  # copy all pages
+        finally:
+            dest.close()
+            src.close()
+    else:  # pragma: no cover
+        s = sqlite3.connect(src_path)
+        d = sqlite3.connect(dest_path)
+        try:
+            s.backup(d)
+        finally:
+            d.close()
+            s.close()
+
+
+def is_wiki_db(path: str) -> bool:
+    """True if `path` looks like a Jamgraf wiki file (has our core tables)."""
+    try:
+        conn = apsw.Connection(path) if _HAS_APSW else sqlite3.connect(path)
+        try:
+            tables = {r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+        finally:
+            conn.close()
+        return {"pages", "settings"} <= tables
+    except Exception:
+        return False
+
+
+def ensure_vec_table(dim: int) -> None:
+    """Create (or recreate on dimension change) the sqlite-vec vector table.
+
+    vec0 tables fix their dimension at creation, so if the active embedder
+    changes to one with a different dim we drop and rebuild — callers then
+    re-embed. `chunk_id` links a vector row back to the chunks table.
+    """
+    if not VEC_AVAILABLE:
+        return
+    conn = get_conn()
+    current = get_setting("vec_dim")
+    if current is not None and int(current) != dim:
+        conn.execute("DROP TABLE IF EXISTS vec_chunks")
+        conn.execute("DROP TABLE IF EXISTS vec_chunks_sub")
+    conn.execute(
+        f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0("
+        f"chunk_id INTEGER PRIMARY KEY, embedding FLOAT[{dim}])"
+    )
+    # Child pages' vectors live in a separate index so the main index (used by
+    # RAG) stays small — faster insertion and search. `parent_id` partitions it.
+    conn.execute(
+        f"CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks_sub USING vec0("
+        f"chunk_id INTEGER PRIMARY KEY, parent_id INTEGER, embedding FLOAT[{dim}])"
+    )
+    set_setting("vec_dim", str(dim))
+    conn.commit()
+
+
+# --- Settings helpers ---------------------------------------------------------
+
+def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    row = get_conn().execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO settings(key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+    conn.commit()
+
+
+def all_settings() -> dict[str, str]:
+    rows = get_conn().execute("SELECT key, value FROM settings").fetchall()
+    return {r["key"]: r["value"] for r in rows}

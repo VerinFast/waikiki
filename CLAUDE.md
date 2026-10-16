@@ -1,4 +1,7 @@
-# Waikiki — Claude notes
+# Jamgraf — Claude notes
+
+*Formerly **Waikiki** (renamed in v1.1.0). Strings saying `waikiki` that remain in
+this repo are load-bearing, not leftovers — see rule 13.*
 
 Small local wiki for Human ↔ LLM collaboration: FastAPI + one SQLite file per
 wiki, hybrid RAG (FTS5 BM25 + sqlite-vec, fused with RRF), a `pycrdt` room per
@@ -8,78 +11,78 @@ two in parity (same substance, different voice) whenever you change either.
 
 ## Layout
 
-- `waikiki/api.py` — FastAPI app: HTML views, JSON REST, image serving, AI SSE,
+- `jamgraf/api.py` — FastAPI app: HTML views, JSON REST, image serving, AI SSE,
   the `/collab` CRDT websocket. **Routes only.**
-- `waikiki/store.py` — the **repository chokepoint**: page/image/version/comment/
+- `jamgraf/store.py` — the **repository chokepoint**: page/image/version/comment/
   suggestion/tag/activity CRUD **and** the route-facing settings accessors.
-- `waikiki/elements.py`, `wikis.py`, `rag.py` — sibling repositories (custom
+- `jamgraf/elements.py`, `wikis.py`, `rag.py` — sibling repositories (custom
   elements, the wiki registry, hybrid retrieval).
-- `waikiki/db.py` — infrastructure chokepoint: SQLite connection cache, schema,
+- `jamgraf/db.py` — infrastructure chokepoint: SQLite connection cache, schema,
   FTS5, sqlite-vec load, apsw/stdlib backend shim, low-level settings SQL, the
   **transaction seam** (`transaction()` / `after_commit()`, rule 6), and
   the **damaged-file judgement** (`unreadable_reason` / `WikiUnreadable`) that
   keeps one bad wiki from taking the app down (rule 4).
-- `waikiki/mcp_server.py` — FastMCP tool surface; shares `store`/`rag` with the API.
-- `waikiki/collab.py` — CRDT rooms + the debounced snapshot flusher.
-- `waikiki/metaschema.py` — the metadata declaration a template may carry
+- `jamgraf/mcp_server.py` — FastMCP tool surface; shares `store`/`rag` with the API.
+- `jamgraf/collab.py` — CRDT rooms + the debounced snapshot flusher.
+- `jamgraf/metaschema.py` — the metadata declaration a template may carry
   (`name[*]: type`) compiled to `pydantic` checks. Pure, sits below `store`; it
   **reports**, it never blocks a write or rewrites a value (issue #28).
-- `waikiki/ydoc.py` — **canonical Y.Doc persistence** + the wiki-interchange
+- `jamgraf/ydoc.py` — **canonical Y.Doc persistence** + the wiki-interchange
   produce/consume round-trip. Sits below `store`, like `rag`.
-- `waikiki/vendor/wiki_interchange/` — vendored, version-pinned interchange
+- `jamgraf/vendor/wiki_interchange/` — vendored, version-pinned interchange
   format (see `docs/vendoring.md`).
-- `waikiki/doorman.py` — **optional** integration with the sibling Doorman app:
+- `jamgraf/doorman.py` — **optional** integration with the sibling Doorman app:
   detection, nicer speech, and the **routing decision** for generation, chat and
   images (`/api/ask`, `/api/image`). Must never be required, started or
   installed. Capability-probe, never version-sniff: an older Doorman 404s those
   routes and a 404 means exactly what the documented quiet `{available: false}`
-  200 means. The one place "optional" doesn't apply is Waikiki displayed *inside*
+  200 means. The one place "optional" doesn't apply is Jamgraf displayed *inside*
   Doorman's window (`embedded()`), where the setting is locked on with a reason
   rather than hidden — see `docs/doorman.md`.
-- `waikiki/capabilities.py` — what this install can actually do, and the
+- `jamgraf/capabilities.py` — what this install can actually do, and the
   **remedy descriptors** that fix what it can't. Probes every optional tool,
   reports a state + a plain-language reason, and resolves each remedy to the
   step that is *actionable now* (see `docs/capabilities.md`). Sits below the
   routes with `doorman`/`updater`, whose `status()` shape it follows.
-- `waikiki/remedies.py` — the **only** place a remedy's argv is written: three
+- `jamgraf/remedies.py` — the **only** place a remedy's argv is written: three
   registries (package installs, vendor scripts, "open this pane") plus the
   execution that re-checks the prerequisite, reports failure honestly, and
   treats exit 0 as a claim rather than proof. Sits below `capabilities`.
-- `waikiki/backups.py` — scheduled local snapshots of **every** wiki, on by
+- `jamgraf/backups.py` — scheduled local snapshots of **every** wiki, on by
   default, taken with SQLite's online backup API (never a file copy of a live WAL
   database) and written whole-or-not-at-all. A wiki whose file cannot be read is
   skipped and reported (`skipped`), never fatal to the run. Same disk as the
   wikis, so it is insurance against corruption and mistakes, not against losing
   the machine — see `docs/data-safety.md`.
-- `waikiki/calendarfeed.py` — subscribed **iCalendar feeds**: fetch, RRULE/EXDATE/
+- `jamgraf/calendarfeed.py` — subscribed **iCalendar feeds**: fetch, RRULE/EXDATE/
   RECURRENCE-ID expansion, and the **host allow-list** that is the sole guard on
   the one route that fetches a caller-chosen URL. Sits below the routes and holds
   no SQL — see `docs/calendar-feeds.md` and rule 10.
-- `waikiki/bugreports.py` — bug reports an agent filed through MCP, **queued for
+- `jamgraf/bugreports.py` — bug reports an agent filed through MCP, **queued for
   a person**, never sent. Holds no network code at all: it builds a link that
   pre-fills GitHub's own new-issue form so the human submits it themselves. Two
   reasons, and the second is the load-bearing one — filing directly would need a
   GitHub token in the app, and an agent reporting a failure routinely quotes the
   wiki content it was working on, which on a public tracker is a privacy leak
   rather than noise. `/reports` is owner-only for the same reason.
-- `waikiki/kahala.py` — linking a local wiki to a **Kahala** one and moving whole
+- `jamgraf/kahala.py` — linking a local wiki to a **Kahala** one and moving whole
   wikis over its `/api/interchange/*` wire (clone, push, pull). Holds the link
   record accessors and the wording of every refusal; no SQL, no format code —
   the bundle is the vendored interchange library's. Sits below the routes.
-- `waikiki/kahalaauth.py` — the **OIDC public client** (`good-place-waikiki`,
+- `jamgraf/kahalaauth.py` — the **OIDC public client** (`good-place-waikiki`,
   auth code + PKCE S256, no secret) that signs in to Kahala. The callback lands
   on our own loopback port, never a custom scheme.
-- `waikiki/secretstore.py` — the macOS Keychain, and the **refusal to fall back**
+- `jamgraf/secretstore.py` — the macOS Keychain, and the **refusal to fall back**
   to a file when there isn't one. The only place a credential is written.
-- `waikiki/deeplink.py` — `waikiki://` deep links: the allow-list that turns an
+- `jamgraf/deeplink.py` — `jamgraf://` deep links: the allow-list that turns an
   external URL into an in-app destination (see `docs/deep-links.md`).
-- `waikiki/updater.py` — self-update for the packaged `.app`: signature-verified
+- `jamgraf/updater.py` — self-update for the packaged `.app`: signature-verified
   download, staging, and the detached bundle swap (see `docs/updates.md`).
 - `docs/rfc/0001-multi-tenant-waikiki.md` — the port-to-multi-tenant RFC.
 - `docs/repository-layer.md` — the layering spec (RFC 0001, Phase 0).
 - `docs/vendoring.md` — vendored packages, pins, and re-sync steps.
 - `docs/updates.md` — the auto-update trust model and release procedure.
-- `docs/deep-links.md` — the `waikiki://` scheme and why it is an allow-list.
+- `docs/deep-links.md` — the `jamgraf://` scheme and why it is an allow-list.
 - `docs/calendar-feeds.md` — subscribed calendars: why the fetch is
   server-side, why the host allow-list is the only thing keeping that route from
   being an open proxy, and what recurrence expansion has to get right.
@@ -93,6 +96,9 @@ two in parity (same substance, different voice) whenever you change either.
   crash, a corrupt wiki file, a failed import; how restore actually works; and
   the risks we accept, named. Every answer there was established by making it
   happen, and `tests/test_data_safety.py` pins the properties.
+- `docs/rename-to-jamgraf.md` — rule 13: every old name still out in the world,
+  what reads it, what deliberately kept its old value, how the first launch moves
+  an existing install, and the order the rename has to ship in.
 - `docs/export-import-parity.md` — rule 12 as a standing decision: why every
   export must have a reachable import, the release where the bundle importer
   existed and was unreachable anyway, why PDF is exempt, and what a folder of
@@ -197,7 +203,7 @@ two in parity (same substance, different voice) whenever you change either.
    Y.Doc (`store._sync_ydoc` → `ydoc.sync`) — never write markdown as truth and
    discard the doc. The live `collab.py` room is still just an editing buffer; its
    flush lands through `store` like any other write, so the canonical doc stays
-   authoritative. See `waikiki/ydoc.py`.
+   authoritative. See `jamgraf/ydoc.py`.
    **Order matters within a write: canonical state before derived state.**
    `_sync_ydoc` runs *before* `rag.reindex_page`, because the Y.Doc is truth and
    the RAG index is a cache rebuildable from the markdown. With the old order,
@@ -214,7 +220,7 @@ two in parity (same substance, different voice) whenever you change either.
    outside even when a caller has nested the save in a bigger transaction. The
    index is a cache; truth is not. `docs/data-safety.md` question 1 has the
    measurements, and `tests/test_data_safety.py` breaks each seam in turn.
-7. **The Kahala ⟷ Waikiki round-trip is content-only and version-gated.** Export
+7. **The Kahala ⟷ Jamgraf round-trip is content-only and version-gated.** Export
    (`store.export_snapshot` / `export_changelog` / `export_wiki_bundle`) and
    import (`store.import_snapshot` / `import_changelog` / `import_wiki_bundle`)
    go through the repository, using the **vendored** `wiki_interchange` encoders.
@@ -265,7 +271,7 @@ two in parity (same substance, different voice) whenever you change either.
    disk is the point. Three things are load-bearing there: it is **held in a
    variable and handed to the one signing process**, never written to a file
    (the only temp file is gcloud's stderr, and it is removed); a local key file
-   is used **only when named** (`WAIKIKI_UPDATE_KEY`), with no silent fallback
+   is used **only when named** (`JAMGRAF_UPDATE_KEY`), with no silent fallback
    between the two sources; and it is fetched **and checked** before the build
    (parsed, Ed25519, matched against the compiled keys), so a missing, malformed
    or untrusted key costs seconds rather than a wiped `dist/`. Two leaks are
@@ -273,7 +279,7 @@ two in parity (same substance, different voice) whenever you change either.
    key (`bash -x` prints assignments with values), and **inherited variables that
    could carry it are unset** first (bash keeps the export flag on reassignment,
    so the key would ride into the build). And the script **refuses
-   `WAIKIKI_UPDATE_PUBKEY`** — that override is for tests and private builds of
+   `JAMGRAF_UPDATE_PUBKEY`** — that override is for tests and private builds of
    the app; here it would make both verification steps measure against the
    environment and approve a release no installed copy accepts.
    `tests/test_release_script.py` runs the real script in a sandboxed checkout
@@ -403,7 +409,7 @@ two in parity (same substance, different voice) whenever you change either.
     ruled out before the markdown sniff, so a `.wiki` carrying a stray `.md` is
     still a wiki file. Sniffing is also what keeps the refusal honest: a bundle
     the version gate rejects must say *that*, because the alternative — the
-    wiki-file branch reporting "not a Waikiki wiki file" about a perfectly valid
+    wiki-file branch reporting "not a Jamgraf wiki file" about a perfectly valid
     bundle — is how this was broken for a whole release. A bundle lands through
     `store.import_wiki_bundle` into a newly registered wiki, the same repository
     path Kahala's pull uses (rule 7), so its pages are versioned and re-embedded
@@ -435,6 +441,35 @@ two in parity (same substance, different voice) whenever you change either.
     elements, trash, order, stars — is named in the doc rather than implied
     away: it is the shape for a repo, `.wiki` is the faithful copy.
 
+13. **The old name is still out in the world: read it, never write it.** Jamgraf
+    was Waikiki, and the old names are written into places this repo cannot
+    edit — Claude Desktop configs (`WAIKIKI_MCP`, `WAIKIKI_DATA`, and a command
+    ending `Waikiki.app/Contents/MacOS/Waikiki`), doorman, browsers' cookie jars,
+    `waikiki://` links in people's notes, MCP servers started before an upgrade.
+    A pure rename passes every test while abandoning all of them, which is the
+    trap. So every old name is **read** as a fallback (`config.env`,
+    `config.cookie`, both headers, both schemes, both Keychain services, both
+    Bonjour names) and **never written**, and each stays until whatever still says
+    it has been changed — usually a file on someone else's machine, so removing
+    one is its own decision, never a tidy-up. The table is
+    `docs/rename-to-jamgraf.md`. Four things are load-bearing beyond courtesy.
+    **The old data folder is a symlink to the new one**, because `config.py`
+    creates its data folder at import: without it a stale `WAIKIKI_DATA` is handed
+    a fresh, *empty* install where the wikis were, silently
+    (`config.migrate_legacy_data_dir` — all or nothing, `rmdir` never `rmtree`,
+    hands off when both hold data). **`release.sh` refuses `WAIKIKI_UPDATE_PUBKEY`
+    exactly like the new name**, because the app reads it as a fallback; refusing
+    one spelling reopens the trapdoor #103 closed. **Sign-out deletes under both
+    Keychain services**, or the next read moves the old token back and resurrects
+    the session. **Never create a repo called `VerinFast/waikiki`**: every
+    pre-rename install finds updates by following GitHub's redirect from that
+    name, and a new repo there ends it permanently. Some identifiers kept their
+    old value on purpose (`PUBLIC_KEYS_HEX`, `waikikey`, `good-place-waikiki`,
+    `waikiki-zip-1`, `waikiki.db`) — they are not names. `tests/test_rename_compat.py`
+    and `tests/test_rename_migration.py` guard all of it; each guard fails when
+    removed, and the build's second smoke test boots the bundle through the old
+    executable name with the old env vars on every build.
+
 ## Before committing
 
 - `python -m pytest` — the suite is the correctness anchor. Don't weaken, skip,
@@ -451,7 +486,7 @@ bonjour/tunnel (P5), and the desktop sync client (P6) are **later phases**. Don'
 pull them forward.
 
 Note: canonical Y.Doc persistence + the `wiki_interchange` round-trip (rules 6–7,
-`waikiki/ydoc.py`) belong to the newer **atd-v3 / Kahala** track (issue #3391),
+`jamgraf/ydoc.py`) belong to the newer **atd-v3 / Kahala** track (issue #3391),
 not to RFC 0001's phases. They stack on the Phase 0 chokepoint but are their own
 work: the interchange *format* and *canonical state*, not the P4/P6 transport.
 The local desktop surface is deliberately left intact (the monorepo fold is a

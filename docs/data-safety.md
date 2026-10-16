@@ -1,6 +1,6 @@
 # Data safety
 
-*The 1.0 audit — issue [#68](https://github.com/VerinFast/waikiki/issues/68).*
+*The 1.0 audit — issue [#68](https://github.com/VerinFast/jamgraf/issues/68).*
 
 A family wiki losing content is the worst outcome this app has. Backup and
 restore code existed and several safety properties had been established along
@@ -14,18 +14,18 @@ risk", it says so. The tests that pin each real-but-previously-unproven property
 live in `tests/test_data_safety.py`.
 
 Method note: the developer's own wikis were only ever opened **read-only**, and
-every destructive experiment ran against a copy in a scratch `WAIKIKI_DATA`
+every destructive experiment ran against a copy in a scratch `JAMGRAF_DATA`
 directory.
 
 **Summary**
 
 | # | Question | Verdict |
 |---|---|---|
-| 1 | Crash / power loss mid-write | WAL and `synchronous=FULL` confirmed on every file; no committed write was lost. A page save was **several** transactions, so a crash between them left the canonical Y.Doc behind its markdown projection — **fixed since this audit ([#72](https://github.com/VerinFast/waikiki/issues/72))**: one save is now one transaction on both backends. Live typing is still durable only ~1.5–2.5s after you stop. |
-| 2 | A corrupted wiki file | **Fixed since this audit ([#71](https://github.com/VerinFast/waikiki/issues/71)).** The app now starts whichever wiki is damaged, including the default; the neighbours are unaffected; *Manage wikis* lists what it can and marks what it can't read; and the damaged file is named, explained and left byte-for-byte alone. |
+| 1 | Crash / power loss mid-write | WAL and `synchronous=FULL` confirmed on every file; no committed write was lost. A page save was **several** transactions, so a crash between them left the canonical Y.Doc behind its markdown projection — **fixed since this audit ([#72](https://github.com/VerinFast/jamgraf/issues/72))**: one save is now one transaction on both backends. Live typing is still durable only ~1.5–2.5s after you stop. |
+| 2 | A corrupted wiki file | **Fixed since this audit ([#71](https://github.com/VerinFast/jamgraf/issues/71)).** The app now starts whichever wiki is damaged, including the default; the neighbours are unaffected; *Manage wikis* lists what it can and marks what it can't read; and the damaged file is named, explained and left byte-for-byte alone. |
 | 3 | Restore | Works, proven on a real 55MB backup: 215 pages, 75 images, 711 versions. Backups are on by default. Documented only inside the app, and they live on the same disk as the wikis. |
 | 4 | Import paths | A part-written import is incomplete but never destructive, and re-running the same bundle finishes it exactly. **1.0 does not need staging-and-swap.** |
-| 5 | Version history | Works, and now **findable** ([#73](https://github.com/VerinFast/waikiki/issues/73), fixed since this audit). Every article carries a line saying when it last changed and how many earlier versions are kept; it opens the history with the list showing. Two interactions, from a sentence that names the thing in plain words. |
+| 5 | Version history | Works, and now **findable** ([#73](https://github.com/VerinFast/jamgraf/issues/73), fixed since this audit). Every article carries a line saying when it last changed and how many earlier versions are kept; it opens the history with the list showing. Two interactions, from a sentence that names the thing in plain words. |
 
 ---
 
@@ -97,8 +97,8 @@ the Help wiki's About page:
 ```
 --- canonical ydoc
 +++ pages.markdown
--**Waikiki** version **0.18.0**.
-+**Waikiki** version **0.21.0**.
+-**Jamgraf** version **0.18.0**.
++**Jamgraf** version **0.21.0**.
 ```
 
 Chasing that produced the more likely trigger, which is not a crash at all.
@@ -121,7 +121,7 @@ source of truth and the RAG index is a cache that can be rebuilt from the
 markdown at any time. Guarded by
 `test_canonical_ydoc_is_written_before_the_derived_index`.
 
-**Also fixed since this audit ([#72](https://github.com/VerinFast/waikiki/issues/72)):
+**Also fixed since this audit ([#72](https://github.com/VerinFast/jamgraf/issues/72)):
 one page save is now one transaction.** `db.transaction()` issues an explicit
 `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` through the shim, and the stdlib
 connection is opened `isolation_level=None` so both backends reach a transaction
@@ -212,7 +212,7 @@ GET /wiki/home        wiki=beaconlight   -> 500   (bare "Internal Server Error")
 from the broken wiki, or to open a backup — built stats for **every** wiki, so
 one bad file took the whole page down. And the broken wiki's own pages returned a
 bare 500 rather than saying which wiki is unreadable or what to do about it.
-Both are fixed in [#71](https://github.com/VerinFast/waikiki/issues/71) — see
+Both are fixed in [#71](https://github.com/VerinFast/jamgraf/issues/71) — see
 *What #71 changed*, below.
 
 ### A corrupt default wiki
@@ -220,7 +220,7 @@ Both are fixed in [#71](https://github.com/VerinFast/waikiki/issues/71) — see
 The app **did not start**:
 
 ```
-File ".../waikiki/api.py", line 33, in lifespan
+File ".../jamgraf/api.py", line 33, in lifespan
     db.init_db()
 apsw.CorruptError: database disk image is malformed
 ERROR:    Application startup failed. Exiting.
@@ -229,7 +229,7 @@ ERROR:    Application startup failed. Exiting.
 Every other wiki — including a healthy 215-page family wiki — became
 unreachable, though its file was fine. That is exactly the outcome the registry
 was supposed to prevent, so it was filed as
-[#71](https://github.com/VerinFast/waikiki/issues/71) rather than fixed inside
+[#71](https://github.com/VerinFast/jamgraf/issues/71) rather than fixed inside
 an audit.
 
 ### What #71 changed
@@ -310,7 +310,7 @@ applies to `app_config.json`, which holds whether backups run at all. Pinned by
 
 ### What actually exists
 
-`waikiki/backups.py` snapshots **every** registered wiki on a schedule, using
+`jamgraf/backups.py` snapshots **every** registered wiki on a schedule, using
 SQLite's online backup API (`db.backup_db`) rather than a file copy, so a
 snapshot taken mid-write is consistent. Images live in the `images` table as
 BLOBs, so a database snapshot is a complete copy.
@@ -356,7 +356,7 @@ replacing anything — the broken original is left alone. Pinned by three tests
 
 Partly, and this is the weak point.
 
-Settings → Backups says it plainly: *"To restore: quit Waikiki, then use Manage
+Settings → Backups says it plainly: *"To restore: quit Jamgraf, then use Manage
 wikis → Open on a `.db` file from a backup folder"*, along with the folder path
 and the honest caveat that these are local copies. That is the right place — for
 someone whose app still runs.
@@ -366,7 +366,7 @@ implied**:
 
 1. **The instructions live inside the thing that might be broken.** ~~If the app
    will not start (see question 2), the user cannot read them.~~ Largely closed
-   by [#71](https://github.com/VerinFast/waikiki/issues/71): the app now starts
+   by [#71](https://github.com/VerinFast/jamgraf/issues/71): the app now starts
    with a damaged wiki, and the restore steps — the backups folder path, the
    newest snapshot, *Open wiki file…* — are printed **on the failure itself**,
    both on *Manage wikis* and on the page that reports the damage, so they are
@@ -377,7 +377,7 @@ implied**:
 2. **Backups sit on the same disk, in the same folder tree, as the wikis.** They
    protect against corruption, a bad import and human error. They do **not**
    protect against losing the machine, or against someone deleting
-   `~/Library/Application Support/Waikiki`. Settings says this; it is worth
+   `~/Library/Application Support/Jamgraf`. Settings says this; it is worth
    saying twice. Keep a `.wiki` export somewhere else.
 
 A footnote from the round-trip above: a `.wiki` bundle is *larger* than the
@@ -491,7 +491,7 @@ The count is fine. The **findability is not**, and this is the honest weakness:
 * The Help wiki never mentions versions or history. Only `README.md` does, and
   someone trying to recover a page is not reading the README.
 
-Filed as [#73](https://github.com/VerinFast/waikiki/issues/73) — it is mostly
+Filed as [#73](https://github.com/VerinFast/jamgraf/issues/73) — it is mostly
 labelling, but it is the app's undo, and undo you cannot find is not undo.
 `test_yesterdays_text_is_reachable_from_the_article_page` pins the chain of
 links as it stands, so it can be improved without silently breaking.
@@ -545,13 +545,13 @@ Everything below is a deliberate 1.0 position, not an oversight:
 1. **Up to ~1.5–2.5 seconds of live typing** is lost to a power cut or
    `SIGKILL`. A clean quit loses nothing.
 2. ~~**A page save is not one transaction.**~~ Fixed in
-   [#72](https://github.com/VerinFast/waikiki/issues/72). What is accepted now is
+   [#72](https://github.com/VerinFast/jamgraf/issues/72). What is accepted now is
    narrower: the **RAG index** is rebuilt after the commit, on purpose, so a crash
    in that gap leaves one page's search index stale until its next save (or a
    rebuild from Settings). A divergence that predates the fix heals on the next
    save of that page, not on read.
 3. ~~**A corrupt default wiki stops the app from starting.**~~ Fixed in
-   [#71](https://github.com/VerinFast/waikiki/issues/71). What is accepted now is
+   [#71](https://github.com/VerinFast/jamgraf/issues/71). What is accepted now is
    narrower: a damaged wiki's **own** pages cannot be shown (there is nothing to
    show), and while it is the active wiki, Settings answers with the explanation
    page instead of the settings form. The app starts, every other wiki works, the
@@ -562,7 +562,7 @@ Everything below is a deliberate 1.0 position, not an oversight:
 5. **A failed import leaves a partial wiki.** Nothing is destroyed and a retry
    completes it; there is no staging-and-swap and 1.0 does not add one.
 6. ~~**Version history is findable only via the Details tab.**~~ Fixed in
-   [#73](https://github.com/VerinFast/waikiki/issues/73): every article carries a
+   [#73](https://github.com/VerinFast/jamgraf/issues/73): every article carries a
    line naming when it last changed and how many earlier versions are kept, and
    that line opens the history. Nothing is accepted here any more.
 7. ~~**A save committing in the same instant a wiki's address changes can be

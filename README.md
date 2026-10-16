@@ -1,8 +1,17 @@
-# 🌺 Waikiki
+# 🌺 Jamgraf
 
 A small, local, SQLite-backed wiki built for **Human ↔ LLM collaboration** — where
 Claude (via Claude Desktop over MCP) and you edit the **same document at the same
 time**, seeing each other's changes live.
+
+> **Jamgraf used to be called Waikiki.** If you're upgrading, there is nothing to
+> do: the first launch moves your wikis, your Kahala sign-in and the app itself to
+> the new name, and everything that still says the old one keeps working — your
+> Claude Desktop config, doorman, `waikiki://` links, all of it. If you had both an
+> old Waikiki folder and a new Jamgraf one full of wikis, nothing is merged or
+> moved; **Manage wikis** tells you where each is. The details, and what to never
+> do (create a repo named `VerinFast/waikiki`), are in
+> **[docs/rename-to-jamgraf.md](docs/rename-to-jamgraf.md)**.
 
 ## Requirements → how
 
@@ -10,10 +19,10 @@ time**, seeing each other's changes live.
 |---|---|
 | Python + SQLite-backed | FastAPI app; one SQLite file per wiki (`data/wikis/<slug>.db`) holds its pages, images, FTS index, and vectors |
 | Multiple isolated wikis | Separate DB per wiki; pages, search, and `[[links]]` never cross |
-| Themes | Swappable CSS in `waikiki/static/themes/` (default / dark / sepia) |
+| Themes | Swappable CSS in `jamgraf/static/themes/` (default / dark / sepia) |
 | Images | Upload / paste / drag → stored in SQLite, served at `/image/{id}` |
 | Extensible | Layered `routes → store (repository) → db (SQLite)`; open-source deps |
-| MCP + REST | `waikiki.mcp_server` (FastMCP) and `/api/*` share one code path |
+| MCP + REST | `jamgraf.mcp_server` (FastMCP) and `/api/*` share one code path |
 | Markdown → HTML | `markdown-it-py` (GFM), `[[wiki links]]`, Pygments code |
 | Tables | GFM tables via the `gfm-like` preset |
 | Human editing | EasyMDE editor with live preview |
@@ -24,7 +33,7 @@ time**, seeing each other's changes live.
 
 ## Multiple isolated wikis
 
-Waikiki hosts several **fully isolated** wikis (e.g. Beaconlight, Crosslake,
+Jamgraf hosts several **fully isolated** wikis (e.g. Beaconlight, Crosslake,
 StartupOS) — each is its own SQLite file under `data/wikis/`. Pages, search, and
 `[[wiki links]]` **never cross between wikis**: a link resolves only within the
 active wiki's own database, so contamination is structurally impossible.
@@ -55,7 +64,7 @@ somewhere else under a name you wouldn't have picked — one cloned from Kahala 
 The **address** is the wiki's identity: it is in every URL, it is the filename of
 its database, and it is what Claude's `switch_wiki` takes. Changing it renames
 the file, so links using the old address stop working and any tab with that wiki
-open needs a reload. Waikiki handles the rest — your browser follows the new
+open needs a reload. Jamgraf handles the rest — your browser follows the new
 address, unsaved editor text is written out first, and an agent still holding the
 old one is told to pick the wiki up again rather than being quietly moved into a
 different wiki. The **Help** wiki keeps its address (the app re-creates `help`
@@ -81,7 +90,7 @@ a location you choose and **Open** an external wiki file back in — from the
 `.wiki` files are just SQLite, so they're easy to back up, move between machines,
 or share.
 
-**Open takes any shape Waikiki can write.** A `.wiki` save wraps a whole
+**Open takes any shape Jamgraf can write.** A `.wiki` save wraps a whole
 database; a **wiki bundle** — what *Push/Pull with Kahala* moves, and what
 Kahala's own export downloads — carries each page as an interchange snapshot and
 no database at all; **markdown** is one `.md` per page and nothing else. They
@@ -108,7 +117,7 @@ Markdown is text only, though: no images, history, comments, templates or
 trash. It is the shape for a repo; a `.wiki` file or a bundle is the faithful
 copy.
 
-Anything Waikiki can export, Waikiki can open again. That's a rule, not a
+Anything Jamgraf can export, Jamgraf can open again. That's a rule, not a
 coincidence — an export you can't restore is a file that only looks like a
 backup. The one exception is PDF, which is a page rendered for a person to read
 rather than a copy of the wiki. The decision, the release this was learned from,
@@ -143,13 +152,13 @@ alone, so opening a large healthy wiki is still instant.
 
 ### Backups & restore
 
-Waikiki backs itself up **automatically, on by default**: every 24 hours it takes
+Jamgraf backs itself up **automatically, on by default**: every 24 hours it takes
 a consistent snapshot of *every* wiki (SQLite's online backup API, so it's safe
 mid-write) and keeps the last 7. They land in
 `<data>/backups/<YYYY-MM-DD_HHMM>/<slug>.db`; the schedule, the count, and a
 **Back up now** button are in Settings → Backups.
 
-**To restore:** quit Waikiki, then **Manage wikis → Open** on a `.db` from a
+**To restore:** quit Jamgraf, then **Manage wikis → Open** on a `.db` from a
 backup folder. It opens as a *separate* wiki, so you can compare before replacing
 anything. Images and version history come with it — a snapshot is a complete
 copy of the wiki.
@@ -223,7 +232,7 @@ Frontmatter properties are plain strings, and stay plain strings. What a
 **template** can declare is what those strings are supposed to *mean* — a few
 lines of `name[*]: type` in the template editor (`str`, `int`, `float`, `bool`,
 `date`, `list[str]`, or a choice like `player | npc`), compiled to `pydantic`
-checks in [`waikiki/metaschema.py`](waikiki/metaschema.py).
+checks in [`jamgraf/metaschema.py`](jamgraf/metaschema.py).
 
 Pages made from such a template carry a `template:` property and are checked
 against it on their Metadata tab and through MCP's `get_metadata`/`set_metadata`.
@@ -241,7 +250,7 @@ every page is persisted in `page_ydoc` and is the **source of truth**; the
 search, rendering, and RAG. Every content write goes through the repository and
 advances the canonical Y.Doc, so the CRDT accumulates real history across saves
 and restarts (the live co-editing room in `collab.py` is just an editing buffer
-whose flush lands through the same seam). See [`waikiki/ydoc.py`](waikiki/ydoc.py).
+whose flush lands through the same seam). See [`jamgraf/ydoc.py`](jamgraf/ydoc.py).
 
 One save is **one transaction**: the page row, its version snapshot, its tags and
 the canonical Y.Doc all land together or not at all, so a crash or a power cut
@@ -251,7 +260,7 @@ a cache that can be rebuilt from the markdown at any time, so it is refreshed ju
 after the save commits rather than while it holds the write lock. The reasoning
 and the measurements are in [docs/data-safety.md](docs/data-safety.md).
 
-Because the persisted state is a genuine CRDT, Waikiki can **export** a page as a
+Because the persisted state is a genuine CRDT, Jamgraf can **export** a page as a
 snapshot (full Y.Doc + a content-addressed image sidecar) or a changelog (updates
 since a peer's state vector), and **import** the same from a peer — the local half
 of the round-trip with the hosted platform. The format is the vendored,
@@ -295,7 +304,7 @@ you make one.
 Only what changed travels — a few kilobytes rather than the whole wiki — and
 custom elements, templates and images travel with the pages, so a page never
 arrives referring to a definition that didn't. If the server is running an older
-version, or an image doesn't survive the trip, Waikiki transfers the whole wiki
+version, or an image doesn't survive the trip, Jamgraf transfers the whole wiki
 instead and tells you that's what it did. *Transfer the whole wiki* forces it.
 If a transfer stops part-way — a full disk, say — it says it only *partly*
 merged rather than claiming it was refused: nothing is ever deleted, every page
@@ -303,8 +312,8 @@ that arrived is an ordinary page with its history, and running the same transfer
 again finishes the job.
 
 Signing in uses Kahala's own sign-in page — OpenID Connect with PKCE, no client
-secret, and the callback comes back to Waikiki's own loopback port. In the
-desktop app it opens in your **web browser** rather than inside Waikiki's window,
+secret, and the callback comes back to Jamgraf's own loopback port. In the
+desktop app it opens in your **web browser** rather than inside Jamgraf's window,
 so you get your usual session, your password manager and whatever second factor
 your organisation uses; the app notices by itself when you're done. The refresh
 token goes in your **Keychain**, never into a wiki file (that file *is* what
@@ -324,7 +333,7 @@ Full detail, including every refusal and why redirects are never followed, in
 ## Setup
 
 ```bash
-cd ~/localdev/waikiki
+cd ~/localdev/jamgraf
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -347,21 +356,21 @@ python run.py
 
 ## Desktop app (macOS)
 
-Waikiki ships as a native `.app` (a WKWebView window over the local server) — see
-[Releases](https://github.com/VerinFast/waikiki/releases). Or build it yourself:
+Jamgraf ships as a native `.app` (a WKWebView window over the local server) — see
+[Releases](https://github.com/VerinFast/jamgraf/releases). Or build it yourself:
 
 ```bash
 bash scripts/build_macos.sh
-# → dist/Waikiki.app  (+ dist/Waikiki-macos.zip)
+# → dist/Jamgraf.app  (+ dist/Jamgraf-macos.zip)
 ```
 
 The app is currently **unsigned**, so on first launch macOS Gatekeeper will warn:
 right-click the app → **Open** → **Open** to allow it (once). Signing/notarization
 is a later step.
 
-The packaged app stores its data in **`~/Library/Application Support/Waikiki`**
+The packaged app stores its data in **`~/Library/Application Support/Jamgraf`**
 (not inside the bundle), so it survives moving/replacing the app. Override with
-`WAIKIKI_DATA`.
+`JAMGRAF_DATA`.
 
 ### Updates
 
@@ -383,7 +392,7 @@ the trust model, key handling, and failure modes.
 
 ### Capabilities and one-click fixes
 
-Waikiki shells out to tools it doesn't ship — the `claude`/`gemini` CLIs, an
+Jamgraf shells out to tools it doesn't ship — the `claude`/`gemini` CLIs, an
 image CLI, `cloudflared`, Ollama. **Settings → Capabilities** says which of them
 this machine actually has, what each one powers, and what is missing, *before*
 you press anything. Chat, ✦ Generate and the editor's ✨ image button render
@@ -397,16 +406,16 @@ instructions with a link rather than a button that would fail. Installing asks
 first, says what it is about to do, and reports honestly when it doesn't work
 (`npm i -g` failing on permissions is common, and reads as exactly that).
 
-Where nobody publishes an install path, Waikiki says so and points at the setting
+Where nobody publishes an install path, Jamgraf says so and points at the setting
 you can change — it won't guess at a command. Doorman is listed but never
-offered as a fix: it is your app, and Waikiki never installs or starts it. The
+offered as a fix: it is your app, and Jamgraf never installs or starts it. The
 one installer that pipes a download into a shell (Google's Antigravity CLI, the
 default image tool) names the host it fetches from before it runs. See
 **[docs/capabilities.md](docs/capabilities.md)**.
 
 ### Doorman (optional)
 
-If you also run [Doorman](https://github.com/VerinFast/doorman), Waikiki will
+If you also run [Doorman](https://github.com/VerinFast/doorman), Jamgraf will
 notice and use it for things it does better:
 
 - **Speech** — its voices for **Listen** and *"Say this word"*.
@@ -416,26 +425,26 @@ notice and use it for things it does better:
   **Settings → Doorman**, so you always know which model wrote something.
 
 Each of those is capability-probed, not version-sniffed: an older Doorman
-without them simply keeps Waikiki on its own Anthropic/Ollama/CLI path, silently.
+without them simply keeps Jamgraf on its own Anthropic/Ollama/CLI path, silently.
 
-It is optional in every direction: Waikiki never starts or installs Doorman,
+It is optional in every direction: Jamgraf never starts or installs Doorman,
 everything works identically without it, and you can decline the integration even
-while Doorman is running (**Settings → Doorman**). The one exception is Waikiki
+while Doorman is running (**Settings → Doorman**). The one exception is Jamgraf
 displayed *inside* Doorman's own window, where "optional" has no meaning — there
 the setting is shown locked, with the reason. See
 **[docs/doorman.md](docs/doorman.md)**.
 
 ### Deep links
 
-`waikiki://` URLs open the app at a specific place, and survive the app picking a
+`jamgraf://` URLs open the app at a specific place, and survive the app picking a
 different port (which an `http://127.0.0.1:8787` link doesn't):
 
 ```
-waikiki://beaconlight/meru            # a page
-waikiki://beaconlight/meru#abilities  # a section
-waikiki://beaconlight                 # a wiki's front page
-waikiki://beaconlight?q=clockwork     # search, inside that wiki
-waikiki://                            # the front page
+jamgraf://beaconlight/meru            # a page
+jamgraf://beaconlight/meru#abilities  # a section
+jamgraf://beaconlight                 # a wiki's front page
+jamgraf://beaconlight?q=clockwork     # search, inside that wiki
+jamgraf://                            # the front page
 ```
 
 **Page options → Copy link** copies one, and MCP `get_page` returns the same
@@ -468,7 +477,7 @@ calendar, edit the `ics:` line — in Google Calendar the address is *Settings �
 your calendar → Integrate calendar → Secret address in iCal format*. Nothing else
 to configure.
 
-Waikiki fetches the calendar server-side because no provider allows a web page to
+Jamgraf fetches the calendar server-side because no provider allows a web page to
 read one (there are no CORS headers on any of them), via
 `/api/calendar-feed?url=…`. Since the page chooses that URL, the **allow-list is
 the only thing keeping this from being an open proxy**: any web page in your
@@ -487,26 +496,26 @@ claim nothing is scheduled. See
 
 ### Reports from agents
 
-An agent that hits a bug or a limitation in Waikiki can write it down with
+An agent that hits a bug or a limitation in Jamgraf can write it down with
 `report_bug` while it still has the failing call in hand. Reports are **queued,
 not sent**: they appear under *Reports from agents* (the menu entry shows up only
 when something is waiting), and *Open on GitHub* opens GitHub's own new-issue
 form pre-filled, so nothing is published until you submit it there.
 
-That indirection is deliberate. Filing directly would mean Waikiki holding a
+That indirection is deliberate. Filing directly would mean Jamgraf holding a
 GitHub token — and, more to the point, a report written at the moment something
 failed often quotes the page it was working on. Reading it first is what keeps
 your wiki's content off a public tracker.
 
 ## Connect Claude Desktop (MCP)
 
-**Easiest:** open Waikiki and click **Connect Claude** in the header (or visit
+**Easiest:** open Jamgraf and click **Connect Claude** in the header (or visit
 `/help`). That page shows a config **pre-filled with this install's real paths**
 and a copy button — paste it into Claude Desktop's config and you're done.
 
 The config file lives at
 `~/Library/Application Support/Claude/claude_desktop_config.json` (create it if
-it doesn't exist). Keep Waikiki running, paste the config, then **fully quit and
+it doesn't exist). Keep Jamgraf running, paste the config, then **fully quit and
 reopen Claude Desktop** (⌘Q). Two forms:
 
 **A) Packaged app** — Claude Desktop launches the `.app` itself in MCP mode
@@ -515,12 +524,12 @@ reopen Claude Desktop** (⌘Q). Two forms:
 ```json
 {
   "mcpServers": {
-    "waikiki": {
-      "command": "/Applications/Waikiki.app/Contents/MacOS/Waikiki",
+    "jamgraf": {
+      "command": "/Applications/Jamgraf.app/Contents/MacOS/Jamgraf",
       "env": {
-        "WAIKIKI_MCP": "1",
-        "WAIKIKI_DATA": "/Users/YOU/Library/Application Support/Waikiki",
-        "WAIKIKI_WEB_URL": "http://127.0.0.1:8787"
+        "JAMGRAF_MCP": "1",
+        "JAMGRAF_DATA": "/Users/YOU/Library/Application Support/Jamgraf",
+        "JAMGRAF_WEB_URL": "http://127.0.0.1:8787"
       }
     }
   }
@@ -532,24 +541,24 @@ reopen Claude Desktop** (⌘Q). Two forms:
 ```json
 {
   "mcpServers": {
-    "waikiki": {
-      "command": "/Users/YOU/localdev/waikiki/.venv/bin/python",
-      "args": ["-m", "waikiki.mcp_server"],
+    "jamgraf": {
+      "command": "/Users/YOU/localdev/jamgraf/.venv/bin/python",
+      "args": ["-m", "jamgraf.mcp_server"],
       "env": {
-        "PYTHONPATH": "/Users/YOU/localdev/waikiki",
-        "WAIKIKI_DATA": "/Users/YOU/localdev/waikiki/data",
-        "WAIKIKI_WEB_URL": "http://127.0.0.1:8787"
+        "PYTHONPATH": "/Users/YOU/localdev/jamgraf",
+        "JAMGRAF_DATA": "/Users/YOU/localdev/jamgraf/data",
+        "JAMGRAF_WEB_URL": "http://127.0.0.1:8787"
       }
     }
   }
 }
 ```
 
-> `WAIKIKI_DATA` **must match** the data directory the running app uses, so the
+> `JAMGRAF_DATA` **must match** the data directory the running app uses, so the
 > MCP server and the window share the same wikis. The in-app Help page fills this
 > in for you.
 
-Then, in Claude: *"list the waikiki wikis and switch to Beaconlight."* Claude
+Then, in Claude: *"list the jamgraf wikis and switch to Beaconlight."* Claude
 must `switch_wiki` before it can read or write — this is what keeps wikis from
 mixing. Open a page's editor and ask Claude to add a section; watch it type in
 beside you.
@@ -593,7 +602,7 @@ didn't happen to show.
 | GET | `/api/calendar-feed?url=&tz=` | events from a subscribed calendar (allow-listed hosts only) |
 
 Interactive docs at `/docs`. Websocket sync at `ws://host/collab/{wiki}/{slug}`.
-REST/collab requests select the wiki via the `X-Waikiki-Wiki` header (default:
+REST/collab requests select the wiki via the `X-Jamgraf-Wiki` header (default:
 the registry's default wiki).
 
 ## Notes
@@ -613,9 +622,9 @@ the registry's default wiki).
 [Elastic License 2.0](LICENSE) — **source-available, not open source.**
 
 You can read it, run it, modify it, and redistribute it. The one substantive
-restriction is that you may not offer Waikiki to third parties as a hosted or
+restriction is that you may not offer Jamgraf to third parties as a hosted or
 managed service. Use it yourself, inside your company, on your own machines,
 freely.
 
-The vendored `wiki_interchange` package (`waikiki/vendor/`) is first-party and
+The vendored `wiki_interchange` package (`jamgraf/vendor/`) is first-party and
 covered by the same license — see [`docs/vendoring.md`](docs/vendoring.md).

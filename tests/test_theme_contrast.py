@@ -18,9 +18,9 @@ from __future__ import annotations
 import pathlib
 import re
 
-import waikiki
+import jamgraf
 
-_PKG = pathlib.Path(waikiki.__file__).parent
+_PKG = pathlib.Path(jamgraf.__file__).parent
 THEMES = _PKG / "static" / "themes"
 TEMPLATES = _PKG / "templates"
 

@@ -45,9 +45,9 @@ jobs:
 
       - name: Report what was produced
         run: |
-          ls -lh dist/Waikiki-macos.zip
+          ls -lh dist/Jamgraf-macos.zip
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
-            dist/Waikiki.app/Contents/Info.plist
+            dist/Jamgraf.app/Contents/Info.plist
 
       # Kept for a human to download and try when a scheduled run goes red, and
       # deliberately NOT signed here: the Ed25519 private key stays off CI, so
@@ -55,7 +55,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: waikiki-unsigned-${{ github.sha }}
-          path: dist/Waikiki-macos.zip
+          name: jamgraf-unsigned-${{ github.sha }}
+          path: dist/Jamgraf-macos.zip
           retention-days: 7
           if-no-files-found: warn

@@ -6,8 +6,8 @@ different thing and are untouched.
 """
 from fastapi.testclient import TestClient
 
-from waikiki import store
-from waikiki.api import app
+from jamgraf import store
+from jamgraf.api import app
 
 
 def _client():
@@ -132,7 +132,7 @@ def test_chat_is_gone_from_the_details_page(wiki):
 
 def test_the_wiki_scoped_chat_route_exists(wiki, monkeypatch):
     """Posting with no page must reach chat.answer with slug=None."""
-    from waikiki import chat as chat_mod
+    from jamgraf import chat as chat_mod
 
     seen = {}
 
@@ -149,7 +149,7 @@ def test_the_wiki_scoped_chat_route_exists(wiki, monkeypatch):
 
 def test_wiki_scoped_prompt_has_no_article_and_no_excerpts(wiki):
     """No retrieval stand-in: the agent is meant to use MCP (issue #30)."""
-    from waikiki import chat as chat_mod
+    from jamgraf import chat as chat_mod
 
     prompt = chat_mod.build_prompt("", "", "", [], "a question", "SYS", wiki="main")
     assert "# Article" not in prompt

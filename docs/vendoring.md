@@ -1,12 +1,12 @@
 # Vendored packages
 
-Waikiki ships as a standalone desktop app, so a dependency that is **not
+Jamgraf ships as a standalone desktop app, so a dependency that is **not
 published to PyPI** is vendored into the source tree rather than declared in
 `requirements.txt`. Each vendored tree is a verbatim copy of an upstream package
 at a recorded revision, with the pinned version recorded in three places that
 must stay in lockstep:
 
-- `waikiki/vendor/__init__.py` — `WIKI_INTERCHANGE_VERSION` /
+- `jamgraf/vendor/__init__.py` — `WIKI_INTERCHANGE_VERSION` /
   `WIKI_INTERCHANGE_REVISION` / `_SOURCE`
 - `requirements.txt` — the "VENDORED, not on PyPI" note
 - this document
@@ -15,19 +15,19 @@ must stay in lockstep:
 
 | | |
 |---|---|
-| **Path** | `waikiki/vendor/wiki_interchange/` |
+| **Path** | `jamgraf/vendor/wiki_interchange/` |
 | **Pinned version** | `0.2.0` (spec `SPEC_VERSION = 3`, floor `1`, Yjs sync protocol `1`) |
 | **Upstream** | `gitlab.kwirker.com/good-place/platform`, `packages/wiki-interchange/wiki_interchange/` (**private repo** — first-party, same owner; the vendored copy here is the public one, under this project's Elastic License 2.0). GitLab is canonical; the GitHub mirror carries the same code but issues and MRs live on GitLab. |
 | **Upstream branch** | `dev` — MR good-place/platform!142 (spec v3) merged 2026-09-08. It was vendored ahead of that merge, as the spec-v2 sync was; this pin has since been moved onto the merged commit and the tree re-diffed, which is the step that "vendored ahead of merge" owes |
 | **Upstream revision** | `5fe9b720` — the vendored tree is byte-identical to `packages/wiki-interchange/wiki_interchange/` at this commit, verified file by file against `dev` |
-| **Runtime dep** | `pycrdt>=0.10,<0.15` (satisfied by Waikiki's own pin) |
+| **Runtime dep** | `pycrdt>=0.10,<0.15` (satisfied by Jamgraf's own pin) |
 
 ### What it is
 
 `wiki_interchange` is the **shared, content-only Y.Doc interchange format** for
-the Kahala ⟷ Waikiki round-trip (RFC [atd-v3-kahala], decision D3: the format is
+the Kahala ⟷ Jamgraf round-trip (RFC [atd-v3-kahala], decision D3: the format is
 a small library both sides vendor + version-pin, not a service and not on PyPI).
-Waikiki consumes it through `waikiki/ydoc.py`:
+Jamgraf consumes it through `jamgraf/ydoc.py`:
 
 - `build_page_doc` / the root-type constants — the canonical page Y.Doc layout
   (`content` Text, `tree`/`comments`/`tags`/`elements` Arrays, `meta` Map).
@@ -58,7 +58,7 @@ and decode.
 (1: a page snapshot/changelog is unchanged since v1) or `WIKI_ENVELOPE_SPEC` (2).
 That split is why bumping the spec here does not break the per-page round-trip
 against a **deployed** Kahala: its image is pinned by content hash, so a spec-2
-Waikiki routinely meets a spec-1 peer, and a page snapshot stamped with the
+Jamgraf routinely meets a spec-1 peer, and a page snapshot stamped with the
 producer's build number would be rejected by a peer that understands it perfectly.
 `MIN_COMPATIBLE_SPEC_VERSION` stays `1` — v2 is additive, so this build still
 reads v1 payloads.
@@ -122,13 +122,13 @@ When W1 (or a later spec bump) changes upstream:
    GITLAB_HOST=gitlab.kwirker.com glab api \
      "projects/good-place%2Fplatform/repository/files/\
    packages%2Fwiki-interchange%2Fwiki_interchange%2F<file>/raw?ref=dev"
-   # fetch each file's raw content into waikiki/vendor/wiki_interchange/
+   # fetch each file's raw content into jamgraf/vendor/wiki_interchange/
    ```
 
    Then `diff` every file against the vendored copy — the tree must be
    byte-identical, and the diff is also how you find out *what* moved.
 
-2. Copy the `wiki_interchange/` package over `waikiki/vendor/wiki_interchange/`
+2. Copy the `wiki_interchange/` package over `jamgraf/vendor/wiki_interchange/`
    (keep only the package — not its `pyproject.toml`/`tests/`, which stay
    upstream).
 3. Read the new `__version__` from upstream's `wiki_interchange/__init__.py`
